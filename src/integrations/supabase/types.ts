@@ -44,6 +44,45 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_heartbeat: {
+        Row: {
+          agent_id: string
+          created_at: string
+          errors_count: number | null
+          hostname: string | null
+          id: string
+          last_seen_at: string
+          messages_synced: number | null
+          metadata: Json | null
+          status: string
+          version: string | null
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          errors_count?: number | null
+          hostname?: string | null
+          id?: string
+          last_seen_at?: string
+          messages_synced?: number | null
+          metadata?: Json | null
+          status?: string
+          version?: string | null
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          errors_count?: number | null
+          hostname?: string | null
+          id?: string
+          last_seen_at?: string
+          messages_synced?: number | null
+          metadata?: Json | null
+          status?: string
+          version?: string | null
+        }
+        Relationships: []
+      }
       gateway_config: {
         Row: {
           api_password: string
@@ -182,14 +221,43 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_authorized: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
+      app_role: "admin" | "operator" | "viewer"
       log_severity: "info" | "warning" | "error" | "success"
       sms_status: "unread" | "read" | "processed" | "failed"
     }
@@ -319,6 +387,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["admin", "operator", "viewer"],
       log_severity: ["info", "warning", "error", "success"],
       sms_status: ["unread", "read", "processed", "failed"],
     },
