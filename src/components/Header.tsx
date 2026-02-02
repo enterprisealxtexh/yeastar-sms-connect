@@ -1,7 +1,18 @@
-import { Radio, RefreshCw } from "lucide-react";
+import { Radio, RefreshCw, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusIndicator } from "./StatusIndicator";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
+import { useAuth, signOut } from "@/hooks/useAuth";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 interface HeaderProps {
   systemStatus: "online" | "offline" | "warning";
@@ -10,6 +21,19 @@ interface HeaderProps {
 }
 
 export const Header = ({ systemStatus, lastSync, onRefresh }: HeaderProps) => {
+  const { user, role, isAdmin } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast.success("Signed out successfully");
+  };
+
+  const getRoleBadgeVariant = () => {
+    if (role === "admin") return "default";
+    if (role === "operator") return "secondary";
+    return "outline";
+  };
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-16 items-center justify-between">
@@ -48,6 +72,32 @@ export const Header = ({ systemStatus, lastSync, onRefresh }: HeaderProps) => {
             <RefreshCw className="w-4 h-4" />
             Refresh
           </Button>
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2">
+                <User className="w-4 h-4" />
+                <span className="hidden md:inline max-w-[120px] truncate">
+                  {user?.email?.split("@")[0]}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>
+                <div className="flex flex-col gap-1">
+                  <span className="truncate">{user?.email}</span>
+                  <Badge variant={getRoleBadgeVariant()} className="w-fit text-xs">
+                    {role || "user"}
+                  </Badge>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign Out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </header>
