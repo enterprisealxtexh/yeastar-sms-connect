@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.test-gateway-connection]
 verify_jwt = false
+
+[functions.categorize-sms]
+verify_jwt = true

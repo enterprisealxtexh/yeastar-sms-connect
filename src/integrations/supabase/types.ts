@@ -187,6 +187,8 @@ export type Database = {
       }
       sms_messages: {
         Row: {
+          category: Database["public"]["Enums"]["sms_category"] | null
+          category_confidence: number | null
           created_at: string
           external_id: string | null
           id: string
@@ -198,6 +200,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          category?: Database["public"]["Enums"]["sms_category"] | null
+          category_confidence?: number | null
           created_at?: string
           external_id?: string | null
           id?: string
@@ -209,6 +213,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          category?: Database["public"]["Enums"]["sms_category"] | null
+          category_confidence?: number | null
           created_at?: string
           external_id?: string | null
           id?: string
@@ -259,6 +265,14 @@ export type Database = {
     Enums: {
       app_role: "admin" | "operator" | "viewer"
       log_severity: "info" | "warning" | "error" | "success"
+      sms_category:
+        | "otp"
+        | "marketing"
+        | "personal"
+        | "transactional"
+        | "notification"
+        | "spam"
+        | "unknown"
       sms_status: "unread" | "read" | "processed" | "failed"
     }
     CompositeTypes: {
@@ -389,6 +403,15 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "operator", "viewer"],
       log_severity: ["info", "warning", "error", "success"],
+      sms_category: [
+        "otp",
+        "marketing",
+        "personal",
+        "transactional",
+        "notification",
+        "spam",
+        "unknown",
+      ],
       sms_status: ["unread", "read", "processed", "failed"],
     },
   },

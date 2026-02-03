@@ -14,14 +14,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, Filter, CalendarIcon, X } from "lucide-react";
+import { Search, Filter, CalendarIcon, X, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import type { SmsCategory } from "@/components/SmsCategoryBadge";
 
 export interface SmsFiltersState {
   search: string;
   simPort: string;
   status: string;
+  category: string;
   dateFrom: Date | undefined;
   dateTo: Date | undefined;
 }
@@ -47,6 +49,7 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersPro
       search: "",
       simPort: "all",
       status: "all",
+      category: "all",
       dateFrom: undefined,
       dateTo: undefined,
     });
@@ -56,6 +59,7 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersPro
     filters.search ||
     filters.simPort !== "all" ||
     filters.status !== "all" ||
+    filters.category !== "all" ||
     filters.dateFrom ||
     filters.dateTo;
 
@@ -97,7 +101,7 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersPro
 
       {/* Expanded Filters */}
       {isExpanded && (
-        <div className="grid gap-3 sm:grid-cols-4 p-3 rounded-lg bg-muted/30 border border-border/30">
+        <div className="grid gap-3 sm:grid-cols-5 p-3 rounded-lg bg-muted/30 border border-border/30">
           {/* SIM Port Filter */}
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">SIM Port</label>
@@ -134,6 +138,32 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersPro
                 <SelectItem value="unread">Unread</SelectItem>
                 <SelectItem value="read">Read</SelectItem>
                 <SelectItem value="processed">Processed</SelectItem>
+            </SelectContent>
+          </Select>
+          </div>
+
+          {/* Category Filter */}
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground flex items-center gap-1">
+              <Sparkles className="w-3 h-3" />
+              Category
+            </label>
+            <Select
+              value={filters.category}
+              onValueChange={(value) => updateFilter("category", value)}
+            >
+              <SelectTrigger className="h-9 bg-background border-border/50">
+                <SelectValue placeholder="All categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="otp">OTP</SelectItem>
+                <SelectItem value="marketing">Marketing</SelectItem>
+                <SelectItem value="personal">Personal</SelectItem>
+                <SelectItem value="transactional">Transaction</SelectItem>
+                <SelectItem value="notification">Notification</SelectItem>
+                <SelectItem value="spam">Spam</SelectItem>
+                <SelectItem value="unknown">Unknown</SelectItem>
               </SelectContent>
             </Select>
           </div>
