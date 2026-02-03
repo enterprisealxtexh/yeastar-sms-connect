@@ -2,16 +2,23 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { MessageSquare, Clock, Sparkles, Loader2 } from "lucide-react";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
 import { ManualSmsImport } from "./ManualSmsImport";
+import { SmsCategoryBadge, SmsCategory } from "./SmsCategoryBadge";
+import { useCategorizeMessages } from "@/hooks/useSmsMessages";
+
 interface SmsMessage {
   id: string;
   sender: string;
   simPort: number;
   content: string;
   timestamp: string;
+  receivedAt: Date;
   isNew: boolean;
+  category: SmsCategory;
+  categoryConfidence?: number;
   status?: string;
 }
 
@@ -23,17 +30,24 @@ const initialFilters: SmsFiltersState = {
   search: "",
   simPort: "all",
   status: "all",
+  category: "all",
   dateFrom: undefined,
   dateTo: undefined,
 };
 
 export const SmsInbox = ({ messages }: SmsInboxProps) => {
   const [filters, setFilters] = useState<SmsFiltersState>(initialFilters);
+  const categorize = useCategorizeMessages();
 
   // Get unique SIM ports from messages
   const simPorts = useMemo(() => {
     const ports = new Set(messages.map((m) => m.simPort));
     return Array.from(ports).sort((a, b) => a - b);
+  }, [messages]);
+
+  // Count uncategorized messages
+  const uncategorizedCount = useMemo(() => {
+    return messages.filter((m) => m.category === "unknown").length;
   }, [messages]);
 
   // Filter messages based on current filters
@@ -58,9 +72,14 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
         if (messageStatus !== filters.status) return false;
       }
 
+      // Category filter
+      if (filters.category !== "all" && message.category !== filters.category) {
+        return false;
+      }
+
       // Date filters
       if (filters.dateFrom || filters.dateTo) {
-        const messageDate = new Date(message.timestamp);
+        const messageDate = message.receivedAt;
         if (filters.dateFrom && messageDate < filters.dateFrom) return false;
         if (filters.dateTo) {
           const endOfDay = new Date(filters.dateTo);
@@ -73,6 +92,10 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
     });
   }, [messages, filters]);
 
+  const handleCategorizeAll = () => {
+    categorize.mutate({ batch: true });
+  };
+
   return (
     <Card className="card-glow border-border/50 bg-card h-full">
       <CardHeader className="pb-3">
@@ -84,6 +107,22 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
             <CardTitle className="text-base font-semibold">SMS Inbox</CardTitle>
           </div>
           <div className="flex items-center gap-2">
+            {uncategorizedCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCategorizeAll}
+                disabled={categorize.isPending}
+                className="gap-1.5 text-xs"
+              >
+                {categorize.isPending ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3 h-3" />
+                )}
+                Categorize ({uncategorizedCount})
+              </Button>
+            )}
             <ManualSmsImport />
             <Badge variant="secondary" className="font-mono">
               {filteredMessages.length}
@@ -117,7 +156,7 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                   }`}
                 >
                   <div className="flex items-start justify-between gap-4 mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-sm font-medium text-foreground">
                         {message.sender}
                       </span>
@@ -127,13 +166,18 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                       >
                         SIM {message.simPort}
                       </Badge>
+                      <SmsCategoryBadge 
+                        category={message.category} 
+                        confidence={message.categoryConfidence}
+                        showConfidence={message.categoryConfidence !== undefined}
+                      />
                       {message.isNew && (
                         <Badge className="text-xs bg-primary/20 text-primary border-0">
                           New
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
                       <Clock className="w-3 h-3" />
                       <span className="font-mono">{message.timestamp}</span>
                     </div>
