@@ -11,9 +11,11 @@ import { CallRecordsTable } from "@/components/CallRecordsTable";
 import { CallStatsCards } from "@/components/CallStatsCards";
 import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
+import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
+import { AiConfigPanel } from "@/components/AiConfigPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall } from "lucide-react";
+import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain } from "lucide-react";
 import { toast } from "sonner";
 import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
@@ -78,6 +80,10 @@ const Index = () => {
             <TabsTrigger value="config" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Settings className="w-4 h-4" />
               Configuration
+            </TabsTrigger>
+            <TabsTrigger value="ai" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Brain className="w-4 h-4" />
+              AI & Diagnostics
             </TabsTrigger>
           </TabsList>
 
@@ -178,6 +184,13 @@ const Index = () => {
                 queryClient.invalidateQueries({ queryKey: ["sim-ports"] });
               }}
             />
+          </TabsContent>
+
+          <TabsContent value="ai" className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ErrorLogsPanel />
+              <AiConfigPanel />
+            </div>
           </TabsContent>
         </Tabs>
       </main>

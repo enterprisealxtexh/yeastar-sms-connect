@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * TG400 Local Polling Agent v2.0 - Production Hardened
+ * TG400 Local Polling Agent v3.0 - AI-Powered Self-Healing
  * 
  * Features:
  * - Persistent state file (survives restarts)
@@ -8,6 +8,10 @@
  * - Dedicated heartbeat for reliable status monitoring
  * - Automatic retry with exponential backoff
  * - Graceful shutdown with state preservation
+ * - AI-powered error diagnostics
+ * - Self-healing auto-recovery
+ * - Dynamic configuration from cloud
+ * - Failed sync auto-reprocessing
  * 
  * Installation: See /local-agent/install.sh
  */
@@ -35,17 +39,24 @@ const CONFIG = {
   SUPABASE_URL: process.env.SUPABASE_URL || 'https://aougsyziktukjvkmglzb.supabase.co',
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvdWdzeXppa3R1a21nbHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNDg5NTYsImV4cCI6MjA4NDkyNDk1Nn0.dcsZwEJXND9xdNA1dR-uHH7r6WylGwL7xVKJSFL_C44',
   
-  // Agent Settings
+  // Agent Settings (defaults, can be overridden by cloud config)
   POLL_INTERVAL: parseInt(process.env.POLL_INTERVAL || '30000', 10),
   HEARTBEAT_INTERVAL: parseInt(process.env.HEARTBEAT_INTERVAL || '60000', 10),
   CDR_POLL_INTERVAL: parseInt(process.env.CDR_POLL_INTERVAL || '60000', 10),
   CALL_QUEUE_POLL_INTERVAL: parseInt(process.env.CALL_QUEUE_POLL_INTERVAL || '5000', 10),
+  CONFIG_SYNC_INTERVAL: parseInt(process.env.CONFIG_SYNC_INTERVAL || '300000', 10), // 5 minutes
   STATE_FILE: process.env.STATE_FILE || path.join(__dirname, '.agent-state.json'),
   QUEUE_FILE: process.env.QUEUE_FILE || path.join(__dirname, '.message-queue.json'),
   
+  // Self-healing settings
+  MAX_RETRIES: parseInt(process.env.MAX_RETRIES || '3', 10),
+  RETRY_BACKOFF_MULTIPLIER: parseFloat(process.env.RETRY_BACKOFF_MULTIPLIER || '2'),
+  AUTO_RESTART_DELAY: parseInt(process.env.AUTO_RESTART_DELAY || '10000', 10),
+  ERROR_THRESHOLD_FOR_RESTART: parseInt(process.env.ERROR_THRESHOLD_FOR_RESTART || '10', 10),
+  
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
-  VERSION: '2.2.0',
+  VERSION: '3.0.0',
 };
 // ========================================
 
@@ -53,7 +64,8 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 
 class TG400Agent {
   constructor(config) {
-    this.config = config;
+    this.config = { ...config };
+    this.dynamicConfig = {}; // Overrides from cloud
     this.authHeader = Buffer.from(`${config.TG400_USERNAME}:${config.TG400_PASSWORD}`).toString('base64');
     this.pbxAuthHeader = Buffer.from(`${config.PBX_USERNAME}:${config.PBX_PASSWORD}`).toString('base64');
     this.processedIds = new Set();
@@ -63,12 +75,79 @@ class TG400Agent {
     this.messagesSynced = 0;
     this.callsSynced = 0;
     this.errorsCount = 0;
+    this.consecutiveErrors = 0;
     this.startTime = new Date();
     this.lastCdrTimestamp = null;
+    this.intervals = [];
     
     // Load persistent state
     this.loadState();
     this.loadQueue();
+  }
+
+  // ========== DYNAMIC CONFIGURATION ==========
+
+  getConfig(key) {
+    // Dynamic config from cloud takes precedence
+    if (this.dynamicConfig[key] !== undefined) {
+      return this.dynamicConfig[key];
+    }
+    return this.config[key];
+  }
+
+  async syncConfigFromCloud() {
+    try {
+      const url = `${this.config.SUPABASE_URL}/rest/v1/agent_config?select=config_key,config_value`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+        },
+      });
+
+      if (!response.ok) return;
+
+      const configs = await response.json();
+      const configMap = {
+        poll_interval: 'POLL_INTERVAL',
+        heartbeat_interval: 'HEARTBEAT_INTERVAL',
+        cdr_poll_interval: 'CDR_POLL_INTERVAL',
+        retry_backoff_multiplier: 'RETRY_BACKOFF_MULTIPLIER',
+        max_retries: 'MAX_RETRIES',
+      };
+
+      let updated = false;
+      for (const cfg of configs) {
+        const envKey = configMap[cfg.config_key];
+        if (envKey && cfg.config_value?.value !== undefined) {
+          const newValue = cfg.config_value.value;
+          if (this.dynamicConfig[envKey] !== newValue) {
+            this.dynamicConfig[envKey] = newValue;
+            updated = true;
+            this.log('info', `Config updated from cloud: ${envKey}=${newValue}`);
+          }
+        }
+      }
+
+      if (updated) {
+        this.restartPollingLoops();
+      }
+    } catch (error) {
+      this.log('warn', `Failed to sync config: ${error.message}`);
+    }
+  }
+
+  restartPollingLoops() {
+    // Clear existing intervals
+    for (const interval of this.intervals) {
+      clearInterval(interval);
+    }
+    this.intervals = [];
+
+    // Restart with new intervals
+    this.startPollingLoops();
+    this.log('info', 'Polling loops restarted with updated configuration');
   }
 
   // ========== STATE PERSISTENCE ==========
@@ -124,7 +203,7 @@ class TG400Agent {
     }
   }
 
-  // ========== LOGGING ==========
+  // ========== LOGGING & ERROR TRACKING ==========
 
   log(level, message, data = {}) {
     const timestamp = new Date().toISOString();
@@ -137,12 +216,135 @@ class TG400Agent {
     console.log(`[${timestamp}] [${prefix[level] || level}] ${message}`, Object.keys(data).length ? JSON.stringify(data) : '');
   }
 
+  async reportError(errorType, errorMessage, context = {}) {
+    this.errorsCount++;
+    this.consecutiveErrors++;
+
+    // Log to cloud for AI diagnostics
+    try {
+      await this.pushToSupabase('error_logs', {
+        agent_id: this.config.AGENT_ID,
+        error_type: errorType,
+        error_message: errorMessage,
+        error_context: {
+          ...context,
+          consecutive_errors: this.consecutiveErrors,
+          uptime_seconds: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
+        },
+      }, 1); // Only 1 retry for error logging
+
+      // Request AI diagnosis for serious errors
+      if (this.consecutiveErrors >= 3) {
+        await this.requestAiDiagnosis(errorType, errorMessage, context);
+      }
+    } catch (e) {
+      // Don't fail on error logging
+    }
+
+    // Check if we need to self-heal
+    if (this.consecutiveErrors >= this.config.ERROR_THRESHOLD_FOR_RESTART) {
+      this.log('warn', `Error threshold reached (${this.consecutiveErrors}), attempting self-heal...`);
+      await this.selfHeal();
+    }
+  }
+
+  async requestAiDiagnosis(errorType, errorMessage, context) {
+    try {
+      const response = await fetch(`${this.config.SUPABASE_URL}/functions/v1/ai-diagnostics`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'diagnose',
+          error_data: {
+            error_type: errorType,
+            error_message: errorMessage,
+            error_context: context,
+            agent_id: this.config.AGENT_ID,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.diagnosis) {
+          this.log('info', `AI Diagnosis: ${result.diagnosis.diagnosis}`);
+          if (result.diagnosis.auto_fixable && result.diagnosis.fix_action) {
+            await this.applyAutoFix(result.diagnosis.fix_action);
+          }
+        }
+      }
+    } catch (e) {
+      // Silently fail AI diagnosis
+    }
+  }
+
+  async applyAutoFix(action) {
+    this.log('info', `Applying auto-fix action: ${action}`);
+
+    switch (action) {
+      case 'retry':
+        // Already handled by exponential backoff
+        this.consecutiveErrors = Math.max(0, this.consecutiveErrors - 2);
+        break;
+        
+      case 'restart':
+        await this.selfHeal();
+        break;
+
+      default:
+        this.log('info', `Manual intervention needed for fix action: ${action}`);
+    }
+  }
+
+  async selfHeal() {
+    this.log('warn', 'Initiating self-healing process...');
+    
+    // Save state before restart
+    this.saveState();
+    this.saveQueue();
+
+    // Log the self-heal attempt
+    await this.pushToSupabase('activity_logs', {
+      event_type: 'self_heal',
+      message: `Agent self-healing after ${this.consecutiveErrors} consecutive errors`,
+      severity: 'warning',
+      metadata: { 
+        agent_id: this.config.AGENT_ID,
+        consecutive_errors: this.consecutiveErrors,
+      },
+    }, 1);
+
+    // Reset error counter
+    this.consecutiveErrors = 0;
+
+    // Restart polling loops
+    this.restartPollingLoops();
+
+    // Re-sync config from cloud
+    await this.syncConfigFromCloud();
+
+    this.log('success', 'Self-healing complete');
+  }
+
+  clearError() {
+    // Reset consecutive errors on success
+    if (this.consecutiveErrors > 0) {
+      this.consecutiveErrors = 0;
+    }
+  }
+
   // ========== GATEWAY COMMUNICATION ==========
 
-  async fetchFromGateway(endpoint, retries = 3) {
+  async fetchFromGateway(endpoint, retries = null) {
+    const maxRetries = retries ?? this.getConfig('MAX_RETRIES');
+    const backoffMultiplier = this.getConfig('RETRY_BACKOFF_MULTIPLIER');
     const url = `http://${this.config.TG400_IP}${endpoint}`;
     
-    for (let attempt = 1; attempt <= retries; attempt++) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
@@ -162,14 +364,14 @@ class TG400Agent {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
+        this.clearError();
         return await response.json();
       } catch (error) {
-        if (attempt === retries) {
-          this.log('error', `Gateway request failed after ${retries} attempts: ${endpoint}`, { error: error.message });
-          this.errorsCount++;
+        if (attempt === maxRetries) {
+          await this.reportError('gateway_fetch', error.message, { endpoint, attempts: attempt });
           return null;
         }
-        await this.sleep(1000 * attempt); // Exponential backoff
+        await this.sleep(1000 * Math.pow(backoffMultiplier, attempt - 1));
       }
     }
     return null;
@@ -177,10 +379,12 @@ class TG400Agent {
 
   // ========== SUPABASE COMMUNICATION ==========
 
-  async pushToSupabase(table, data, retries = 3) {
+  async pushToSupabase(table, data, retries = null) {
+    const maxRetries = retries ?? this.getConfig('MAX_RETRIES');
+    const backoffMultiplier = this.getConfig('RETRY_BACKOFF_MULTIPLIER');
     const url = `${this.config.SUPABASE_URL}/rest/v1/${table}`;
     
-    for (let attempt = 1; attempt <= retries; attempt++) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -197,18 +401,22 @@ class TG400Agent {
           const errorText = await response.text();
           // Duplicate key error is success (message already synced)
           if (errorText.includes('duplicate key') || errorText.includes('already exists')) {
+            this.clearError();
             return true;
           }
           throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
 
+        this.clearError();
         return true;
       } catch (error) {
-        if (attempt === retries) {
-          this.log('error', `Supabase push failed: ${table}`, { error: error.message });
+        if (attempt === maxRetries) {
+          if (table !== 'error_logs') { // Avoid infinite loop
+            await this.reportError('supabase_push', error.message, { table, attempt });
+          }
           return false;
         }
-        await this.sleep(1000 * attempt);
+        await this.sleep(1000 * Math.pow(backoffMultiplier, attempt - 1));
       }
     }
     return false;
@@ -228,6 +436,8 @@ class TG400Agent {
         uptime_seconds: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
         queue_size: this.messageQueue.length,
         processed_ids_count: this.processedIds.size,
+        consecutive_errors: this.consecutiveErrors,
+        dynamic_config: this.dynamicConfig,
       },
     };
 
@@ -375,11 +585,13 @@ class TG400Agent {
 
   // ========== CDR POLLING (S100 PBX) ==========
 
-  async fetchFromPbx(endpoint, retries = 3) {
+  async fetchFromPbx(endpoint, retries = null) {
+    const maxRetries = retries ?? this.getConfig('MAX_RETRIES');
+    const backoffMultiplier = this.getConfig('RETRY_BACKOFF_MULTIPLIER');
     const protocol = this.config.PBX_WEB_PORT === 443 ? 'https' : 'http';
     const url = `${protocol}://${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}${endpoint}`;
     
-    for (let attempt = 1; attempt <= retries; attempt++) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
@@ -401,21 +613,20 @@ class TG400Agent {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
+        this.clearError();
         return await response.json();
       } catch (error) {
-        if (attempt === retries) {
-          this.log('error', `PBX request failed after ${retries} attempts: ${endpoint}`, { error: error.message });
-          this.errorsCount++;
+        if (attempt === maxRetries) {
+          await this.reportError('pbx_fetch', error.message, { endpoint, attempts: attempt });
           return null;
         }
-        await this.sleep(1000 * attempt);
+        await this.sleep(1000 * Math.pow(backoffMultiplier, attempt - 1));
       }
     }
     return null;
   }
 
   async pollCdr() {
-    // Try different CDR API endpoints (Yeastar S100 API variations)
     const endpoints = [
       '/api/v1.0/cdr/get',
       '/api/cdr',
@@ -425,7 +636,6 @@ class TG400Agent {
 
     let cdrRecords = null;
     for (const endpoint of endpoints) {
-      // Add time filter to get recent calls
       const since = this.lastCdrTimestamp || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const result = await this.fetchFromPbx(`${endpoint}?start_time=${encodeURIComponent(since)}`);
       
@@ -448,7 +658,6 @@ class TG400Agent {
         continue;
       }
 
-      // Map CDR fields to call_records schema
       const callData = {
         external_id: externalId,
         caller_number: record.src || record.caller || record.from || 'Unknown',
@@ -481,7 +690,6 @@ class TG400Agent {
         this.callsSynced++;
         newCount++;
         
-        // Update timestamp for next poll
         const callTime = new Date(callData.start_time);
         if (!this.lastCdrTimestamp || callTime > new Date(this.lastCdrTimestamp)) {
           this.lastCdrTimestamp = callData.start_time;
@@ -499,7 +707,6 @@ class TG400Agent {
   }
 
   mapCallDirection(record) {
-    // Determine direction based on channel/trunk info
     if (record.direction) return record.direction;
     if (record.dcontext === 'from-internal' || record.src?.startsWith('ext')) return 'outbound';
     if (record.dcontext === 'from-trunk' || record.channel?.includes('GSM')) return 'inbound';
@@ -580,7 +787,6 @@ class TG400Agent {
   }
 
   async initiateCallViaPbx(fromExtension, toNumber) {
-    // Try different PBX originate API endpoints (Yeastar S100 API variations)
     const endpoints = [
       '/api/v1.0/call/dial',
       '/api/v2.0.0/call/dial',
@@ -613,6 +819,7 @@ class TG400Agent {
         if (response.ok) {
           const result = await response.json().catch(() => ({ success: true }));
           this.log('success', `Call initiated`, { from: fromExtension, to: toNumber });
+          this.clearError();
           return { success: true, result };
         }
       } catch (error) {
@@ -632,17 +839,13 @@ class TG400Agent {
 
     for (const call of pendingCalls) {
       try {
-        // Mark as in progress
         await this.updateCallStatus(call.id, 'in_progress');
         this.log('info', `Processing call request`, { to: call.to_number, from: call.from_extension });
 
-        // Initiate the call
         const result = await this.initiateCallViaPbx(call.from_extension, call.to_number);
         
-        // Mark as completed
         await this.updateCallStatus(call.id, 'completed', JSON.stringify(result.result));
         
-        // Log activity
         await this.pushToSupabase('activity_logs', {
           event_type: 'call_initiated',
           message: `Call initiated from ${call.from_extension} to ${call.to_number}`,
@@ -657,9 +860,7 @@ class TG400Agent {
       } catch (error) {
         this.log('error', `Failed to initiate call`, { to: call.to_number, error: error.message });
         await this.updateCallStatus(call.id, 'failed', null, error.message);
-        this.errorsCount++;
         
-        // Log activity
         await this.pushToSupabase('activity_logs', {
           event_type: 'call_failed',
           message: `Failed to initiate call to ${call.to_number}: ${error.message}`,
@@ -672,15 +873,6 @@ class TG400Agent {
         });
       }
     }
-  }
-      'ANSWERED': 'answered',
-      'NO ANSWER': 'missed',
-      'BUSY': 'busy',
-      'FAILED': 'failed',
-      'VOICEMAIL': 'voicemail',
-      'CONGESTION': 'failed',
-    };
-    return mapping[String(disposition).toUpperCase()] || 'missed';
   }
 
   // ========== MAIN LOOP ==========
@@ -695,8 +887,7 @@ class TG400Agent {
         totalNew += newCount;
         await this.updatePortStatus(port);
       } catch (error) {
-        this.log('error', `Error polling port ${port}`, { error: error.message });
-        this.errorsCount++;
+        await this.reportError('sms_poll', error.message, { port });
       }
     }
 
@@ -730,8 +921,7 @@ class TG400Agent {
         });
       }
     } catch (error) {
-      this.log('error', 'Error polling CDR', { error: error.message });
-      this.errorsCount++;
+      await this.reportError('cdr_poll', error.message, {});
     }
   }
 
@@ -797,18 +987,56 @@ class TG400Agent {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  startPollingLoops() {
+    // SMS Polling loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.pollAllPorts();
+      }
+    }, this.getConfig('POLL_INTERVAL')));
+
+    // CDR Polling loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.pollCalls();
+      }
+    }, this.getConfig('CDR_POLL_INTERVAL')));
+
+    // Call Queue Polling loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.processCallQueue();
+      }
+    }, this.getConfig('CALL_QUEUE_POLL_INTERVAL')));
+
+    // Heartbeat loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.upsertHeartbeat();
+      }
+    }, this.getConfig('HEARTBEAT_INTERVAL')));
+
+    // Config sync loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.syncConfigFromCloud();
+      }
+    }, this.config.CONFIG_SYNC_INTERVAL));
+  }
+
   async start() {
-    console.log('\n\x1b[36m╔════════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[36m║   TG400 Local Polling Agent v' + this.config.VERSION.padEnd(12) + '║\x1b[0m');
-    console.log('\x1b[36m╚════════════════════════════════════════════╝\x1b[0m\n');
+    console.log('\n\x1b[36m╔════════════════════════════════════════════════╗\x1b[0m');
+    console.log('\x1b[36m║   TG400 Local Agent v' + this.config.VERSION.padEnd(12) + '(AI-Powered) ║\x1b[0m');
+    console.log('\x1b[36m╚════════════════════════════════════════════════╝\x1b[0m\n');
     
     this.log('info', `Agent ID: ${this.config.AGENT_ID}`);
     this.log('info', `TG400 Gateway: ${this.config.TG400_IP}`);
     this.log('info', `S100 PBX: ${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}`);
     this.log('info', `Ports: ${this.config.TG400_PORTS.join(', ')}`);
-    this.log('info', `SMS Poll interval: ${this.config.POLL_INTERVAL}ms`);
-    this.log('info', `CDR Poll interval: ${this.config.CDR_POLL_INTERVAL}ms`);
-    this.log('info', `Call Queue Poll interval: ${this.config.CALL_QUEUE_POLL_INTERVAL}ms`);
+    this.log('info', `Features: Self-healing, AI diagnostics, Dynamic config`);
+
+    // Sync config from cloud first
+    await this.syncConfigFromCloud();
 
     // Test connections
     const connections = await this.testConnection();
@@ -823,35 +1051,8 @@ class TG400Agent {
     }
     await this.upsertHeartbeat();
 
-    // SMS Polling loop
-    setInterval(async () => {
-      if (this.isRunning) {
-        await this.pollAllPorts();
-      }
-    }, this.config.POLL_INTERVAL);
-
-    // CDR Polling loop (separate interval for calls)
-    if (connections.pbx) {
-      setInterval(async () => {
-        if (this.isRunning) {
-          await this.pollCalls();
-        }
-      }, this.config.CDR_POLL_INTERVAL);
-
-      // Call Queue Polling loop (for click-to-call)
-      setInterval(async () => {
-        if (this.isRunning) {
-          await this.processCallQueue();
-        }
-      }, this.config.CALL_QUEUE_POLL_INTERVAL);
-    }
-
-    // Heartbeat loop
-    setInterval(async () => {
-      if (this.isRunning) {
-        await this.upsertHeartbeat();
-      }
-    }, this.config.HEARTBEAT_INTERVAL);
+    // Start polling loops
+    this.startPollingLoops();
 
     this.log('info', 'Agent running. Press Ctrl+C to stop.');
   }
@@ -859,6 +1060,12 @@ class TG400Agent {
   async shutdown() {
     this.log('info', 'Shutting down...');
     this.isRunning = false;
+
+    // Clear all intervals
+    for (const interval of this.intervals) {
+      clearInterval(interval);
+    }
+
     this.saveState();
     this.saveQueue();
     
@@ -884,11 +1091,11 @@ const args = process.argv.slice(2);
 if (args.includes('--test')) {
   const agent = new TG400Agent(CONFIG);
   agent.testConnection().then(ok => {
-    process.exit(ok ? 0 : 1);
+    process.exit(ok.gateway || ok.cloud ? 0 : 1);
   });
 } else if (args.includes('--help')) {
   console.log(`
-TG400 Local Polling Agent
+TG400 Local Polling Agent v3.0 (AI-Powered Self-Healing)
 
 Usage: node tg400-agent.js [options]
 
@@ -901,10 +1108,22 @@ Environment Variables:
   TG400_USERNAME     Gateway API username (default: admin)
   TG400_PASSWORD     Gateway API password (required)
   TG400_PORTS        Comma-separated port numbers (default: 1,2,3,4)
+  PBX_IP             S100 PBX IP address (default: 192.168.5.1)
+  PBX_USERNAME       PBX API username (default: admin)
+  PBX_PASSWORD       PBX API password
   SUPABASE_URL       Supabase project URL
   SUPABASE_ANON_KEY  Supabase anonymous key
-  POLL_INTERVAL      Polling interval in ms (default: 30000)
+  POLL_INTERVAL      SMS polling interval in ms (default: 30000)
+  CDR_POLL_INTERVAL  CDR polling interval in ms (default: 60000)
   AGENT_ID           Unique agent identifier (auto-generated if not set)
+
+Features:
+  - AI-powered error diagnostics
+  - Self-healing auto-recovery
+  - Dynamic configuration from cloud
+  - Exponential backoff retry
+  - Offline message queue
+  - Failed sync auto-reprocessing
 `);
   process.exit(0);
 } else {
@@ -919,5 +1138,18 @@ Environment Variables:
   process.on('SIGTERM', async () => {
     await agent.shutdown();
     process.exit(0);
+  });
+
+  // Handle uncaught exceptions for self-healing
+  process.on('uncaughtException', async (error) => {
+    console.error('[FATAL] Uncaught exception:', error);
+    await agent.reportError('uncaught_exception', error.message, { stack: error.stack });
+    await agent.shutdown();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', async (reason, promise) => {
+    console.error('[FATAL] Unhandled rejection:', reason);
+    await agent.reportError('unhandled_rejection', String(reason), {});
   });
 }
