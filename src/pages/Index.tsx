@@ -13,6 +13,7 @@ import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
 import { AiConfigPanel } from "@/components/AiConfigPanel";
+import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain } from "lucide-react";
@@ -187,6 +188,7 @@ const Index = () => {
           </TabsContent>
 
           <TabsContent value="ai" className="space-y-6">
+            <PredictiveMaintenancePanel />
             <div className="grid gap-6 lg:grid-cols-2">
               <ErrorLogsPanel />
               <AiConfigPanel />
