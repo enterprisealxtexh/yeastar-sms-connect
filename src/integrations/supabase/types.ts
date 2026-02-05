@@ -83,6 +83,84 @@ export type Database = {
         }
         Relationships: []
       }
+      call_records: {
+        Row: {
+          answer_time: string | null
+          callee_name: string | null
+          callee_number: string
+          caller_name: string | null
+          caller_number: string
+          created_at: string
+          direction: Database["public"]["Enums"]["call_direction"]
+          end_time: string | null
+          extension: string | null
+          external_id: string | null
+          hold_duration: number | null
+          id: string
+          metadata: Json | null
+          notes: string | null
+          recording_url: string | null
+          ring_duration: number | null
+          sim_port: number | null
+          start_time: string
+          status: Database["public"]["Enums"]["call_status"]
+          talk_duration: number | null
+          total_duration: number | null
+          transfer_to: string | null
+          updated_at: string
+        }
+        Insert: {
+          answer_time?: string | null
+          callee_name?: string | null
+          callee_number: string
+          caller_name?: string | null
+          caller_number: string
+          created_at?: string
+          direction?: Database["public"]["Enums"]["call_direction"]
+          end_time?: string | null
+          extension?: string | null
+          external_id?: string | null
+          hold_duration?: number | null
+          id?: string
+          metadata?: Json | null
+          notes?: string | null
+          recording_url?: string | null
+          ring_duration?: number | null
+          sim_port?: number | null
+          start_time?: string
+          status?: Database["public"]["Enums"]["call_status"]
+          talk_duration?: number | null
+          total_duration?: number | null
+          transfer_to?: string | null
+          updated_at?: string
+        }
+        Update: {
+          answer_time?: string | null
+          callee_name?: string | null
+          callee_number?: string
+          caller_name?: string | null
+          caller_number?: string
+          created_at?: string
+          direction?: Database["public"]["Enums"]["call_direction"]
+          end_time?: string | null
+          extension?: string | null
+          external_id?: string | null
+          hold_duration?: number | null
+          id?: string
+          metadata?: Json | null
+          notes?: string | null
+          recording_url?: string | null
+          ring_duration?: number | null
+          sim_port?: number | null
+          start_time?: string
+          status?: Database["public"]["Enums"]["call_status"]
+          talk_duration?: number | null
+          total_duration?: number | null
+          transfer_to?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       gateway_config: {
         Row: {
           api_password: string
@@ -264,6 +342,8 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "operator" | "viewer"
+      call_direction: "inbound" | "outbound" | "internal"
+      call_status: "answered" | "missed" | "busy" | "failed" | "voicemail"
       log_severity: "info" | "warning" | "error" | "success"
       sms_category:
         | "otp"
@@ -402,6 +482,8 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["admin", "operator", "viewer"],
+      call_direction: ["inbound", "outbound", "internal"],
+      call_status: ["answered", "missed", "busy", "failed", "voicemail"],
       log_severity: ["info", "warning", "error", "success"],
       sms_category: [
         "otp",

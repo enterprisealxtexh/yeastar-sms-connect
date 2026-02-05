@@ -25,19 +25,26 @@ const CONFIG = {
   TG400_PASSWORD: process.env.TG400_PASSWORD || '',
   TG400_PORTS: (process.env.TG400_PORTS || '1,2,3,4').split(',').map(Number),
   
+  // S100 PBX Settings (for CDR)
+  PBX_IP: process.env.PBX_IP || '192.168.5.1',
+  PBX_USERNAME: process.env.PBX_USERNAME || 'admin',
+  PBX_PASSWORD: process.env.PBX_PASSWORD || '',
+  PBX_WEB_PORT: parseInt(process.env.PBX_WEB_PORT || '443', 10),
+  
   // Supabase Settings
   SUPABASE_URL: process.env.SUPABASE_URL || 'https://aougsyziktukjvkmglzb.supabase.co',
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvdWdzeXppa3R1a2p2a21nbHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNDg5NTYsImV4cCI6MjA4NDkyNDk1Nn0.dcsZwEJXND9xdNA1dR-uHH7r6WylGwL7xVKJSFL_C44',
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvdWdzeXppa3R1a21nbHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNDg5NTYsImV4cCI6MjA4NDkyNDk1Nn0.dcsZwEJXND9xdNA1dR-uHH7r6WylGwL7xVKJSFL_C44',
   
   // Agent Settings
   POLL_INTERVAL: parseInt(process.env.POLL_INTERVAL || '30000', 10),
   HEARTBEAT_INTERVAL: parseInt(process.env.HEARTBEAT_INTERVAL || '60000', 10),
+  CDR_POLL_INTERVAL: parseInt(process.env.CDR_POLL_INTERVAL || '60000', 10),
   STATE_FILE: process.env.STATE_FILE || path.join(__dirname, '.agent-state.json'),
   QUEUE_FILE: process.env.QUEUE_FILE || path.join(__dirname, '.message-queue.json'),
   
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
-  VERSION: '2.0.0',
+  VERSION: '2.1.0',
 };
 // ========================================
 
@@ -47,12 +54,16 @@ class TG400Agent {
   constructor(config) {
     this.config = config;
     this.authHeader = Buffer.from(`${config.TG400_USERNAME}:${config.TG400_PASSWORD}`).toString('base64');
+    this.pbxAuthHeader = Buffer.from(`${config.PBX_USERNAME}:${config.PBX_PASSWORD}`).toString('base64');
     this.processedIds = new Set();
+    this.processedCallIds = new Set();
     this.messageQueue = [];
     this.isRunning = false;
     this.messagesSynced = 0;
+    this.callsSynced = 0;
     this.errorsCount = 0;
     this.startTime = new Date();
+    this.lastCdrTimestamp = null;
     
     // Load persistent state
     this.loadState();
@@ -66,8 +77,11 @@ class TG400Agent {
       if (fs.existsSync(this.config.STATE_FILE)) {
         const data = JSON.parse(fs.readFileSync(this.config.STATE_FILE, 'utf8'));
         this.processedIds = new Set(data.processedIds || []);
+        this.processedCallIds = new Set(data.processedCallIds || []);
         this.messagesSynced = data.messagesSynced || 0;
-        this.log('info', `Loaded state: ${this.processedIds.size} processed IDs`);
+        this.callsSynced = data.callsSynced || 0;
+        this.lastCdrTimestamp = data.lastCdrTimestamp || null;
+        this.log('info', `Loaded state: ${this.processedIds.size} SMS IDs, ${this.processedCallIds.size} call IDs`);
       }
     } catch (err) {
       this.log('warn', `Failed to load state: ${err.message}`);
@@ -77,8 +91,11 @@ class TG400Agent {
   saveState() {
     try {
       const data = {
-        processedIds: Array.from(this.processedIds).slice(-10000), // Keep last 10k
+        processedIds: Array.from(this.processedIds).slice(-10000),
+        processedCallIds: Array.from(this.processedCallIds).slice(-10000),
         messagesSynced: this.messagesSynced,
+        callsSynced: this.callsSynced,
+        lastCdrTimestamp: this.lastCdrTimestamp,
         lastSaved: new Date().toISOString(),
       };
       fs.writeFileSync(this.config.STATE_FILE, JSON.stringify(data, null, 2));
@@ -355,6 +372,151 @@ class TG400Agent {
     }
   }
 
+  // ========== CDR POLLING (S100 PBX) ==========
+
+  async fetchFromPbx(endpoint, retries = 3) {
+    const protocol = this.config.PBX_WEB_PORT === 443 ? 'https' : 'http';
+    const url = `${protocol}://${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}${endpoint}`;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Basic ${this.pbxAuthHeader}`,
+            'Content-Type': 'application/json',
+          },
+          signal: controller.signal,
+          // Skip TLS validation for self-signed certs
+          ...(protocol === 'https' && { rejectUnauthorized: false }),
+        });
+        
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        if (attempt === retries) {
+          this.log('error', `PBX request failed after ${retries} attempts: ${endpoint}`, { error: error.message });
+          this.errorsCount++;
+          return null;
+        }
+        await this.sleep(1000 * attempt);
+      }
+    }
+    return null;
+  }
+
+  async pollCdr() {
+    // Try different CDR API endpoints (Yeastar S100 API variations)
+    const endpoints = [
+      '/api/v1.0/cdr/get',
+      '/api/cdr',
+      '/cgi-bin/api-get_cdr',
+      '/api/v2.0.0/cdr/search',
+    ];
+
+    let cdrRecords = null;
+    for (const endpoint of endpoints) {
+      // Add time filter to get recent calls
+      const since = this.lastCdrTimestamp || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const result = await this.fetchFromPbx(`${endpoint}?start_time=${encodeURIComponent(since)}`);
+      
+      if (result && (result.cdr || result.data || result.records)) {
+        cdrRecords = result.cdr || result.data || result.records;
+        break;
+      }
+    }
+
+    if (!cdrRecords || !Array.isArray(cdrRecords)) {
+      return 0;
+    }
+
+    let newCount = 0;
+    for (const record of cdrRecords) {
+      const externalId = record.id || record.uniqueid || record.call_id || 
+        `${record.start || record.calldate}-${record.src || record.caller}-${record.dst || record.callee}`;
+      
+      if (this.processedCallIds.has(externalId)) {
+        continue;
+      }
+
+      // Map CDR fields to call_records schema
+      const callData = {
+        external_id: externalId,
+        caller_number: record.src || record.caller || record.from || 'Unknown',
+        callee_number: record.dst || record.callee || record.to || 'Unknown',
+        caller_name: record.clid || record.caller_name || null,
+        callee_name: record.callee_name || null,
+        direction: this.mapCallDirection(record),
+        status: this.mapCallStatus(record.disposition || record.status),
+        sim_port: record.trunk ? parseInt(record.trunk.replace(/\D/g, ''), 10) : null,
+        extension: record.dstchannel || record.extension || record.ext || null,
+        start_time: record.start || record.calldate || record.start_time || new Date().toISOString(),
+        answer_time: record.answer || record.answer_time || null,
+        end_time: record.end || record.end_time || null,
+        ring_duration: parseInt(record.ring || record.ring_duration || '0', 10),
+        talk_duration: parseInt(record.billsec || record.duration || record.talk_duration || '0', 10),
+        hold_duration: parseInt(record.hold || record.hold_duration || '0', 10),
+        total_duration: parseInt(record.duration || record.total || '0', 10),
+        recording_url: record.recordingfile || record.recording || null,
+        transfer_to: record.dstchannel !== record.lastdstchannel ? record.lastdstchannel : null,
+        metadata: {
+          raw: record,
+          synced_by: this.config.AGENT_ID,
+        },
+      };
+
+      const success = await this.pushToSupabase('call_records', callData);
+      
+      if (success) {
+        this.processedCallIds.add(externalId);
+        this.callsSynced++;
+        newCount++;
+        
+        // Update timestamp for next poll
+        const callTime = new Date(callData.start_time);
+        if (!this.lastCdrTimestamp || callTime > new Date(this.lastCdrTimestamp)) {
+          this.lastCdrTimestamp = callData.start_time;
+        }
+        
+        this.log('success', `CDR synced`, { caller: callData.caller_number, callee: callData.callee_number, status: callData.status });
+      } else {
+        this.messageQueue.push({ table: 'call_records', data: callData, timestamp: Date.now() });
+        this.saveQueue();
+        this.log('warn', `CDR queued for later sync`);
+      }
+    }
+
+    return newCount;
+  }
+
+  mapCallDirection(record) {
+    // Determine direction based on channel/trunk info
+    if (record.direction) return record.direction;
+    if (record.dcontext === 'from-internal' || record.src?.startsWith('ext')) return 'outbound';
+    if (record.dcontext === 'from-trunk' || record.channel?.includes('GSM')) return 'inbound';
+    return 'internal';
+  }
+
+  mapCallStatus(disposition) {
+    const mapping = {
+      'ANSWERED': 'answered',
+      'NO ANSWER': 'missed',
+      'BUSY': 'busy',
+      'FAILED': 'failed',
+      'VOICEMAIL': 'voicemail',
+      'CONGESTION': 'failed',
+    };
+    return mapping[String(disposition).toUpperCase()] || 'missed';
+  }
+
   // ========== MAIN LOOP ==========
 
   async pollAllPorts() {
@@ -388,10 +550,29 @@ class TG400Agent {
     }
   }
 
+  async pollCalls() {
+    try {
+      const newCalls = await this.pollCdr();
+      this.saveState();
+
+      if (newCalls > 0) {
+        await this.pushToSupabase('activity_logs', {
+          event_type: 'cdr_sync',
+          message: `Synced ${newCalls} new call records`,
+          severity: 'success',
+          metadata: { source: 'local-agent', agent_id: this.config.AGENT_ID, count: newCalls },
+        });
+      }
+    } catch (error) {
+      this.log('error', 'Error polling CDR', { error: error.message });
+      this.errorsCount++;
+    }
+  }
+
   async testConnection() {
     this.log('info', 'Testing connections...');
     
-    // Test gateway
+    // Test TG400 gateway
     const gatewayEndpoints = [
       '/api/v1.0/system/status',
       '/cgi-bin/api-get_status',
@@ -411,12 +592,30 @@ class TG400Agent {
       this.log('error', `Cannot reach gateway at ${this.config.TG400_IP}`);
     }
 
+    // Test S100 PBX
+    let pbxOk = false;
+    const pbxEndpoints = [
+      '/api/v1.0/system/status',
+      '/api/status',
+    ];
+    for (const endpoint of pbxEndpoints) {
+      const result = await this.fetchFromPbx(endpoint, 1);
+      if (result) {
+        this.log('success', `PBX reachable at ${this.config.PBX_IP}`);
+        pbxOk = true;
+        break;
+      }
+    }
+    if (!pbxOk) {
+      this.log('warn', `Cannot reach PBX at ${this.config.PBX_IP} (CDR sync disabled)`);
+    }
+
     // Test Supabase
     const cloudOk = await this.pushToSupabase('activity_logs', {
       event_type: 'connection_test',
       message: 'Local agent connection test',
       severity: 'info',
-      metadata: { source: 'local-agent', agent_id: this.config.AGENT_ID },
+      metadata: { source: 'local-agent', agent_id: this.config.AGENT_ID, pbx_reachable: pbxOk },
     });
     
     if (cloudOk) {
@@ -425,7 +624,7 @@ class TG400Agent {
       this.log('error', 'Cannot reach cloud backend');
     }
 
-    return gatewayOk && cloudOk;
+    return { gateway: gatewayOk, pbx: pbxOk, cloud: cloudOk };
   }
 
   sleep(ms) {
@@ -438,25 +637,39 @@ class TG400Agent {
     console.log('\x1b[36m╚════════════════════════════════════════════╝\x1b[0m\n');
     
     this.log('info', `Agent ID: ${this.config.AGENT_ID}`);
-    this.log('info', `Gateway: ${this.config.TG400_IP}`);
+    this.log('info', `TG400 Gateway: ${this.config.TG400_IP}`);
+    this.log('info', `S100 PBX: ${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}`);
     this.log('info', `Ports: ${this.config.TG400_PORTS.join(', ')}`);
-    this.log('info', `Poll interval: ${this.config.POLL_INTERVAL}ms`);
+    this.log('info', `SMS Poll interval: ${this.config.POLL_INTERVAL}ms`);
+    this.log('info', `CDR Poll interval: ${this.config.CDR_POLL_INTERVAL}ms`);
 
     // Test connections
-    await this.testConnection();
+    const connections = await this.testConnection();
     
     this.isRunning = true;
 
-    // Initial poll
+    // Initial polls
     await this.pollAllPorts();
+    if (connections.pbx) {
+      await this.pollCalls();
+    }
     await this.upsertHeartbeat();
 
-    // Polling loop
+    // SMS Polling loop
     setInterval(async () => {
       if (this.isRunning) {
         await this.pollAllPorts();
       }
     }, this.config.POLL_INTERVAL);
+
+    // CDR Polling loop (separate interval for calls)
+    if (connections.pbx) {
+      setInterval(async () => {
+        if (this.isRunning) {
+          await this.pollCalls();
+        }
+      }, this.config.CDR_POLL_INTERVAL);
+    }
 
     // Heartbeat loop
     setInterval(async () => {
