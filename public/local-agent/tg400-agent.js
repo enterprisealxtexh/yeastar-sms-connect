@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * TG400 Local Polling Agent v3.0 - AI-Powered Self-Healing
+ * TG400 Local Polling Agent v4.0 - AI-Powered Auto-Update
  * 
  * Features:
  * - Persistent state file (survives restarts)
@@ -12,6 +12,8 @@
  * - Self-healing auto-recovery
  * - Dynamic configuration from cloud
  * - Failed sync auto-reprocessing
+ * - AUTO-UPDATE: Checks for new versions and self-updates
+ * - PREDICTIVE MAINTENANCE: AI predicts issues before they happen
  * 
  * Installation: See /local-agent/install.sh
  */
@@ -20,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { execSync, spawn } = require('child_process');
 
 // ============ CONFIGURATION ============
 const CONFIG = {
@@ -45,6 +48,8 @@ const CONFIG = {
   CDR_POLL_INTERVAL: parseInt(process.env.CDR_POLL_INTERVAL || '60000', 10),
   CALL_QUEUE_POLL_INTERVAL: parseInt(process.env.CALL_QUEUE_POLL_INTERVAL || '5000', 10),
   CONFIG_SYNC_INTERVAL: parseInt(process.env.CONFIG_SYNC_INTERVAL || '300000', 10), // 5 minutes
+  UPDATE_CHECK_INTERVAL: parseInt(process.env.UPDATE_CHECK_INTERVAL || '3600000', 10), // 1 hour
+  PREDICTIVE_CHECK_INTERVAL: parseInt(process.env.PREDICTIVE_CHECK_INTERVAL || '900000', 10), // 15 minutes
   STATE_FILE: process.env.STATE_FILE || path.join(__dirname, '.agent-state.json'),
   QUEUE_FILE: process.env.QUEUE_FILE || path.join(__dirname, '.message-queue.json'),
   
@@ -54,9 +59,13 @@ const CONFIG = {
   AUTO_RESTART_DELAY: parseInt(process.env.AUTO_RESTART_DELAY || '10000', 10),
   ERROR_THRESHOLD_FOR_RESTART: parseInt(process.env.ERROR_THRESHOLD_FOR_RESTART || '10', 10),
   
+  // Auto-update settings
+  AUTO_UPDATE_ENABLED: process.env.AUTO_UPDATE_ENABLED !== 'false',
+  AGENT_SCRIPT_PATH: process.env.AGENT_SCRIPT_PATH || __filename,
+  
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
-  VERSION: '3.0.0',
+  VERSION: '4.0.0',
 };
 // ========================================
 
@@ -1022,18 +1031,189 @@ class TG400Agent {
         await this.syncConfigFromCloud();
       }
     }, this.config.CONFIG_SYNC_INTERVAL));
+
+    // Auto-update check loop
+    if (this.config.AUTO_UPDATE_ENABLED) {
+      this.intervals.push(setInterval(async () => {
+        if (this.isRunning) {
+          await this.checkForUpdates();
+        }
+      }, this.config.UPDATE_CHECK_INTERVAL));
+    }
+
+    // Predictive maintenance loop
+    this.intervals.push(setInterval(async () => {
+      if (this.isRunning) {
+        await this.runPredictiveMaintenance();
+      }
+    }, this.config.PREDICTIVE_CHECK_INTERVAL));
+  }
+
+  // ========== AUTO-UPDATE SYSTEM ==========
+
+  async checkForUpdates() {
+    try {
+      const response = await fetch(`${this.config.SUPABASE_URL}/functions/v1/ai-diagnostics`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'check_updates',
+          agent_version: this.config.VERSION,
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const result = await response.json();
+      
+      if (result.update_available && result.latest_version) {
+        this.log('info', `Update available: v${result.latest_version.version} (current: v${this.config.VERSION})`);
+        
+        if (result.latest_version.is_critical) {
+          this.log('warn', 'CRITICAL update - auto-installing...');
+          await this.performUpdate(result.latest_version);
+        } else {
+          this.log('info', `Release notes: ${result.latest_version.release_notes || 'No notes'}`);
+          // For non-critical updates, just log and let admin decide
+          await this.pushToSupabase('activity_logs', {
+            event_type: 'update_available',
+            message: `Agent update available: v${result.latest_version.version}`,
+            severity: 'info',
+            metadata: {
+              current_version: this.config.VERSION,
+              new_version: result.latest_version.version,
+              release_notes: result.latest_version.release_notes,
+              is_critical: result.latest_version.is_critical,
+              download_url: result.latest_version.download_url,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      this.log('warn', `Update check failed: ${error.message}`);
+    }
+  }
+
+  async performUpdate(updateInfo) {
+    if (!updateInfo.download_url) {
+      this.log('error', 'No download URL for update');
+      return;
+    }
+
+    try {
+      this.log('info', `Downloading update from ${updateInfo.download_url}...`);
+      
+      const response = await fetch(updateInfo.download_url);
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      const newScript = await response.text();
+      const backupPath = `${this.config.AGENT_SCRIPT_PATH}.backup`;
+      const tempPath = `${this.config.AGENT_SCRIPT_PATH}.new`;
+
+      // Create backup
+      fs.copyFileSync(this.config.AGENT_SCRIPT_PATH, backupPath);
+      this.log('info', 'Created backup of current agent');
+
+      // Write new version
+      fs.writeFileSync(tempPath, newScript);
+      fs.renameSync(tempPath, this.config.AGENT_SCRIPT_PATH);
+      this.log('success', `Updated to v${updateInfo.version}`);
+
+      // Log the update
+      await this.pushToSupabase('activity_logs', {
+        event_type: 'agent_updated',
+        message: `Agent auto-updated from v${this.config.VERSION} to v${updateInfo.version}`,
+        severity: 'success',
+        metadata: {
+          old_version: this.config.VERSION,
+          new_version: updateInfo.version,
+          agent_id: this.config.AGENT_ID,
+        },
+      });
+
+      // Restart the agent
+      this.log('info', 'Restarting agent with new version...');
+      await this.shutdown();
+      
+      // Spawn new process and exit
+      const newProcess = spawn(process.argv[0], [this.config.AGENT_SCRIPT_PATH], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      newProcess.unref();
+      
+      process.exit(0);
+    } catch (error) {
+      this.log('error', `Update failed: ${error.message}`);
+      await this.pushToSupabase('activity_logs', {
+        event_type: 'update_failed',
+        message: `Agent update failed: ${error.message}`,
+        severity: 'error',
+        metadata: { error: error.message, agent_id: this.config.AGENT_ID },
+      });
+    }
+  }
+
+  // ========== PREDICTIVE MAINTENANCE ==========
+
+  async runPredictiveMaintenance() {
+    try {
+      const response = await fetch(`${this.config.SUPABASE_URL}/functions/v1/ai-diagnostics`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'predict_issues' }),
+      });
+
+      if (!response.ok) return;
+
+      const result = await response.json();
+      
+      if (result.prediction) {
+        const { risk_level, prediction, recommended_action, auto_applied } = result.prediction;
+        
+        if (risk_level === 'high' || risk_level === 'critical') {
+          this.log('warn', `[PREDICTIVE] ${risk_level.toUpperCase()}: ${prediction}`);
+          this.log('info', `[PREDICTIVE] Recommended: ${recommended_action}`);
+          
+          if (auto_applied) {
+            this.log('success', '[PREDICTIVE] Auto-fix applied');
+            // Refresh config to pick up changes
+            await this.syncConfigFromCloud();
+          }
+        } else if (risk_level === 'medium') {
+          this.log('info', `[PREDICTIVE] ${prediction}`);
+          if (auto_applied) {
+            await this.syncConfigFromCloud();
+          }
+        }
+        // Low risk - silent
+      }
+    } catch (error) {
+      // Silent fail for predictive maintenance
+    }
   }
 
   async start() {
-    console.log('\n\x1b[36m╔════════════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[36m║   TG400 Local Agent v' + this.config.VERSION.padEnd(12) + '(AI-Powered) ║\x1b[0m');
-    console.log('\x1b[36m╚════════════════════════════════════════════════╝\x1b[0m\n');
+    console.log('\n\x1b[36m╔════════════════════════════════════════════════════════╗\x1b[0m');
+    console.log('\x1b[36m║   TG400 Local Agent v' + this.config.VERSION.padEnd(10) + '(AI Auto-Update)     ║\x1b[0m');
+    console.log('\x1b[36m╚════════════════════════════════════════════════════════╝\x1b[0m\n');
     
     this.log('info', `Agent ID: ${this.config.AGENT_ID}`);
     this.log('info', `TG400 Gateway: ${this.config.TG400_IP}`);
     this.log('info', `S100 PBX: ${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}`);
     this.log('info', `Ports: ${this.config.TG400_PORTS.join(', ')}`);
-    this.log('info', `Features: Self-healing, AI diagnostics, Dynamic config`);
+    this.log('info', `Features: Self-healing, AI diagnostics, Auto-update, Predictive maintenance`);
+    this.log('info', `Auto-update: ${this.config.AUTO_UPDATE_ENABLED ? 'Enabled' : 'Disabled'}`);
 
     // Sync config from cloud first
     await this.syncConfigFromCloud();
@@ -1095,7 +1275,7 @@ if (args.includes('--test')) {
   });
 } else if (args.includes('--help')) {
   console.log(`
-TG400 Local Polling Agent v3.0 (AI-Powered Self-Healing)
+TG400 Local Polling Agent v4.0 (AI Auto-Update)
 
 Usage: node tg400-agent.js [options]
 
@@ -1104,18 +1284,19 @@ Options:
   --help     Show this help message
 
 Environment Variables:
-  TG400_IP           Gateway IP address (default: 192.168.5.3)
-  TG400_USERNAME     Gateway API username (default: admin)
-  TG400_PASSWORD     Gateway API password (required)
-  TG400_PORTS        Comma-separated port numbers (default: 1,2,3,4)
-  PBX_IP             S100 PBX IP address (default: 192.168.5.1)
-  PBX_USERNAME       PBX API username (default: admin)
-  PBX_PASSWORD       PBX API password
-  SUPABASE_URL       Supabase project URL
-  SUPABASE_ANON_KEY  Supabase anonymous key
-  POLL_INTERVAL      SMS polling interval in ms (default: 30000)
-  CDR_POLL_INTERVAL  CDR polling interval in ms (default: 60000)
-  AGENT_ID           Unique agent identifier (auto-generated if not set)
+  TG400_IP              Gateway IP address (default: 192.168.5.3)
+  TG400_USERNAME        Gateway API username (default: admin)
+  TG400_PASSWORD        Gateway API password (required)
+  TG400_PORTS           Comma-separated port numbers (default: 1,2,3,4)
+  PBX_IP                S100 PBX IP address (default: 192.168.5.1)
+  PBX_USERNAME          PBX API username (default: admin)
+  PBX_PASSWORD          PBX API password
+  SUPABASE_URL          Supabase project URL
+  SUPABASE_ANON_KEY     Supabase anonymous key
+  POLL_INTERVAL         SMS polling interval in ms (default: 30000)
+  CDR_POLL_INTERVAL     CDR polling interval in ms (default: 60000)
+  AGENT_ID              Unique agent identifier (auto-generated if not set)
+  AUTO_UPDATE_ENABLED   Enable auto-updates (default: true)
 
 Features:
   - AI-powered error diagnostics
@@ -1124,6 +1305,8 @@ Features:
   - Exponential backoff retry
   - Offline message queue
   - Failed sync auto-reprocessing
+  - AUTO-UPDATE: Checks for new versions hourly
+  - PREDICTIVE MAINTENANCE: AI predicts issues before they happen
 `);
   process.exit(0);
 } else {
