@@ -39,12 +39,13 @@ const CONFIG = {
   POLL_INTERVAL: parseInt(process.env.POLL_INTERVAL || '30000', 10),
   HEARTBEAT_INTERVAL: parseInt(process.env.HEARTBEAT_INTERVAL || '60000', 10),
   CDR_POLL_INTERVAL: parseInt(process.env.CDR_POLL_INTERVAL || '60000', 10),
+  CALL_QUEUE_POLL_INTERVAL: parseInt(process.env.CALL_QUEUE_POLL_INTERVAL || '5000', 10),
   STATE_FILE: process.env.STATE_FILE || path.join(__dirname, '.agent-state.json'),
   QUEUE_FILE: process.env.QUEUE_FILE || path.join(__dirname, '.message-queue.json'),
   
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
-  VERSION: '2.1.0',
+  VERSION: '2.2.0',
 };
 // ========================================
 
@@ -517,6 +518,171 @@ class TG400Agent {
     return mapping[String(disposition).toUpperCase()] || 'missed';
   }
 
+  // ========== CLICK-TO-CALL (Call Queue Processing) ==========
+
+  async fetchPendingCalls() {
+    const url = `${this.config.SUPABASE_URL}/rest/v1/call_queue?status=eq.pending&order=priority.desc,requested_at.asc&limit=5`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      this.log('warn', `Failed to fetch call queue: ${error.message}`);
+      return [];
+    }
+  }
+
+  async updateCallStatus(callId, status, result = null, errorMessage = null) {
+    const url = `${this.config.SUPABASE_URL}/rest/v1/call_queue?id=eq.${callId}`;
+    const data = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    
+    if (status === 'in_progress') {
+      data.picked_up_at = new Date().toISOString();
+    }
+    if (status === 'completed' || status === 'failed') {
+      data.completed_at = new Date().toISOString();
+    }
+    if (result) {
+      data.result = result;
+    }
+    if (errorMessage) {
+      data.error_message = errorMessage;
+    }
+
+    try {
+      await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'apikey': this.config.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+    } catch (error) {
+      this.log('error', `Failed to update call status: ${error.message}`);
+    }
+  }
+
+  async initiateCallViaPbx(fromExtension, toNumber) {
+    // Try different PBX originate API endpoints (Yeastar S100 API variations)
+    const endpoints = [
+      '/api/v1.0/call/dial',
+      '/api/v2.0.0/call/dial',
+      '/cgi-bin/api-dial',
+      '/api/call/originate',
+    ];
+
+    const protocol = this.config.PBX_WEB_PORT === 443 ? 'https' : 'http';
+    
+    for (const endpoint of endpoints) {
+      const url = `${protocol}://${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}${endpoint}`;
+      
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${this.pbxAuthHeader}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            caller: fromExtension,
+            callee: toNumber,
+            extension: fromExtension,
+            extnum: fromExtension,
+            number: toNumber,
+            dst: toNumber,
+          }),
+        });
+
+        if (response.ok) {
+          const result = await response.json().catch(() => ({ success: true }));
+          this.log('success', `Call initiated`, { from: fromExtension, to: toNumber });
+          return { success: true, result };
+        }
+      } catch (error) {
+        // Try next endpoint
+      }
+    }
+
+    throw new Error('Failed to initiate call via PBX - no working API endpoint found');
+  }
+
+  async processCallQueue() {
+    const pendingCalls = await this.fetchPendingCalls();
+    
+    if (pendingCalls.length === 0) {
+      return;
+    }
+
+    for (const call of pendingCalls) {
+      try {
+        // Mark as in progress
+        await this.updateCallStatus(call.id, 'in_progress');
+        this.log('info', `Processing call request`, { to: call.to_number, from: call.from_extension });
+
+        // Initiate the call
+        const result = await this.initiateCallViaPbx(call.from_extension, call.to_number);
+        
+        // Mark as completed
+        await this.updateCallStatus(call.id, 'completed', JSON.stringify(result.result));
+        
+        // Log activity
+        await this.pushToSupabase('activity_logs', {
+          event_type: 'call_initiated',
+          message: `Call initiated from ${call.from_extension} to ${call.to_number}`,
+          severity: 'success',
+          metadata: { 
+            source: 'local-agent', 
+            agent_id: this.config.AGENT_ID,
+            call_id: call.id,
+          },
+        });
+
+      } catch (error) {
+        this.log('error', `Failed to initiate call`, { to: call.to_number, error: error.message });
+        await this.updateCallStatus(call.id, 'failed', null, error.message);
+        this.errorsCount++;
+        
+        // Log activity
+        await this.pushToSupabase('activity_logs', {
+          event_type: 'call_failed',
+          message: `Failed to initiate call to ${call.to_number}: ${error.message}`,
+          severity: 'error',
+          metadata: { 
+            source: 'local-agent', 
+            agent_id: this.config.AGENT_ID,
+            call_id: call.id,
+          },
+        });
+      }
+    }
+  }
+      'ANSWERED': 'answered',
+      'NO ANSWER': 'missed',
+      'BUSY': 'busy',
+      'FAILED': 'failed',
+      'VOICEMAIL': 'voicemail',
+      'CONGESTION': 'failed',
+    };
+    return mapping[String(disposition).toUpperCase()] || 'missed';
+  }
+
   // ========== MAIN LOOP ==========
 
   async pollAllPorts() {
@@ -642,6 +808,7 @@ class TG400Agent {
     this.log('info', `Ports: ${this.config.TG400_PORTS.join(', ')}`);
     this.log('info', `SMS Poll interval: ${this.config.POLL_INTERVAL}ms`);
     this.log('info', `CDR Poll interval: ${this.config.CDR_POLL_INTERVAL}ms`);
+    this.log('info', `Call Queue Poll interval: ${this.config.CALL_QUEUE_POLL_INTERVAL}ms`);
 
     // Test connections
     const connections = await this.testConnection();
@@ -652,6 +819,7 @@ class TG400Agent {
     await this.pollAllPorts();
     if (connections.pbx) {
       await this.pollCalls();
+      await this.processCallQueue();
     }
     await this.upsertHeartbeat();
 
@@ -669,6 +837,13 @@ class TG400Agent {
           await this.pollCalls();
         }
       }, this.config.CDR_POLL_INTERVAL);
+
+      // Call Queue Polling loop (for click-to-call)
+      setInterval(async () => {
+        if (this.isRunning) {
+          await this.processCallQueue();
+        }
+      }, this.config.CALL_QUEUE_POLL_INTERVAL);
     }
 
     // Heartbeat loop

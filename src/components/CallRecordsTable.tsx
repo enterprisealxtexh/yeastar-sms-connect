@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Phone, Search, Clock, Timer } from "lucide-react";
 import { CallStatusBadge, CallDirectionBadge } from "./CallStatusBadge";
+import { CallBackButton } from "./CallBackButton";
 import { CallRecord } from "@/hooks/useCallRecords";
 import { format } from "date-fns";
 
@@ -118,54 +119,63 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                       Talk
                     </div>
                   </TableHead>
+                  <TableHead className="text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredCalls.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       No call records found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredCalls.map((call) => (
-                    <TableRow key={call.id} className="hover:bg-muted/20">
-                      <TableCell className="font-mono text-xs">
-                        {format(new Date(call.start_time), "MMM dd HH:mm")}
-                      </TableCell>
-                      <TableCell>
-                        <CallDirectionBadge direction={call.direction} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{call.caller_number}</span>
-                          {call.caller_name && (
-                            <span className="text-xs text-muted-foreground">{call.caller_name}</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{call.callee_number}</span>
-                          {call.callee_name && (
-                            <span className="text-xs text-muted-foreground">{call.callee_name}</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <CallStatusBadge status={call.status} />
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {call.extension || "—"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatDuration(call.ring_duration)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatDuration(call.talk_duration)}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  filteredCalls.map((call) => {
+                    // Determine which number to call back based on direction
+                    const callBackNumber = call.direction === "inbound" ? call.caller_number : call.callee_number;
+                    
+                    return (
+                      <TableRow key={call.id} className="hover:bg-muted/20">
+                        <TableCell className="font-mono text-xs">
+                          {format(new Date(call.start_time), "MMM dd HH:mm")}
+                        </TableCell>
+                        <TableCell>
+                          <CallDirectionBadge direction={call.direction} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{call.caller_number}</span>
+                            {call.caller_name && (
+                              <span className="text-xs text-muted-foreground">{call.caller_name}</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{call.callee_number}</span>
+                            {call.callee_name && (
+                              <span className="text-xs text-muted-foreground">{call.callee_name}</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <CallStatusBadge status={call.status} />
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          {call.extension || "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {formatDuration(call.ring_duration)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {formatDuration(call.talk_duration)}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <CallBackButton phoneNumber={callBackNumber} />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

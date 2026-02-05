@@ -9,6 +9,8 @@ import { ConfigurationPanel } from "@/components/ConfigurationPanel";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { CallRecordsTable } from "@/components/CallRecordsTable";
 import { CallStatsCards } from "@/components/CallStatsCards";
+import { QuickDialWidget } from "@/components/QuickDialWidget";
+import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall } from "lucide-react";
@@ -145,7 +147,15 @@ const Index = () => {
 
           <TabsContent value="calls" className="space-y-6">
             <CallStatsCards stats={callStats} isLoading={callStatsLoading} />
-            <CallRecordsTable calls={calls} isLoading={callsLoading} />
+            <div className="grid gap-6 lg:grid-cols-3">
+              <div className="lg:col-span-2">
+                <CallRecordsTable calls={calls} isLoading={callsLoading} />
+              </div>
+              <div className="space-y-6">
+                <QuickDialWidget />
+                <CallQueueStatus />
+              </div>
+            </div>
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">

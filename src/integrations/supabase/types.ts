@@ -83,6 +83,57 @@ export type Database = {
         }
         Relationships: []
       }
+      call_queue: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          from_extension: string
+          id: string
+          metadata: Json | null
+          picked_up_at: string | null
+          priority: number
+          requested_at: string
+          requested_by: string | null
+          result: string | null
+          status: string
+          to_number: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          from_extension: string
+          id?: string
+          metadata?: Json | null
+          picked_up_at?: string | null
+          priority?: number
+          requested_at?: string
+          requested_by?: string | null
+          result?: string | null
+          status?: string
+          to_number: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          from_extension?: string
+          id?: string
+          metadata?: Json | null
+          picked_up_at?: string | null
+          priority?: number
+          requested_at?: string
+          requested_by?: string | null
+          result?: string | null
+          status?: string
+          to_number?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       call_records: {
         Row: {
           answer_time: string | null
