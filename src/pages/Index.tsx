@@ -7,14 +7,17 @@ import { SmsInbox } from "@/components/SmsInbox";
 import { ActivityLog } from "@/components/ActivityLog";
 import { ConfigurationPanel } from "@/components/ConfigurationPanel";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
+import { CallRecordsTable } from "@/components/CallRecordsTable";
+import { CallStatsCards } from "@/components/CallStatsCards";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3 } from "lucide-react";
+import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall } from "lucide-react";
 import { toast } from "sonner";
 import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useActivityLogs } from "@/hooks/useActivityLogs";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { useCallRecords, useCallStats } from "@/hooks/useCallRecords";
 
 const Index = () => {
   const queryClient = useQueryClient();
@@ -26,6 +29,8 @@ const Index = () => {
   const { data: messages = [], isLoading: messagesLoading } = useSmsMessages();
   const { data: logs = [], isLoading: logsLoading } = useActivityLogs();
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
+  const { data: calls = [], isLoading: callsLoading } = useCallRecords();
+  const { data: callStats, isLoading: callStatsLoading } = useCallStats();
 
   const handleRefresh = async () => {
     await queryClient.invalidateQueries();
@@ -55,6 +60,10 @@ const Index = () => {
             <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <LayoutDashboard className="w-4 h-4" />
               Dashboard
+            </TabsTrigger>
+            <TabsTrigger value="calls" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <PhoneCall className="w-4 h-4" />
+              Calls
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <BarChart3 className="w-4 h-4" />
@@ -132,6 +141,11 @@ const Index = () => {
                 <ActivityLog logs={logs} />
               )}
             </div>
+          </TabsContent>
+
+          <TabsContent value="calls" className="space-y-6">
+            <CallStatsCards stats={callStats} isLoading={callStatsLoading} />
+            <CallRecordsTable calls={calls} isLoading={callsLoading} />
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
