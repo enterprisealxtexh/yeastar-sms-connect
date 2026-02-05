@@ -1,9 +1,18 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+interface ErrorLog {
+  id: string;
+  error_type: string;
+  error_message: string;
+  error_context?: Record<string, unknown>;
+  agent_id?: string;
+  created_at: string;
+}
 
 interface DiagnosisResult {
   diagnosis: string;
