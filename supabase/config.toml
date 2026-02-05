@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.categorize-sms]
 verify_jwt = true
+
+[functions.ai-diagnostics]
+verify_jwt = false

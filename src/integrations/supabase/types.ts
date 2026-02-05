@@ -44,6 +44,36 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_config: {
+        Row: {
+          ai_tuned: boolean | null
+          config_key: string
+          config_value: Json
+          created_at: string
+          id: string
+          last_tuned_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          ai_tuned?: boolean | null
+          config_key: string
+          config_value: Json
+          created_at?: string
+          id?: string
+          last_tuned_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          ai_tuned?: boolean | null
+          config_key?: string
+          config_value?: Json
+          created_at?: string
+          id?: string
+          last_tuned_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       agent_heartbeat: {
         Row: {
           agent_id: string
@@ -80,6 +110,36 @@ export type Database = {
           metadata?: Json | null
           status?: string
           version?: string | null
+        }
+        Relationships: []
+      }
+      agent_updates: {
+        Row: {
+          created_at: string
+          download_url: string | null
+          id: string
+          is_critical: boolean | null
+          release_notes: string | null
+          released_at: string
+          version: string
+        }
+        Insert: {
+          created_at?: string
+          download_url?: string | null
+          id?: string
+          is_critical?: boolean | null
+          release_notes?: string | null
+          released_at?: string
+          version: string
+        }
+        Update: {
+          created_at?: string
+          download_url?: string | null
+          id?: string
+          is_critical?: boolean | null
+          release_notes?: string | null
+          released_at?: string
+          version?: string
         }
         Relationships: []
       }
@@ -212,6 +272,48 @@ export type Database = {
         }
         Relationships: []
       }
+      error_logs: {
+        Row: {
+          agent_id: string | null
+          ai_diagnosis: string | null
+          ai_suggested_fix: string | null
+          auto_fix_attempted: boolean | null
+          auto_fix_result: string | null
+          created_at: string
+          error_context: Json | null
+          error_message: string
+          error_type: string
+          id: string
+          resolved: boolean | null
+        }
+        Insert: {
+          agent_id?: string | null
+          ai_diagnosis?: string | null
+          ai_suggested_fix?: string | null
+          auto_fix_attempted?: boolean | null
+          auto_fix_result?: string | null
+          created_at?: string
+          error_context?: Json | null
+          error_message: string
+          error_type: string
+          id?: string
+          resolved?: boolean | null
+        }
+        Update: {
+          agent_id?: string | null
+          ai_diagnosis?: string | null
+          ai_suggested_fix?: string | null
+          auto_fix_attempted?: boolean | null
+          auto_fix_result?: string | null
+          created_at?: string
+          error_context?: Json | null
+          error_message?: string
+          error_type?: string
+          id?: string
+          resolved?: boolean | null
+        }
+        Relationships: []
+      }
       gateway_config: {
         Row: {
           api_password: string
@@ -311,6 +413,33 @@ export type Database = {
           port_number?: number
           signal_strength?: number | null
           updated_at?: string
+        }
+        Relationships: []
+      }
+      sms_category_feedback: {
+        Row: {
+          corrected_by: string | null
+          corrected_category: string
+          created_at: string
+          id: string
+          original_category: string
+          sms_id: string
+        }
+        Insert: {
+          corrected_by?: string | null
+          corrected_category: string
+          created_at?: string
+          id?: string
+          original_category: string
+          sms_id: string
+        }
+        Update: {
+          corrected_by?: string | null
+          corrected_category?: string
+          created_at?: string
+          id?: string
+          original_category?: string
+          sms_id?: string
         }
         Relationships: []
       }
