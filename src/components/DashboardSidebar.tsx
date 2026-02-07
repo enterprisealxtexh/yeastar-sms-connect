@@ -10,10 +10,14 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  Menu,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 export type DashboardTab =
   | "dashboard"
@@ -47,9 +51,97 @@ interface DashboardSidebarProps {
   onTabChange: (tab: DashboardTab) => void;
 }
 
-export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarProps) => {
-  const [collapsed, setCollapsed] = useState(false);
+const NavItems = ({
+  activeTab,
+  onTabChange,
+  collapsed,
+  onItemClick,
+}: {
+  activeTab: DashboardTab;
+  onTabChange: (tab: DashboardTab) => void;
+  collapsed: boolean;
+  onItemClick?: () => void;
+}) => (
+  <nav className="flex-1 flex flex-col gap-1 px-2">
+    {navItems.map((item) => {
+      const isActive = activeTab === item.id;
+      const button = (
+        <button
+          key={item.id}
+          onClick={() => {
+            onTabChange(item.id);
+            onItemClick?.();
+          }}
+          className={cn(
+            "flex items-center gap-3 w-full rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+            isActive
+              ? "bg-primary text-primary-foreground shadow-md"
+              : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+            collapsed && "justify-center px-0"
+          )}
+        >
+          <item.icon className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="truncate">{item.label}</span>}
+        </button>
+      );
 
+      if (collapsed) {
+        return (
+          <Tooltip key={item.id}>
+            <TooltipTrigger asChild>{button}</TooltipTrigger>
+            <TooltipContent side="right" className="bg-popover text-popover-foreground border-border">
+              {item.label}
+            </TooltipContent>
+          </Tooltip>
+        );
+      }
+
+      return button;
+    })}
+  </nav>
+);
+
+export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarProps) => {
+  const isMobile = useIsMobile();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close mobile drawer on resize to desktop
+  useEffect(() => {
+    if (!isMobile) setMobileOpen(false);
+  }, [isMobile]);
+
+  // Mobile: floating trigger + sheet drawer
+  if (isMobile) {
+    return (
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="fixed bottom-4 left-4 z-50 h-12 w-12 rounded-full shadow-lg border-border/50 bg-card"
+          >
+            <Menu className="w-5 h-5" />
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="left" className="w-[240px] p-0 bg-sidebar border-border/50">
+          <div className="flex items-center justify-between p-4 border-b border-border/50">
+            <span className="text-sm font-semibold text-foreground">Navigation</span>
+          </div>
+          <div className="py-2">
+            <NavItems
+              activeTab={activeTab}
+              onTabChange={onTabChange}
+              collapsed={false}
+              onItemClick={() => setMobileOpen(false)}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  // Desktop: sticky sidebar
   return (
     <TooltipProvider delayDuration={0}>
       <aside
@@ -70,41 +162,7 @@ export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarPro
           </Button>
         </div>
 
-        {/* Nav items */}
-        <nav className="flex-1 flex flex-col gap-1 px-2">
-          {navItems.map((item) => {
-            const isActive = activeTab === item.id;
-            const button = (
-              <button
-                key={item.id}
-                onClick={() => onTabChange(item.id)}
-                className={cn(
-                  "flex items-center gap-3 w-full rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                  collapsed && "justify-center px-0"
-                )}
-              >
-                <item.icon className="w-4 h-4 shrink-0" />
-                {!collapsed && <span className="truncate">{item.label}</span>}
-              </button>
-            );
-
-            if (collapsed) {
-              return (
-                <Tooltip key={item.id}>
-                  <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent side="right" className="bg-popover text-popover-foreground border-border">
-                    {item.label}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            }
-
-            return button;
-          })}
-        </nav>
+        <NavItems activeTab={activeTab} onTabChange={onTabChange} collapsed={collapsed} />
       </aside>
     </TooltipProvider>
   );
