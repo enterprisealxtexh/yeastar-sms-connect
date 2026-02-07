@@ -272,6 +272,48 @@ export type Database = {
         }
         Relationships: []
       }
+      contacts: {
+        Row: {
+          call_count: number
+          created_at: string
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          name: string | null
+          notes: string | null
+          phone_number: string
+          sms_count: number
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          call_count?: number
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          name?: string | null
+          notes?: string | null
+          phone_number: string
+          sms_count?: number
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          call_count?: number
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          name?: string | null
+          notes?: string | null
+          phone_number?: string
+          sms_count?: number
+          source?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       error_logs: {
         Row: {
           agent_id: string | null

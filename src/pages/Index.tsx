@@ -14,10 +14,11 @@ import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
 import { AiConfigPanel } from "@/components/AiConfigPanel";
 import { TelegramPanel } from "@/components/TelegramPanel";
+import { ContactsPanel } from "@/components/ContactsPanel";
 import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain, Send } from "lucide-react";
+import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain, Send, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
@@ -90,6 +91,10 @@ const Index = () => {
             <TabsTrigger value="telegram" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Send className="w-4 h-4" />
               Telegram
+            </TabsTrigger>
+            <TabsTrigger value="contacts" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Users className="w-4 h-4" />
+              Contacts
             </TabsTrigger>
           </TabsList>
 
@@ -201,6 +206,9 @@ const Index = () => {
           </TabsContent>
           <TabsContent value="telegram" className="space-y-6">
             <TelegramPanel />
+          </TabsContent>
+          <TabsContent value="contacts" className="space-y-6">
+            <ContactsPanel />
           </TabsContent>
         </Tabs>
       </main>
