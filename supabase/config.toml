@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.telegram-notify]
 verify_jwt = false
+
+[functions.telegram-realtime]
+verify_jwt = false
