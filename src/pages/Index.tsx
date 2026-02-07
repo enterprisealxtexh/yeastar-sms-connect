@@ -13,10 +13,11 @@ import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
 import { AiConfigPanel } from "@/components/AiConfigPanel";
+import { TelegramPanel } from "@/components/TelegramPanel";
 import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain } from "lucide-react";
+import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain, Send } from "lucide-react";
 import { toast } from "sonner";
 import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
@@ -85,6 +86,10 @@ const Index = () => {
             <TabsTrigger value="ai" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Brain className="w-4 h-4" />
               AI & Diagnostics
+            </TabsTrigger>
+            <TabsTrigger value="telegram" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Send className="w-4 h-4" />
+              Telegram
             </TabsTrigger>
           </TabsList>
 
@@ -193,6 +198,9 @@ const Index = () => {
               <ErrorLogsPanel />
               <AiConfigPanel />
             </div>
+          </TabsContent>
+          <TabsContent value="telegram" className="space-y-6">
+            <TelegramPanel />
           </TabsContent>
         </Tabs>
       </main>

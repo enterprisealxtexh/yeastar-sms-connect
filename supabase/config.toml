@@ -26,3 +26,6 @@ verify_jwt = true
 
 [functions.ai-diagnostics]
 verify_jwt = false
+
+[functions.telegram-notify]
+verify_jwt = false
