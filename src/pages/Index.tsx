@@ -16,9 +16,9 @@ import { AiConfigPanel } from "@/components/AiConfigPanel";
 import { TelegramPanel } from "@/components/TelegramPanel";
 import { ContactsPanel } from "@/components/ContactsPanel";
 import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database, LayoutDashboard, Settings, FileText, BarChart3, PhoneCall, Brain, Send, Users } from "lucide-react";
+import { Server, Phone, Database } from "lucide-react";
 import { toast } from "sonner";
 import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
@@ -28,6 +28,7 @@ import { useCallRecords, useCallStats } from "@/hooks/useCallRecords";
 
 const Index = () => {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<DashboardTab>("dashboard");
   const [lastSync, setLastSync] = useState(() => new Date().toLocaleString("sv-SE").replace(",", ""));
 
   const { data: simData, isLoading: simLoading } = useSimPorts();
@@ -46,148 +47,112 @@ const Index = () => {
     toast.success("System data refreshed");
   };
 
-  // Derive overall system status from active SIMs
   const systemStatus = simPorts.some((p) => p.status === "online")
     ? "online"
     : simPorts.some((p) => p.status === "warning")
     ? "warning"
     : "offline";
 
-  const handleSaveConfig = () => {
-    toast.success("Configuration saved successfully");
-  };
-
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <Header systemStatus={systemStatus} lastSync={lastSync} onRefresh={handleRefresh} />
 
-      <main className="container py-6">
-        <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="bg-muted/50 border border-border/50">
-            <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <LayoutDashboard className="w-4 h-4" />
-              Dashboard
-            </TabsTrigger>
-            <TabsTrigger value="calls" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <PhoneCall className="w-4 h-4" />
-              Calls
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <BarChart3 className="w-4 h-4" />
-              Analytics
-            </TabsTrigger>
-            <TabsTrigger value="logs" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <FileText className="w-4 h-4" />
-              Logs
-            </TabsTrigger>
-            <TabsTrigger value="config" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Settings className="w-4 h-4" />
-              Configuration
-            </TabsTrigger>
-            <TabsTrigger value="ai" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Brain className="w-4 h-4" />
-              AI & Diagnostics
-            </TabsTrigger>
-            <TabsTrigger value="telegram" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Send className="w-4 h-4" />
-              Telegram
-            </TabsTrigger>
-            <TabsTrigger value="contacts" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Users className="w-4 h-4" />
-              Contacts
-            </TabsTrigger>
-          </TabsList>
+      <div className="flex flex-1 overflow-hidden">
+        <DashboardSidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-          <TabsContent value="dashboard" className="space-y-6">
-            {/* System Status Row */}
-            <div className="grid gap-4 md:grid-cols-3">
-              <SystemStatusCard
-                title="TG400 Gateway"
-                status={systemStatus}
-                statusLabel={systemStatus === "online" ? "Connected" : systemStatus === "warning" ? "Degraded" : "Disconnected"}
-                icon={Server}
-                details={[
-                  { label: "Active SIMs", value: statsLoading ? "..." : `${stats?.activeSims || 0}/${stats?.totalSims || 0}` },
-                  { label: "Last Poll", value: lastSync.split(" ")[1] || lastSync },
-                ]}
-              />
-              <SystemStatusCard
-                title="S100 PBX"
-                status="online"
-                statusLabel="Connected"
-                icon={Phone}
-                details={[
-                  { label: "Extensions", value: "Configured" },
-                  { label: "SMS Queue", value: statsLoading ? "..." : `${stats?.unreadMessages || 0} pending` },
-                ]}
-              />
-              <SystemStatusCard
-                title="Message Store"
-                status="online"
-                statusLabel="Healthy"
-                icon={Database}
-                details={[
-                  { label: "Total Messages", value: statsLoading ? "..." : stats?.totalMessages.toLocaleString() || "0" },
-                  { label: "Unread", value: statsLoading ? "..." : stats?.unreadMessages.toLocaleString() || "0" },
-                ]}
-              />
-            </div>
+        <main className="flex-1 overflow-y-auto p-6 space-y-6">
+          {activeTab === "dashboard" && (
+            <>
+              {/* System Status Row */}
+              <div className="grid gap-4 md:grid-cols-3">
+                <SystemStatusCard
+                  title="TG400 Gateway"
+                  status={systemStatus}
+                  statusLabel={systemStatus === "online" ? "Connected" : systemStatus === "warning" ? "Degraded" : "Disconnected"}
+                  icon={Server}
+                  details={[
+                    { label: "Active SIMs", value: statsLoading ? "..." : `${stats?.activeSims || 0}/${stats?.totalSims || 0}` },
+                    { label: "Last Poll", value: lastSync.split(" ")[1] || lastSync },
+                  ]}
+                />
+                <SystemStatusCard
+                  title="S100 PBX"
+                  status="online"
+                  statusLabel="Connected"
+                  icon={Phone}
+                  details={[
+                    { label: "Extensions", value: "Configured" },
+                    { label: "SMS Queue", value: statsLoading ? "..." : `${stats?.unreadMessages || 0} pending` },
+                  ]}
+                />
+                <SystemStatusCard
+                  title="Message Store"
+                  status="online"
+                  statusLabel="Healthy"
+                  icon={Database}
+                  details={[
+                    { label: "Total Messages", value: statsLoading ? "..." : stats?.totalMessages.toLocaleString() || "0" },
+                    { label: "Unread", value: statsLoading ? "..." : stats?.unreadMessages.toLocaleString() || "0" },
+                  ]}
+                />
+              </div>
 
-            {/* SIM Ports Row */}
-            <div>
-              <h2 className="text-sm font-medium text-muted-foreground mb-4">SIM Port Status</h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {simLoading ? (
-                  Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-[180px] rounded-lg" />
-                  ))
+              {/* SIM Ports Row */}
+              <div>
+                <h2 className="text-sm font-medium text-muted-foreground mb-4">SIM Port Status</h2>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {simLoading ? (
+                    Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-[180px] rounded-lg" />
+                    ))
+                  ) : (
+                    simPorts.map((sim) => <SimPortCard key={sim.port} {...sim} />)
+                  )}
+                </div>
+              </div>
+
+              {/* Messages and Logs Row */}
+              <div className="grid gap-6 lg:grid-cols-2">
+                {messagesLoading ? (
+                  <Skeleton className="h-[400px] rounded-lg" />
                 ) : (
-                  simPorts.map((sim) => <SimPortCard key={sim.port} {...sim} />)
+                  <SmsInbox messages={messages} />
+                )}
+                {logsLoading ? (
+                  <Skeleton className="h-[300px] rounded-lg" />
+                ) : (
+                  <ActivityLog logs={logs} />
                 )}
               </div>
-            </div>
+            </>
+          )}
 
-            {/* Messages and Logs Row */}
-            <div className="grid gap-6 lg:grid-cols-2">
-              {messagesLoading ? (
-                <Skeleton className="h-[400px] rounded-lg" />
-              ) : (
-                <SmsInbox messages={messages} />
-              )}
-              {logsLoading ? (
-                <Skeleton className="h-[300px] rounded-lg" />
-              ) : (
-                <ActivityLog logs={logs} />
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="calls" className="space-y-6">
-            <CallStatsCards stats={callStats} isLoading={callStatsLoading} />
-            <div className="grid gap-6 lg:grid-cols-3">
-              <div className="lg:col-span-2">
-                <CallRecordsTable calls={calls} isLoading={callsLoading} />
+          {activeTab === "calls" && (
+            <>
+              <CallStatsCards stats={callStats} isLoading={callStatsLoading} />
+              <div className="grid gap-6 lg:grid-cols-3">
+                <div className="lg:col-span-2">
+                  <CallRecordsTable calls={calls} isLoading={callsLoading} />
+                </div>
+                <div className="space-y-6">
+                  <QuickDialWidget />
+                  <CallQueueStatus />
+                </div>
               </div>
-              <div className="space-y-6">
-                <QuickDialWidget />
-                <CallQueueStatus />
-              </div>
-            </div>
-          </TabsContent>
+            </>
+          )}
 
-          <TabsContent value="analytics" className="space-y-6">
-            <AnalyticsDashboard />
-          </TabsContent>
+          {activeTab === "analytics" && <AnalyticsDashboard />}
 
-          <TabsContent value="logs" className="space-y-6">
-            {logsLoading ? (
+          {activeTab === "logs" && (
+            logsLoading ? (
               <Skeleton className="h-[400px] rounded-lg" />
             ) : (
               <ActivityLog logs={logs} />
-            )}
-          </TabsContent>
+            )
+          )}
 
-          <TabsContent value="config" className="space-y-6">
+          {activeTab === "config" && (
             <ConfigurationPanel
               simPorts={simConfigs}
               isLoading={simLoading}
@@ -195,23 +160,23 @@ const Index = () => {
                 queryClient.invalidateQueries({ queryKey: ["sim-ports"] });
               }}
             />
-          </TabsContent>
+          )}
 
-          <TabsContent value="ai" className="space-y-6">
-            <PredictiveMaintenancePanel />
-            <div className="grid gap-6 lg:grid-cols-2">
-              <ErrorLogsPanel />
-              <AiConfigPanel />
-            </div>
-          </TabsContent>
-          <TabsContent value="telegram" className="space-y-6">
-            <TelegramPanel />
-          </TabsContent>
-          <TabsContent value="contacts" className="space-y-6">
-            <ContactsPanel />
-          </TabsContent>
-        </Tabs>
-      </main>
+          {activeTab === "ai" && (
+            <>
+              <PredictiveMaintenancePanel />
+              <div className="grid gap-6 lg:grid-cols-2">
+                <ErrorLogsPanel />
+                <AiConfigPanel />
+              </div>
+            </>
+          )}
+
+          {activeTab === "telegram" && <TelegramPanel />}
+
+          {activeTab === "contacts" && <ContactsPanel />}
+        </main>
+      </div>
     </div>
   );
 };
