@@ -32,3 +32,6 @@ verify_jwt = false
 
 [functions.telegram-realtime]
 verify_jwt = false
+
+[functions.fetch-google-contacts]
+verify_jwt = false
