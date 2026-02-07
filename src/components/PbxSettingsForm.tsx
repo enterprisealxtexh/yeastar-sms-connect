@@ -17,7 +17,7 @@ export const PbxSettingsForm = () => {
     pbx_port: 5060,
     api_username: "",
     api_password: "",
-    web_port: 443,
+    web_port: 8333,
   });
 
   useEffect(() => {
@@ -27,7 +27,7 @@ export const PbxSettingsForm = () => {
         pbx_port: config.pbx_port || 5060,
         api_username: config.api_username || "",
         api_password: config.api_password || "",
-        web_port: config.web_port || 443,
+        web_port: config.web_port || 8333,
       });
     }
   }, [config]);
@@ -158,11 +158,11 @@ export const PbxSettingsForm = () => {
             type="number"
             value={localConfig.web_port}
             onChange={(e) => {
-              setLocalConfig((prev) => ({ ...prev, web_port: parseInt(e.target.value) || 443 }));
+              setLocalConfig((prev) => ({ ...prev, web_port: parseInt(e.target.value) || 8333 }));
               setConnectionStatus('idle');
             }}
             className="font-mono text-sm h-9 bg-muted/50 border-border/50"
-            placeholder="443"
+            placeholder="8333"
           />
         </div>
 
