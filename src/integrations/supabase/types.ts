@@ -561,6 +561,7 @@ export type Database = {
         Returns: boolean
       }
       is_authorized: { Args: { _user_id: string }; Returns: boolean }
+      merge_duplicate_contacts: { Args: never; Returns: Json }
     }
     Enums: {
       app_role: "admin" | "operator" | "viewer"
