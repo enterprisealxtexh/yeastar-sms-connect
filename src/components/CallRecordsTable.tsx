@@ -9,6 +9,7 @@ import { Phone, Search, Clock, Timer } from "lucide-react";
 import { CallStatusBadge, CallDirectionBadge } from "./CallStatusBadge";
 import { CallBackButton } from "./CallBackButton";
 import { CallRecord } from "@/hooks/useCallRecords";
+import { useContactLookup } from "@/hooks/useContactLookup";
 import { format } from "date-fns";
 
 interface CallRecordsTableProps {
@@ -27,6 +28,7 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [directionFilter, setDirectionFilter] = useState<string>("all");
+  const { getContactName } = useContactLookup();
 
   const filteredCalls = calls.filter((call) => {
     const matchesSearch =
@@ -145,17 +147,17 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium">{call.caller_number}</span>
-                            {call.caller_name && (
-                              <span className="text-xs text-muted-foreground">{call.caller_name}</span>
-                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {call.caller_name || getContactName(call.caller_number) || ""}
+                            </span>
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-medium">{call.callee_number}</span>
-                            {call.callee_name && (
-                              <span className="text-xs text-muted-foreground">{call.callee_name}</span>
-                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {call.callee_name || getContactName(call.callee_number) || ""}
+                            </span>
                           </div>
                         </TableCell>
                         <TableCell>
