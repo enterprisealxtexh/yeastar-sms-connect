@@ -143,6 +143,45 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_recommendations: {
+        Row: {
+          applied_at: string | null
+          auto_applied: boolean | null
+          category: string
+          created_at: string
+          description: string
+          details: Json | null
+          id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          applied_at?: string | null
+          auto_applied?: boolean | null
+          category: string
+          created_at?: string
+          description: string
+          details?: Json | null
+          id?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          applied_at?: string | null
+          auto_applied?: boolean | null
+          category?: string
+          created_at?: string
+          description?: string
+          details?: Json | null
+          id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       call_queue: {
         Row: {
           completed_at: string | null

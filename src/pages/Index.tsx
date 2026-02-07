@@ -16,6 +16,7 @@ import { AiConfigPanel } from "@/components/AiConfigPanel";
 import { TelegramPanel } from "@/components/TelegramPanel";
 import { ContactsPanel } from "@/components/ContactsPanel";
 import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
+import { AiAutomationPanel } from "@/components/AiAutomationPanel";
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, Phone, Database } from "lucide-react";
@@ -164,6 +165,7 @@ const Index = () => {
 
           {activeTab === "ai" && (
             <>
+              <AiAutomationPanel />
               <PredictiveMaintenancePanel />
               <div className="grid gap-6 lg:grid-cols-2">
                 <ErrorLogsPanel />
