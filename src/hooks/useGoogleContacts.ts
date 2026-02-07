@@ -1,21 +1,60 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-/** Ensures Google OAuth with read/write contacts scope, returns provider_token or null */
+const GOOGLE_TOKEN_KEY = "google_provider_token";
+
+/** Capture the provider_token from auth events and persist it */
+function useGoogleTokenCapture() {
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.provider_token) {
+        sessionStorage.setItem(GOOGLE_TOKEN_KEY, session.provider_token);
+      }
+    });
+
+    // Also check current session on mount
+    supabase.auth.getSession().then(({ data }) => {
+      if (data?.session?.provider_token) {
+        sessionStorage.setItem(GOOGLE_TOKEN_KEY, data.session.provider_token);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+}
+
+/** Get a valid Google provider token, re-auth if needed */
 async function ensureGoogleAuth(): Promise<{ providerToken: string; accessToken: string } | null> {
-  // Check if we already have a provider token from an existing session
-  const { data: existingSession } = await supabase.auth.getSession();
-  if (existingSession?.session?.provider_token) {
+  // 1. Check sessionStorage first (most reliable)
+  const storedToken = sessionStorage.getItem(GOOGLE_TOKEN_KEY);
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token;
+
+  if (storedToken && accessToken) {
+    // Verify the token is still valid by making a lightweight request
+    const testResp = await fetch(
+      "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + storedToken
+    );
+    if (testResp.ok) {
+      return { providerToken: storedToken, accessToken };
+    }
+    // Token expired — clear it
+    sessionStorage.removeItem(GOOGLE_TOKEN_KEY);
+  }
+
+  // 2. Check if session has it (right after OAuth callback)
+  if (sessionData?.session?.provider_token && accessToken) {
+    sessionStorage.setItem(GOOGLE_TOKEN_KEY, sessionData.session.provider_token);
     return {
-      providerToken: existingSession.session.provider_token,
-      accessToken: existingSession.session.access_token,
+      providerToken: sessionData.session.provider_token,
+      accessToken,
     };
   }
 
-  // Need to sign in with Google
+  // 3. Need to re-authenticate with Google to get a fresh provider_token
   const result = await lovable.auth.signInWithOAuth("google", {
     redirect_uri: window.location.origin,
     extraParams: {
@@ -25,18 +64,20 @@ async function ensureGoogleAuth(): Promise<{ providerToken: string; accessToken:
     },
   });
 
-  if (result.redirected) return null;
+  if (result.redirected) return null; // Page will redirect, caller should bail
   if (result.error) throw result.error;
 
-  const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData?.session?.provider_token) {
-    throw new Error("Could not get Google access token. Please try again.");
+  // After redirect back, session should have the token
+  const { data: newSession } = await supabase.auth.getSession();
+  if (newSession?.session?.provider_token) {
+    sessionStorage.setItem(GOOGLE_TOKEN_KEY, newSession.session.provider_token);
+    return {
+      providerToken: newSession.session.provider_token,
+      accessToken: newSession.session.access_token,
+    };
   }
 
-  return {
-    providerToken: sessionData.session.provider_token,
-    accessToken: sessionData.session.access_token,
-  };
+  throw new Error("Could not get Google access token after re-authentication. Please sign out and sign in again with Google.");
 }
 
 export const useGoogleContacts = () => {
@@ -44,6 +85,9 @@ export const useGoogleContacts = () => {
   const [isPushing, setIsPushing] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const queryClient = useQueryClient();
+
+  // Capture Google token from auth events
+  useGoogleTokenCapture();
 
   const importFromGoogle = async () => {
     setIsImporting(true);
