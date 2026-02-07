@@ -3,11 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Clock, Sparkles, Loader2 } from "lucide-react";
+import { MessageSquare, Clock, Sparkles, Loader2, User } from "lucide-react";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
 import { ManualSmsImport } from "./ManualSmsImport";
 import { SmsCategoryBadge, SmsCategory } from "./SmsCategoryBadge";
 import { useCategorizeMessages } from "@/hooks/useSmsMessages";
+import { useContactLookup } from "@/hooks/useContactLookup";
 
 interface SmsMessage {
   id: string;
@@ -38,6 +39,7 @@ const initialFilters: SmsFiltersState = {
 export const SmsInbox = ({ messages }: SmsInboxProps) => {
   const [filters, setFilters] = useState<SmsFiltersState>(initialFilters);
   const categorize = useCategorizeMessages();
+  const { getContactName } = useContactLookup();
 
   // Get unique SIM ports from messages
   const simPorts = useMemo(() => {
@@ -160,6 +162,12 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                       <span className="font-mono text-sm font-medium text-foreground">
                         {message.sender}
                       </span>
+                      {getContactName(message.sender) && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <User className="w-3 h-3" />
+                          {getContactName(message.sender)}
+                        </span>
+                      )}
                       <Badge
                         variant="outline"
                         className="text-xs font-mono border-primary/30 text-primary"
