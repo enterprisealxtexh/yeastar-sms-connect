@@ -37,6 +37,7 @@ tg400-status
 | `tg400-logs` | Follow live logs (Ctrl+C to exit) |
 | `tg400-restart` | Restart the agent |
 | `tg400-test` | Test gateway & cloud connection |
+| `tg400-update` | Manually pull updates from GitHub |
 
 ## Manual Installation
 
@@ -63,9 +64,22 @@ Edit `/opt/tg400-agent/config.json`:
   "TG400_USERNAME": "admin",
   "TG400_PASSWORD": "your-password",
   "TG400_PORTS": [1, 2, 3, 4],
-  "POLL_INTERVAL": 30000
+  "POLL_INTERVAL": 30000,
+  "GITHUB_REPO_URL": "https://github.com/your-user/your-repo.git",
+  "REPO_DIR": "/opt/tg400-repo",
+  "AUTO_UPDATE_ENABLED": true
 }
 ```
+
+### Git Auto-Update
+
+The agent pulls from your GitHub repo every 5 minutes. When it detects changes to the agent script, it automatically:
+1. Creates a backup of the current version
+2. Copies the new version from the repo
+3. Restarts itself via systemd
+4. Logs the update to the cloud dashboard
+
+To manually trigger an update: `tg400-update`
 
 ## Troubleshooting
 
