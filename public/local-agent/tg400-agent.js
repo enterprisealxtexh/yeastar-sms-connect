@@ -40,7 +40,7 @@ const CONFIG = {
   
   // Supabase Settings
   SUPABASE_URL: process.env.SUPABASE_URL || 'https://aougsyziktukjvkmglzb.supabase.co',
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvdWdzeXppa3R1a21nbHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNDg5NTYsImV4cCI6MjA4NDkyNDk1Nn0.dcsZwEJXND9xdNA1dR-uHH7r6WylGwL7xVKJSFL_C44',
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvdWdzeXppa3R1a2p2a21nbHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkzNDg5NTYsImV4cCI6MjA4NDkyNDk1Nn0.dcsZwEJXND9xdNA1dR-uHH7r6WylGwL7xVKJSFL_C44',
   
   // Agent Settings (defaults, can be overridden by cloud config)
   POLL_INTERVAL: parseInt(process.env.POLL_INTERVAL || '30000', 10),
@@ -48,7 +48,7 @@ const CONFIG = {
   CDR_POLL_INTERVAL: parseInt(process.env.CDR_POLL_INTERVAL || '60000', 10),
   CALL_QUEUE_POLL_INTERVAL: parseInt(process.env.CALL_QUEUE_POLL_INTERVAL || '5000', 10),
   CONFIG_SYNC_INTERVAL: parseInt(process.env.CONFIG_SYNC_INTERVAL || '300000', 10), // 5 minutes
-  UPDATE_CHECK_INTERVAL: parseInt(process.env.UPDATE_CHECK_INTERVAL || '3600000', 10), // 1 hour
+  UPDATE_CHECK_INTERVAL: parseInt(process.env.UPDATE_CHECK_INTERVAL || '300000', 10), // 5 minutes
   PREDICTIVE_CHECK_INTERVAL: parseInt(process.env.PREDICTIVE_CHECK_INTERVAL || '900000', 10), // 15 minutes
   STATE_FILE: process.env.STATE_FILE || path.join(__dirname, '.agent-state.json'),
   QUEUE_FILE: process.env.QUEUE_FILE || path.join(__dirname, '.message-queue.json'),
@@ -59,13 +59,16 @@ const CONFIG = {
   AUTO_RESTART_DELAY: parseInt(process.env.AUTO_RESTART_DELAY || '10000', 10),
   ERROR_THRESHOLD_FOR_RESTART: parseInt(process.env.ERROR_THRESHOLD_FOR_RESTART || '10', 10),
   
-  // Auto-update settings
+  // Git-based auto-update settings
   AUTO_UPDATE_ENABLED: process.env.AUTO_UPDATE_ENABLED !== 'false',
-  AGENT_SCRIPT_PATH: process.env.AGENT_SCRIPT_PATH || __filename,
+  REPO_DIR: process.env.REPO_DIR || '/opt/tg400-repo',
+  GITHUB_REPO_URL: process.env.GITHUB_REPO_URL || '',
+  AGENT_SOURCE_PATH: 'public/local-agent/tg400-agent.js', // Path within the repo
+  AGENT_INSTALL_PATH: process.env.AGENT_INSTALL_PATH || path.join(__dirname, 'agent.js'),
   
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
-  VERSION: '4.0.0',
+  VERSION: '4.1.0',
 };
 // ========================================
 
@@ -1049,111 +1052,175 @@ class TG400Agent {
     }, this.config.PREDICTIVE_CHECK_INTERVAL));
   }
 
-  // ========== AUTO-UPDATE SYSTEM ==========
+  // ========== GIT-BASED AUTO-UPDATE SYSTEM ==========
 
-  async checkForUpdates() {
+  fileHash(filePath) {
     try {
-      const response = await fetch(`${this.config.SUPABASE_URL}/functions/v1/ai-diagnostics`, {
-        method: 'POST',
-        headers: {
-          'apikey': this.config.SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${this.config.SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'check_updates',
-          agent_version: this.config.VERSION,
-        }),
-      });
-
-      if (!response.ok) return;
-
-      const result = await response.json();
-      
-      if (result.update_available && result.latest_version) {
-        this.log('info', `Update available: v${result.latest_version.version} (current: v${this.config.VERSION})`);
-        
-        if (result.latest_version.is_critical) {
-          this.log('warn', 'CRITICAL update - auto-installing...');
-          await this.performUpdate(result.latest_version);
-        } else {
-          this.log('info', `Release notes: ${result.latest_version.release_notes || 'No notes'}`);
-          // For non-critical updates, just log and let admin decide
-          await this.pushToSupabase('activity_logs', {
-            event_type: 'update_available',
-            message: `Agent update available: v${result.latest_version.version}`,
-            severity: 'info',
-            metadata: {
-              current_version: this.config.VERSION,
-              new_version: result.latest_version.version,
-              release_notes: result.latest_version.release_notes,
-              is_critical: result.latest_version.is_critical,
-              download_url: result.latest_version.download_url,
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.log('warn', `Update check failed: ${error.message}`);
+      const content = fs.readFileSync(filePath);
+      return crypto.createHash('sha256').update(content).digest('hex');
+    } catch (e) {
+      return null;
     }
   }
 
-  async performUpdate(updateInfo) {
-    if (!updateInfo.download_url) {
-      this.log('error', 'No download URL for update');
-      return;
+  runGitCommand(command, cwd) {
+    try {
+      return execSync(command, { cwd, timeout: 30000, encoding: 'utf8' }).trim();
+    } catch (e) {
+      throw new Error(`Git command failed: ${command} — ${e.message}`);
+    }
+  }
+
+  async ensureRepoCloned() {
+    const repoDir = this.config.REPO_DIR;
+
+    // If repo dir exists and has .git, it's already cloned
+    if (fs.existsSync(path.join(repoDir, '.git'))) {
+      return true;
+    }
+
+    // Need to clone — requires GITHUB_REPO_URL
+    const repoUrl = this.config.GITHUB_REPO_URL;
+    if (!repoUrl) {
+      this.log('warn', 'Git auto-update: No GITHUB_REPO_URL configured. Skipping.');
+      return false;
     }
 
     try {
-      this.log('info', `Downloading update from ${updateInfo.download_url}...`);
-      
-      const response = await fetch(updateInfo.download_url);
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.status}`);
+      this.log('info', `Cloning repo to ${repoDir}...`);
+      fs.mkdirSync(repoDir, { recursive: true });
+      this.runGitCommand(`git clone --depth 1 ${repoUrl} ${repoDir}`, '/');
+      this.log('success', `Repo cloned to ${repoDir}`);
+      return true;
+    } catch (error) {
+      this.log('error', `Failed to clone repo: ${error.message}`);
+      return false;
+    }
+  }
+
+  async checkForUpdates() {
+    if (!this.config.AUTO_UPDATE_ENABLED) return;
+
+    try {
+      // Ensure we have the repo
+      const repoReady = await this.ensureRepoCloned();
+      if (!repoReady) return;
+
+      const repoDir = this.config.REPO_DIR;
+      const repoAgentPath = path.join(repoDir, this.config.AGENT_SOURCE_PATH);
+      const installedAgentPath = this.config.AGENT_INSTALL_PATH;
+
+      // Get hash of current installed script
+      const currentHash = this.fileHash(installedAgentPath);
+      if (!currentHash) {
+        this.log('warn', 'Cannot hash current agent script');
+        return;
       }
 
-      const newScript = await response.text();
-      const backupPath = `${this.config.AGENT_SCRIPT_PATH}.backup`;
-      const tempPath = `${this.config.AGENT_SCRIPT_PATH}.new`;
+      // Pull latest changes from git
+      this.log('info', 'Checking for updates via git pull...');
+      const pullOutput = this.runGitCommand('git pull --ff-only 2>&1', repoDir);
+      
+      if (pullOutput.includes('Already up to date')) {
+        this.log('info', 'Agent is up to date');
+        return;
+      }
+
+      this.log('info', `Git pull result: ${pullOutput.substring(0, 200)}`);
+
+      // Check if agent script changed
+      if (!fs.existsSync(repoAgentPath)) {
+        this.log('warn', `Agent source not found in repo at ${this.config.AGENT_SOURCE_PATH}`);
+        return;
+      }
+
+      const newHash = this.fileHash(repoAgentPath);
+      if (!newHash || currentHash === newHash) {
+        this.log('info', 'Agent script unchanged after pull');
+        return;
+      }
+
+      // New version detected — perform update
+      this.log('info', `Agent script changed! Current: ${currentHash.substring(0, 8)}... New: ${newHash.substring(0, 8)}...`);
+      await this.performGitUpdate(repoAgentPath, installedAgentPath, newHash);
+
+    } catch (error) {
+      this.log('warn', `Git update check failed: ${error.message}`);
+      await this.reportError('git_update', error.message, {});
+    }
+  }
+
+  async performGitUpdate(sourcePath, targetPath, newHash) {
+    try {
+      // Extract version from new file
+      const newContent = fs.readFileSync(sourcePath, 'utf8');
+      const versionMatch = newContent.match(/VERSION:\s*'([^']+)'/);
+      const newVersion = versionMatch ? versionMatch[1] : 'unknown';
+
+      this.log('info', `Updating agent: v${this.config.VERSION} → v${newVersion}`);
 
       // Create backup
-      fs.copyFileSync(this.config.AGENT_SCRIPT_PATH, backupPath);
+      const backupPath = `${targetPath}.backup`;
+      fs.copyFileSync(targetPath, backupPath);
       this.log('info', 'Created backup of current agent');
 
-      // Write new version
-      fs.writeFileSync(tempPath, newScript);
-      fs.renameSync(tempPath, this.config.AGENT_SCRIPT_PATH);
-      this.log('success', `Updated to v${updateInfo.version}`);
+      // Copy new version
+      const tempPath = `${targetPath}.new`;
+      fs.copyFileSync(sourcePath, tempPath);
+      fs.renameSync(tempPath, targetPath);
+      this.log('success', `Agent updated to v${newVersion}`);
 
-      // Log the update
+      // Log the update to cloud
       await this.pushToSupabase('activity_logs', {
         event_type: 'agent_updated',
-        message: `Agent auto-updated from v${this.config.VERSION} to v${updateInfo.version}`,
+        message: `Agent auto-updated via git: v${this.config.VERSION} → v${newVersion}`,
         severity: 'success',
         metadata: {
           old_version: this.config.VERSION,
-          new_version: updateInfo.version,
+          new_version: newVersion,
+          hash: newHash.substring(0, 16),
           agent_id: this.config.AGENT_ID,
+          method: 'git',
         },
       });
 
-      // Restart the agent
-      this.log('info', 'Restarting agent with new version...');
-      await this.shutdown();
-      
-      // Spawn new process and exit
-      const newProcess = spawn(process.argv[0], [this.config.AGENT_SCRIPT_PATH], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      newProcess.unref();
-      
-      process.exit(0);
+      // Save state before restart
+      this.saveState();
+      this.saveQueue();
+
+      // Restart via systemd (preferred — ensures clean lifecycle)
+      this.log('info', 'Restarting agent via systemd...');
+      try {
+        execSync('systemctl restart tg400-agent', { timeout: 10000 });
+      } catch (e) {
+        // If systemctl fails (not running under systemd), do a manual restart
+        this.log('warn', 'systemctl restart failed, performing manual restart...');
+        await this.shutdown();
+        const newProcess = spawn(process.argv[0], [targetPath], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        newProcess.unref();
+        process.exit(0);
+      }
+
     } catch (error) {
-      this.log('error', `Update failed: ${error.message}`);
+      this.log('error', `Git update failed: ${error.message}`);
+
+      // Attempt rollback
+      const backupPath = `${targetPath}.backup`;
+      if (fs.existsSync(backupPath)) {
+        try {
+          fs.copyFileSync(backupPath, targetPath);
+          this.log('info', 'Rolled back to previous version');
+        } catch (rollbackErr) {
+          this.log('error', `Rollback also failed: ${rollbackErr.message}`);
+        }
+      }
+
       await this.pushToSupabase('activity_logs', {
         event_type: 'update_failed',
-        message: `Agent update failed: ${error.message}`,
+        message: `Agent git update failed: ${error.message}`,
         severity: 'error',
         metadata: { error: error.message, agent_id: this.config.AGENT_ID },
       });
@@ -1205,15 +1272,15 @@ class TG400Agent {
 
   async start() {
     console.log('\n\x1b[36m╔════════════════════════════════════════════════════════╗\x1b[0m');
-    console.log('\x1b[36m║   TG400 Local Agent v' + this.config.VERSION.padEnd(10) + '(AI Auto-Update)     ║\x1b[0m');
+    console.log('\x1b[36m║   TG400 Local Agent v' + this.config.VERSION.padEnd(10) + '(Git Auto-Update)    ║\x1b[0m');
     console.log('\x1b[36m╚════════════════════════════════════════════════════════╝\x1b[0m\n');
     
     this.log('info', `Agent ID: ${this.config.AGENT_ID}`);
     this.log('info', `TG400 Gateway: ${this.config.TG400_IP}`);
     this.log('info', `S100 PBX: ${this.config.PBX_IP}:${this.config.PBX_WEB_PORT}`);
     this.log('info', `Ports: ${this.config.TG400_PORTS.join(', ')}`);
-    this.log('info', `Features: Self-healing, AI diagnostics, Auto-update, Predictive maintenance`);
-    this.log('info', `Auto-update: ${this.config.AUTO_UPDATE_ENABLED ? 'Enabled' : 'Disabled'}`);
+    this.log('info', `Repo: ${this.config.REPO_DIR} (auto-update: ${this.config.AUTO_UPDATE_ENABLED ? 'every 5m' : 'disabled'})`);
+    this.log('info', `Features: Self-healing, AI diagnostics, Git auto-update, Predictive maintenance`);
 
     // Sync config from cloud first
     await this.syncConfigFromCloud();
@@ -1275,7 +1342,7 @@ if (args.includes('--test')) {
   });
 } else if (args.includes('--help')) {
   console.log(`
-TG400 Local Polling Agent v4.0 (AI Auto-Update)
+TG400 Local Polling Agent v4.1 (Git Auto-Update)
 
 Usage: node tg400-agent.js [options]
 
@@ -1297,6 +1364,8 @@ Environment Variables:
   CDR_POLL_INTERVAL     CDR polling interval in ms (default: 60000)
   AGENT_ID              Unique agent identifier (auto-generated if not set)
   AUTO_UPDATE_ENABLED   Enable auto-updates (default: true)
+  REPO_DIR              Git repo directory (default: /opt/tg400-repo)
+  GITHUB_REPO_URL       GitHub repo URL for cloning
 
 Features:
   - AI-powered error diagnostics
@@ -1305,7 +1374,7 @@ Features:
   - Exponential backoff retry
   - Offline message queue
   - Failed sync auto-reprocessing
-  - AUTO-UPDATE: Checks for new versions hourly
+  - GIT AUTO-UPDATE: Pulls from GitHub every 5 minutes, auto-restarts on changes
   - PREDICTIVE MAINTENANCE: AI predicts issues before they happen
 `);
   process.exit(0);
