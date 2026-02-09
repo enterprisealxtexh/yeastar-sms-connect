@@ -1496,6 +1496,7 @@ if [ -f "$CONFIG_FILE" ]; then
     CURRENT_PBX_PORT=$(echo "$EXISTING" | jq -r '.PBX_WEB_PORT // 443')
     CURRENT_REPO_URL=$(echo "$EXISTING" | jq -r '.GITHUB_REPO_URL // ""')
     CURRENT_REPO_DIR=$(echo "$EXISTING" | jq -r '.REPO_DIR // "/opt/tg400-repo"')
+    CURRENT_WEB_SERVE_DIR=$(echo "$EXISTING" | jq -r '.WEB_SERVE_DIR // "/var/www/sms-gateway"')
 else
     CURRENT_IP="192.168.5.3"
     CURRENT_USER="admin"
@@ -1508,6 +1509,7 @@ else
     CURRENT_PBX_PORT="443"
     CURRENT_REPO_URL=""
     CURRENT_REPO_DIR="/opt/tg400-repo"
+    CURRENT_WEB_SERVE_DIR="/var/www/sms-gateway"
 fi
 
 # TG400 Settings
@@ -1561,12 +1563,30 @@ GITHUB_REPO_URL=${GITHUB_REPO_URL:-$CURRENT_REPO_URL}
 read -p "Local repo directory [$CURRENT_REPO_DIR]: " REPO_DIR
 REPO_DIR=${REPO_DIR:-$CURRENT_REPO_DIR}
 
+read -p "Web app serve directory (nginx root) [$CURRENT_WEB_SERVE_DIR]: " WEB_SERVE_DIR
+WEB_SERVE_DIR=${WEB_SERVE_DIR:-$CURRENT_WEB_SERVE_DIR}
+
 # Clone repo if URL provided and dir doesn't exist
 if [ -n "$GITHUB_REPO_URL" ] && [ ! -d "$REPO_DIR/.git" ]; then
     echo ""
     echo -e "${YELLOW}Cloning repository...${NC}"
     mkdir -p "$REPO_DIR"
     git clone --depth 1 "$GITHUB_REPO_URL" "$REPO_DIR" 2>&1 || echo -e "${RED}Clone failed — you can retry later${NC}"
+fi
+
+# Initial web build if repo exists
+if [ -d "$REPO_DIR/.git" ] && [ -f "$REPO_DIR/package.json" ]; then
+    echo ""
+    echo -e "${YELLOW}Building web dashboard...${NC}"
+    cd "$REPO_DIR"
+    npm install --production=false 2>&1 || echo -e "${RED}npm install failed${NC}"
+    npm run build 2>&1 || echo -e "${RED}Build failed${NC}"
+    if [ -d "$REPO_DIR/dist" ]; then
+        mkdir -p "$WEB_SERVE_DIR"
+        rm -rf "$WEB_SERVE_DIR"/*
+        cp -r "$REPO_DIR/dist"/* "$WEB_SERVE_DIR"/
+        echo -e "${GREEN}✓ Web dashboard built and deployed to $WEB_SERVE_DIR${NC}"
+    fi
 fi
 
 # Supabase settings (pre-configured)
@@ -1589,6 +1609,8 @@ cat > "$CONFIG_FILE" << EOF
   "POLL_INTERVAL": $POLL_INTERVAL,
   "GITHUB_REPO_URL": "$GITHUB_REPO_URL",
   "REPO_DIR": "$REPO_DIR",
+  "WEB_SERVE_DIR": "$WEB_SERVE_DIR",
+  "WEB_BUILD_ENABLED": true,
   "AUTO_UPDATE_ENABLED": true
 }
 EOF

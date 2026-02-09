@@ -65,6 +65,8 @@ const CONFIG = {
   GITHUB_REPO_URL: process.env.GITHUB_REPO_URL || '',
   AGENT_SOURCE_PATH: 'public/local-agent/tg400-agent.js', // Path within the repo
   AGENT_INSTALL_PATH: process.env.AGENT_INSTALL_PATH || path.join(__dirname, 'agent.js'),
+  WEB_BUILD_ENABLED: process.env.WEB_BUILD_ENABLED !== 'false',
+  WEB_SERVE_DIR: process.env.WEB_SERVE_DIR || '/var/www/sms-gateway', // nginx root
   
   // Agent Identity
   AGENT_ID: process.env.AGENT_ID || `agent-${crypto.randomBytes(4).toString('hex')}`,
@@ -1128,6 +1130,9 @@ class TG400Agent {
 
       this.log('info', `Git pull result: ${pullOutput.substring(0, 200)}`);
 
+      // Always rebuild web app when repo has changes
+      await this.rebuildWebApp(repoDir);
+
       // Check if agent script changed
       if (!fs.existsSync(repoAgentPath)) {
         this.log('warn', `Agent source not found in repo at ${this.config.AGENT_SOURCE_PATH}`);
@@ -1224,6 +1229,71 @@ class TG400Agent {
         severity: 'error',
         metadata: { error: error.message, agent_id: this.config.AGENT_ID },
       });
+    }
+  }
+
+  // ========== WEB APP REBUILD ==========
+
+  async rebuildWebApp(repoDir) {
+    if (!this.config.WEB_BUILD_ENABLED) return;
+
+    try {
+      this.log('info', 'Rebuilding web application...');
+
+      // Install deps if needed (check if node_modules exists)
+      const nodeModulesPath = path.join(repoDir, 'node_modules');
+      if (!fs.existsSync(nodeModulesPath)) {
+        this.log('info', 'Installing dependencies (first run)...');
+        this.runGitCommand('npm install --production=false 2>&1', repoDir);
+      }
+
+      // Check if package-lock.json changed (need to reinstall)
+      const lockFile = path.join(repoDir, 'package-lock.json');
+      const lockHashFile = path.join(repoDir, '.lock-hash');
+      if (fs.existsSync(lockFile)) {
+        const currentLockHash = this.fileHash(lockFile);
+        const savedLockHash = fs.existsSync(lockHashFile) ? fs.readFileSync(lockHashFile, 'utf8').trim() : '';
+        if (currentLockHash !== savedLockHash) {
+          this.log('info', 'Dependencies changed, running npm install...');
+          this.runGitCommand('npm install --production=false 2>&1', repoDir);
+          fs.writeFileSync(lockHashFile, currentLockHash);
+        }
+      }
+
+      // Run the build
+      const buildOutput = this.runGitCommand('npm run build 2>&1', repoDir);
+      this.log('info', `Build output: ${buildOutput.substring(0, 300)}`);
+
+      // Copy build output to nginx serve directory
+      const distDir = path.join(repoDir, 'dist');
+      const serveDir = this.config.WEB_SERVE_DIR;
+
+      if (!fs.existsSync(distDir)) {
+        this.log('warn', 'Build produced no dist/ directory');
+        return;
+      }
+
+      // Ensure serve directory exists
+      if (!fs.existsSync(serveDir)) {
+        fs.mkdirSync(serveDir, { recursive: true });
+      }
+
+      // Sync dist → serve dir (clear old files first)
+      this.runGitCommand(`rm -rf ${serveDir}/*`, '/tmp');
+      this.runGitCommand(`cp -r ${distDir}/* ${serveDir}/`, '/tmp');
+
+      this.log('success', `Web app rebuilt and deployed to ${serveDir}`);
+
+      await this.pushToSupabase('activity_logs', {
+        event_type: 'web_app_updated',
+        message: 'Web dashboard rebuilt and deployed after git pull',
+        severity: 'success',
+        metadata: { agent_id: this.config.AGENT_ID, serve_dir: serveDir },
+      });
+
+    } catch (error) {
+      this.log('error', `Web app rebuild failed: ${error.message}`);
+      await this.reportError('web_build', error.message, { repo_dir: repoDir });
     }
   }
 
