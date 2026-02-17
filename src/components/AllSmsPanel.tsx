@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -6,15 +6,74 @@ import { Trash2, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useAuth } from "@/hooks/useAuth";
+import { SmsFilters, SmsFiltersState } from "./SmsFilters";
 import { toast } from "sonner";
 
+const initialFilters: SmsFiltersState = {
+  search: "",
+  simPort: "all",
+  status: "all",
+  category: "all",
+  dateFrom: undefined,
+  dateTo: undefined,
+};
+
 export const AllSmsPanel: React.FC = () => {
+  const [filters, setFilters] = useState<SmsFiltersState>(initialFilters);
   const queryClient = useQueryClient();
   const { data: messages = [], isLoading } = useSmsMessages(1000);
   const { role } = useAuth();
   const canDelete = role !== 'viewer';
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
   const token = localStorage.getItem('authToken');
+
+  // Get unique SIM ports from messages
+  const simPorts = useMemo(() => {
+    const ports = new Set(messages.map((m: any) => m.simPort));
+    return Array.from(ports).sort((a: number, b: number) => a - b);
+  }, [messages]);
+
+  // Filter messages based on current filters
+  const filteredMessages = useMemo(() => {
+    return messages.filter((message: any) => {
+      // Search filter
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        const matchesSender = message.sender.toLowerCase().includes(searchLower);
+        const matchesContent = message.content.toLowerCase().includes(searchLower);
+        if (!matchesSender && !matchesContent) return false;
+      }
+
+      // SIM Port filter
+      if (filters.simPort !== "all" && message.simPort !== parseInt(filters.simPort)) {
+        return false;
+      }
+
+      // Status filter
+      if (filters.status !== "all") {
+        const messageStatus = message.isNew ? "unread" : (message.status || "read");
+        if (messageStatus !== filters.status) return false;
+      }
+
+      // Category filter
+      if (filters.category !== "all" && message.category !== filters.category) {
+        return false;
+      }
+
+      // Date filters
+      if (filters.dateFrom || filters.dateTo) {
+        const messageDate = new Date(message.timestamp);
+        if (filters.dateFrom && messageDate < filters.dateFrom) return false;
+        if (filters.dateTo) {
+          const endOfDay = new Date(filters.dateTo);
+          endOfDay.setHours(23, 59, 59, 999);
+          if (messageDate > endOfDay) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [messages, filters]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this message? This action cannot be undone.")) return;
@@ -55,22 +114,40 @@ export const AllSmsPanel: React.FC = () => {
   };
 
   return (
-    <Card className="card-glow border-border/50 bg-card h-full">
-      <CardHeader className="flex items-center justify-between">
-        <div>
-          <CardTitle className="text-base font-semibold">All SMS Messages</CardTitle>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["sms-messages"] })}>
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-        </div>
-      </CardHeader>
+    <div className="space-y-4">
+      {/* Filters Card */}
+      <Card className="border-border/50 bg-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold mb-4">Filters</CardTitle>
+          <SmsFilters
+            filters={filters}
+            onFiltersChange={setFilters}
+            simPorts={simPorts}
+          />
+        </CardHeader>
+      </Card>
+
+      {/* Messages Card */}
+      <Card className="card-glow border-border/50 bg-card h-full">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base font-semibold">All SMS Messages</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                {filteredMessages.length}
+                {filteredMessages.length !== messages.length && ` / ${messages.length}`} messages
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["sms-messages"] })}>
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
+        </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="h-[600px]">
           {isLoading ? (
             <div className="p-4">Loading...</div>
-          ) : messages.length === 0 ? (
+          ) : filteredMessages.length === 0 ? (
             <div className="p-4 text-muted-foreground">No messages found</div>
           ) : (
             <div className="overflow-x-auto w-full">
@@ -86,7 +163,7 @@ export const AllSmsPanel: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {messages.map((m: any) => (
+                  {filteredMessages.map((m: any) => (
                     <tr key={m.id} className="border-t border-border/50">
                       <td className="p-3 font-mono text-sm">{m.timestamp}</td>
                       <td className="p-3 font-mono text-sm">{m.sender}</td>
@@ -116,6 +193,7 @@ export const AllSmsPanel: React.FC = () => {
         </ScrollArea>
       </CardContent>
     </Card>
+    </div>
   );
 };
 

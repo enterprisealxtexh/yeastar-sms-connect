@@ -1,4 +1,4 @@
-import { Radio, RefreshCw, LogOut, User } from "lucide-react";
+import { Radio, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { useAuth, signOut } from "@/hooks/useAuth";
@@ -14,11 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 interface HeaderProps {
-  lastSync: string;
-  onRefresh: () => void;
+  onProfileClick?: () => void;
 }
 
-export const Header = ({ lastSync, onRefresh }: HeaderProps) => {
+export const Header = ({ onProfileClick }: HeaderProps) => {
   const { user, role, isAdmin } = useAuth();
 
   const handleSignOut = async () => {
@@ -51,23 +50,8 @@ export const Header = ({ lastSync, onRefresh }: HeaderProps) => {
           </div>
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 text-sm">
-            <AgentStatusIndicator />
-            <div className="h-4 w-px bg-border" />
-            <span className="text-muted-foreground">
-              Last sync: <span className="font-mono text-foreground">{lastSync}</span>
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            className="gap-2 border-border/50 hover:bg-muted/50"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </Button>
+        <div className="flex items-center gap-4">
+          <AgentStatusIndicator showLabel={false} />
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -87,6 +71,11 @@ export const Header = ({ lastSync, onRefresh }: HeaderProps) => {
                   </Badge>
                 </div>
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onProfileClick}>
+                <User className="w-4 h-4 mr-2" />
+                Profile
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
                 <LogOut className="w-4 h-4 mr-2" />

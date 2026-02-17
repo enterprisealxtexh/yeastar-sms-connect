@@ -73,8 +73,8 @@ const getStatusBadge = (status: string): "default" | "secondary" | "destructive"
 };
 
 export const CallsSummaryPanel = ({ calls }: CallsSummaryPanelProps) => {
-  // Get the last 3 recent calls
-  const recentCalls = calls.slice(0, 3);
+  // Get the last 10 recent calls
+  const recentCalls = calls.slice(0, 10);
 
   return (
     <Card className="card-glow border-border/50 bg-card h-full">
@@ -85,12 +85,12 @@ export const CallsSummaryPanel = ({ calls }: CallsSummaryPanelProps) => {
           </div>
           <div>
             <CardTitle className="text-base font-semibold">Recent Calls</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">Last 3 calls</p>
+            <p className="text-xs text-muted-foreground mt-1">Last 10 calls</p>
           </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-auto max-h-[280px]">
+        <ScrollArea className="h-[340px]">
           {recentCalls.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[150px] text-muted-foreground p-4">
               <Phone className="w-8 h-8 mb-2 opacity-50" />

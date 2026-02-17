@@ -23,8 +23,14 @@ class SMSDatabase {
       
       // Enable WAL mode for concurrent access (fixes database locked issues)
       this.db.pragma('journal_mode = WAL');
-      this.db.pragma('synchronous = NORMAL');
-      this.db.pragma('cache_size = -64000');
+      
+      // Optimize for concurrent writes
+      this.db.pragma('synchronous = NORMAL');    // Balance safety & speed
+      this.db.pragma('cache_size = -64000');     // 64MB cache
+      this.db.pragma('temp_store = MEMORY');     // Temp tables in RAM
+      this.db.pragma('query_only = FALSE');      // Allow writes
+      this.db.pragma('busy_timeout = 5000');     // Wait up to 5 seconds on lock
+      this.db.pragma('wal_autocheckpoint = 1000'); // Checkpoint every 1000 pages
       
       // Create tables if they don't exist
       this.createTables();
@@ -648,33 +654,83 @@ class SMSDatabase {
 
   // SMS message methods
   insertSMS(smsData) {
-    try {
-      const {
-        external_id, sender_number, message_content, received_at, sim_port, status = 'unread', category = null
-      } = smsData;
-      
-      // Use INSERT OR IGNORE to prevent duplicates based on external_id constraint
-      const stmt = this.db.prepare(`
-        INSERT OR IGNORE INTO sms_messages 
-        (external_id, sender_number, message_content, received_at, sim_port, status, category)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      
-      const result = stmt.run(
-        external_id || null,
-        sender_number,
-        message_content,
-        received_at || new Date().toISOString(),
-        sim_port,
-        status,
-        category
-      );
-      
-      return result.changes > 0;
-    } catch (error) {
-      console.error('Error inserting SMS:', error.message);
-      return false;
+    const logger = require('./logger.cjs');
+    const maxRetries = 3;
+    let lastError = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const {
+          external_id, sender_number, message_content, received_at, sim_port, status = 'unread', category = null
+        } = smsData;
+        
+        // Validate required fields
+        if (!sender_number || sim_port === undefined || sim_port === null) {
+          logger.warn(`⚠️  SMS validation failed: sender=${sender_number}, port=${sim_port}`);
+          return false;
+        }
+
+        // Check if duplicate already exists
+        const existingStmt = this.db.prepare(`
+          SELECT id FROM sms_messages WHERE external_id = ?
+        `);
+        const existing = external_id ? existingStmt.get(external_id) : null;
+        
+        if (existing) {
+          logger.debug(`ℹ️  SMS already exists (duplicate): external_id=${external_id}`);
+          return false;
+        }
+        
+        // Use INSERT to add new message
+        const stmt = this.db.prepare(`
+          INSERT INTO sms_messages 
+          (external_id, sender_number, message_content, received_at, sim_port, status, category)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        
+        const result = stmt.run(
+          external_id || null,
+          sender_number,
+          message_content,
+          received_at || new Date().toISOString(),
+          sim_port,
+          status,
+          category
+        );
+        
+        if (result.changes > 0) {
+          logger.debug(`✅ SMS inserted: id=${result.lastInsertRowid}, ext_id=${external_id}`);
+          return true;
+        }
+        
+        logger.warn(`⚠️  SMS insert returned 0 changes: ${sender_number} on port ${sim_port}`);
+        return false;
+        
+      } catch (error) {
+        lastError = error;
+        
+        // Check if it's a database locked error
+        if (error.code === 'SQLITE_BUSY' || error.message?.includes('database is locked')) {
+          if (attempt < maxRetries) {
+            const waitMs = 100 * Math.pow(2, attempt - 1); // Exponential backoff: 100ms, 200ms, 400ms
+            logger.warn(`⚠️  Database locked (attempt ${attempt}/${maxRetries}), retrying in ${waitMs}ms...`);
+            const startWait = Date.now();
+            while (Date.now() - startWait < waitMs) {} // Busy wait
+            continue;
+          }
+        }
+        
+        // Non-transient error, give up
+        logger.error(`❌ SMS INSERT ERROR (attempt ${attempt}/${maxRetries}): ${error.message}`);
+        logger.error(`   Data: sender=${smsData.sender_number}, port=${smsData.sim_port}, id=${smsData.external_id}`);
+        if (error.code) logger.error(`   Code: ${error.code}`);
+        
+        break;
+      }
     }
+    
+    logger.error(`❌ SMS INSERT FAILED after ${maxRetries} attempts: ${lastError?.message}`);
+    return false;
   }
 
   // Call record methods

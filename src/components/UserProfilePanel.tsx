@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { User, Mail, Lock, Loader2, AlertCircle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { User, Mail, Lock, Loader2, AlertCircle, Calendar, Shield, Activity, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { formatDateNairobi } from "@/lib/dateUtils";
@@ -18,6 +19,7 @@ export const UserProfilePanel = () => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [passwordStrength, setPasswordStrength] = useState<"weak" | "medium" | "strong" | null>(null);
 
   // Initialize form fields when profile loads
   useEffect(() => {
@@ -26,6 +28,19 @@ export const UserProfilePanel = () => {
       setEditEmail(profile.email || "");
     }
   }, [profile]);
+
+  // Calculate password strength
+  useEffect(() => {
+    if (newPassword.length === 0) {
+      setPasswordStrength(null);
+    } else if (newPassword.length < 6) {
+      setPasswordStrength("weak");
+    } else if (newPassword.length < 10) {
+      setPasswordStrength("medium");
+    } else {
+      setPasswordStrength("strong");
+    }
+  }, [newPassword]);
 
   const handleUpdateProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,190 +86,369 @@ export const UserProfilePanel = () => {
     setConfirmPassword("");
   };
 
+  const getRoleColor = (role: string) => {
+    switch (role?.toLowerCase()) {
+      case "admin":
+        return "bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800";
+      case "operator":
+        return "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800";
+      case "viewer":
+        return "bg-green-500/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800";
+      default:
+        return "bg-muted text-muted-foreground";
+    }
+  };
+
+  const getStrengthColor = (strength: string | null) => {
+    switch (strength) {
+      case "strong":
+        return "bg-green-500/20 text-green-700 dark:text-green-400";
+      case "medium":
+        return "bg-yellow-500/20 text-yellow-700 dark:text-yellow-400";
+      case "weak":
+        return "bg-red-500/20 text-red-700 dark:text-red-400";
+      default:
+        return "";
+    }
+  };
+
   if (isLoading) {
     return (
-      <Card className="card-glow border-border/50 bg-card h-full">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-              <User className="w-5 h-5 text-primary" />
-            </div>
-            <CardTitle className="text-base font-semibold">Profile Settings</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center h-[300px]">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto" />
+          <p className="text-sm text-muted-foreground">Loading profile...</p>
+        </div>
+      </div>
     );
   }
 
   if (!profile) {
     return (
-      <Card className="card-glow border-border/50 bg-card h-full">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-              <User className="w-5 h-5 text-primary" />
-            </div>
-            <CardTitle className="text-base font-semibold">Profile Settings</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center h-[300px] text-muted-foreground">
-          <p className="text-sm">Unable to load profile</p>
+      <Card className="border-destructive/50 bg-destructive/5">
+        <CardContent className="pt-6 text-center">
+          <AlertCircle className="w-8 h-8 mx-auto mb-2 text-destructive" />
+          <p className="text-sm text-muted-foreground">Unable to load profile</p>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card className="card-glow border-border/50 bg-card h-full">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-              <User className="w-5 h-5 text-primary" />
+    <div className="space-y-4 h-full overflow-auto pb-6">
+      {/* Profile Header Card */}
+      <Card className="border-border/50 bg-gradient-to-br from-primary/5 via-primary/2 to-transparent overflow-hidden">
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex items-end gap-4">
+              {/* Avatar */}
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center border-4 border-background shadow-lg">
+                <User className="w-10 h-10 text-primary-foreground" />
+              </div>
+              
+              {/* User Basic Info */}
+              <div className="pb-1 space-y-2">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight">{profile.name}</h2>
+                  <p className="text-sm text-muted-foreground">{profile.email}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={`${getRoleColor(profile.role)} border`}>
+                    {profile.role.charAt(0).toUpperCase() + profile.role.slice(1)}
+                  </Badge>
+                </div>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-base font-semibold">Profile Settings</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">Manage your account information</p>
+            
+            {/* Quick Stats */}
+            <div className="text-right space-y-2">
+              <div className="text-xs text-muted-foreground">
+                <Calendar className="w-4 h-4 inline mr-1" />
+                Member since {formatDateNairobi(profile.created_at).split(" ")[0]}
+              </div>
             </div>
           </div>
-          <Badge
-            variant="outline"
-            className="text-xs font-mono"
-          >
-            {profile.role}
-          </Badge>
-        </div>
-      </CardHeader>
+        </CardContent>
+      </Card>
 
-      <CardContent className="p-0">
-        <ScrollArea className="h-[600px] p-4">
-          <form onSubmit={handleUpdateProfile} className="space-y-6 max-w-lg">
-            {/* User Info Section */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-foreground">Account Information</h3>
-              
-              <div className="space-y-2">
-                <Label htmlFor="email" className="text-xs font-medium">Email Address</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    value={editEmail}
-                    onChange={(e) => setEditEmail(e.target.value)}
-                    className="pl-10"
-                  />
+      {/* Main Tabs Section */}
+      <Card className="border-border/50 bg-card flex flex-col flex-1">
+        <Tabs defaultValue="account" className="w-full flex flex-col h-full">
+          {/* Tab Navigation */}
+          <CardHeader className="border-b border-border/50 pb-3">
+            <TabsList className="grid w-full grid-cols-3 bg-muted/50">
+              <TabsTrigger value="account" className="gap-2">
+                <User className="w-4 h-4" />
+                <span className="hidden sm:inline">Account</span>
+              </TabsTrigger>
+              <TabsTrigger value="security" className="gap-2">
+                <Shield className="w-4 h-4" />
+                <span className="hidden sm:inline">Security</span>
+              </TabsTrigger>
+              <TabsTrigger value="activity" className="gap-2">
+                <Activity className="w-4 h-4" />
+                <span className="hidden sm:inline">Activity</span>
+              </TabsTrigger>
+            </TabsList>
+          </CardHeader>
+
+          {/* Tab Contents */}
+          <ScrollArea className="flex-1">
+            {/* Account Tab */}
+            <TabsContent value="account" className="p-6 space-y-6">
+              <form onSubmit={handleUpdateProfile} className="space-y-6">
+                {/* Basic Information Section */}
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground mb-4">Basic Information</h3>
+                  </div>
+                  
+                  {/* Display Name */}
+                  <div className="space-y-2">
+                    <Label htmlFor="name" className="text-sm font-medium">Display Name</Label>
+                    <Input
+                      id="name"
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Your name"
+                      className="h-10"
+                    />
+                    <p className="text-xs text-muted-foreground">This is how your name appears in the system</p>
+                  </div>
+
+                  {/* Email Address */}
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        id="email"
+                        type="email"
+                        value={editEmail}
+                        onChange={(e) => setEditEmail(e.target.value)}
+                        className="pl-10 h-10"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">Your email cannot be used to login yet, contact admin to enable</p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="name" className="text-xs font-medium">Display Name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  placeholder="Your name"
-                />
-              </div>
-
-              <div className="space-y-2 text-xs text-muted-foreground">
-                <p>User ID: <span className="font-mono">{profile.id}</span></p>
-                <p>Role: <span className="font-mono capitalize">{profile.role}</span></p>
-                <p>Member Since: <span className="font-mono">{formatDateNairobi(profile.created_at)}</span></p>
-              </div>
-            </div>
-
-            {/* Password Section */}
-            <div className="space-y-4 pt-4 border-t border-border/50">
-              <h3 className="text-sm font-semibold text-foreground">Change Password</h3>
-              
-              <div className="space-y-2">
-                <Label htmlFor="oldPassword" className="text-xs font-medium">Current Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="oldPassword"
-                    type="password"
-                    value={oldPassword}
-                    onChange={(e) => setOldPassword(e.target.value)}
-                    placeholder="Enter current password"
-                    className="pl-10"
-                  />
+                {/* Account Details Section */}
+                <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border/50">
+                  <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">Account Details</h4>
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <p className="text-muted-foreground">User ID</p>
+                      <p className="font-mono text-foreground mt-1">{profile.id}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Role</p>
+                      <p className="capitalize text-foreground mt-1 font-medium">{profile.role}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Member Since</p>
+                      <p className="font-mono text-foreground mt-1">{formatDateNairobi(profile.created_at)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Status</p>
+                      <div className="mt-1 flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+                        <span className="text-foreground">Active</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="newPassword" className="text-xs font-medium">New Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="newPassword"
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Enter new password (min 6 characters)"
-                    className="pl-10"
-                  />
+                {/* Error Message */}
+                {error && (
+                  <div className="flex items-start gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                    <span className="text-sm text-destructive">{error}</span>
+                  </div>
+                )}
+
+                {/* Save Button */}
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="submit"
+                    disabled={isUpdating}
+                    className="flex-1"
+                  >
+                    {isUpdating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Save Changes
+                  </Button>
                 </div>
-              </div>
+              </form>
+            </TabsContent>
 
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword" className="text-xs font-medium">Confirm New Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Confirm new password"
-                    className="pl-10"
-                  />
+            {/* Security Tab */}
+            <TabsContent value="security" className="p-6">
+              <form onSubmit={handleUpdateProfile} className="space-y-6">
+                {/* Change Password Section */}
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground mb-1">Change Password</h3>
+                    <p className="text-xs text-muted-foreground">Keep your account secure by using a strong password</p>
+                  </div>
+
+                  {/* Current Password */}
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="oldPassword" className="text-sm font-medium">Current Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        id="oldPassword"
+                        type="password"
+                        value={oldPassword}
+                        onChange={(e) => setOldPassword(e.target.value)}
+                        placeholder="Enter your current password"
+                        className="pl-10 h-10"
+                      />
+                    </div>
+                  </div>
+
+                  {/* New Password */}
+                  <div className="space-y-2">
+                    <Label htmlFor="newPassword" className="text-sm font-medium">New Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        id="newPassword"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Enter new password"
+                        className="pl-10 h-10"
+                      />
+                    </div>
+                    
+                    {/* Password Strength Indicator */}
+                    {newPassword && (
+                      <div className="flex items-center gap-2 pt-2">
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all ${
+                              passwordStrength === "strong"
+                                ? "w-full bg-green-500"
+                                : passwordStrength === "medium"
+                                ? "w-2/3 bg-yellow-500"
+                                : "w-1/3 bg-red-500"
+                            }`}
+                          />
+                        </div>
+                        <span className={`text-xs font-medium ${getStrengthColor(passwordStrength)}`}>
+                          {passwordStrength?.charAt(0).toUpperCase() + passwordStrength?.slice(1)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Confirm Password */}
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword" className="text-sm font-medium">Confirm Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        id="confirmPassword"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Confirm your new password"
+                        className="pl-10 h-10"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              {newPassword && newPassword.length > 0 && (
-                <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
-                  Password strength: {newPassword.length >= 8 ? "Strong" : newPassword.length >= 6 ? "Medium" : "Weak"}
+                {/* Security Tips */}
+                <div className="space-y-3 p-4 rounded-lg bg-blue-500/10 border border-blue-200 dark:border-blue-800">
+                  <h4 className="text-xs font-semibold text-blue-900 dark:text-blue-100 uppercase tracking-wide">🔐 Password Tips</h4>
+                  <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1 list-disc list-inside">
+                    <li>Use at least 8 characters for better security</li>
+                    <li>Mix uppercase, lowercase, numbers, and symbols</li>
+                    <li>Avoid using personal information</li>
+                    <li>Don't reuse passwords from other accounts</li>
+                  </ul>
                 </div>
-              )}
-            </div>
 
-            {/* Error Message */}
-            {error && (
-              <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
+                {/* Error Message */}
+                {error && (
+                  <div className="flex items-start gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                    <span className="text-sm text-destructive">{error}</span>
+                  </div>
+                )}
+
+                {/* Save Button */}
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    type="submit"
+                    disabled={isUpdating || !newPassword}
+                    className="flex-1"
+                  >
+                    {isUpdating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Update Password
+                  </Button>
+                </div>
+              </form>
+            </TabsContent>
+
+            {/* Activity Tab */}
+            <TabsContent value="activity" className="p-6 space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-4">Login Activity</h3>
               </div>
-            )}
 
-            {/* Submit Button */}
-            <div className="flex items-center gap-2 pt-4 border-t border-border/50">
-              <Button
-                type="submit"
-                disabled={isUpdating}
-                className="w-full"
-              >
-                {isUpdating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Changes
-              </Button>
-            </div>
+              {/* Activity Info Cards */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card className="border-border/50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground mb-1">Last Login</p>
+                        <p className="text-sm font-semibold">Recent (Check logs for details)</p>
+                      </div>
+                      <LogOut className="w-5 h-5 text-muted-foreground" />
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <div className="text-xs text-muted-foreground bg-muted/20 p-3 rounded">
-              <p className="font-medium mb-1">📝 Note:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Leave password fields empty if you don't want to change your password</li>
-                <li>Your current password is required to set a new password</li>
-                <li>Changes are saved immediately</li>
-              </ul>
-            </div>
-          </form>
-        </ScrollArea>
-      </CardContent>
-    </Card>
+                <Card className="border-border/50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground mb-1">Active Sessions</p>
+                        <p className="text-sm font-semibold">1 Session</p>
+                      </div>
+                      <Shield className="w-5 h-5 text-muted-foreground" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Activity Legend */}
+              <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border/50">
+                <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">📊 How to Monitor Activity</h4>
+                <ul className="text-xs text-muted-foreground space-y-2">
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>Login details including IP address and timestamps are logged to the Activity Log</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>Ask your administrator to review the Activity Log for detailed login history</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-primary mt-1">•</span>
+                    <span>Contact support if you see unfamiliar login activity</span>
+                  </li>
+                </ul>
+              </div>
+            </TabsContent>
+          </ScrollArea>
+        </Tabs>
+      </Card>
+    </div>
   );
 };

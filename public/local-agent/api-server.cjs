@@ -900,6 +900,9 @@ async function syncCallRecords() {
           total: cdrResult.data.length,
           saved: savedCount
         }));
+        
+        // Trigger missed call alerts instantly for newly synced calls
+        await checkAndAlertMissedCalls();
       } else {
         logger.debug(`📋 No new records to save (checked ${cdrResult.data.length} CDR records)`);
       }
@@ -910,13 +913,341 @@ async function syncCallRecords() {
   } catch (error) {
     logger.error(`Call sync error: ${error.message}`);
     db.logActivity('call_sync', `Call sync failed: ${error.message}`, 'error');
+    alertErrorImmediately('Call Sync Error', error.message);
   }
 }
 
 // Start call sync when server starts
 setTimeout(startCallSync, 5000); // Start after 5 seconds
 
-// Heartbeat sender - records agent activity every 60 seconds
+// ========================================
+// Missed Call Alert Service
+// ========================================
+
+let missedCallAlertInterval = null;
+const notifiedMissedCalls = new Set(); // Track which missed calls we've already alerted
+
+async function checkAndAlertMissedCalls() {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    
+    // Only check if telegram is enabled
+    if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      return;
+    }
+
+    logger.debug('Checking for new missed calls...');
+    
+    // Get recent calls from last 5 minutes
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    
+    const missedCalls = db.db.prepare(`
+      SELECT * FROM call_records 
+      WHERE 
+        status IN ('missed', 'no-answer', 'noanswer', 'failed')
+        AND created_at >= ?
+        AND (answer_time IS NULL OR answer_time = '')
+      ORDER BY start_time DESC
+    `).all(fiveMinutesAgo);
+
+    if (!missedCalls || missedCalls.length === 0) {
+      return;
+    }
+
+    logger.info(`Found ${missedCalls.length} recent missed calls`);
+
+    for (const call of missedCalls) {
+      // Use call ID as unique identifier to avoid duplicate alerts
+      const callKey = call.id || call.external_id;
+      
+      if (notifiedMissedCalls.has(callKey)) {
+        logger.debug(`Already notified for missed call: ${callKey}, skipping...`);
+        continue;
+      }
+
+      try {
+        // Format Telegram message
+        const callTime = new Date(call.start_time).toLocaleTimeString();
+        const callDate = new Date(call.start_time).toLocaleDateString();
+        const callerNumber = call.caller_number || 'Unknown';
+        const extensionNumber = call.extension || 'General Queue';
+        const duration = call.ring_duration || 0;
+        
+        // Get extension username from database
+        let extensionUsername = 'N/A';
+        if (extensionNumber !== 'General Queue') {
+          const extInfo = db.db.prepare('SELECT username FROM pbx_extensions WHERE extnumber = ? LIMIT 1').get(extensionNumber);
+          if (extInfo?.username) {
+            extensionUsername = extInfo.username;
+          }
+        }
+        
+        let messageText = 'MISSED CALL ALERT\n\n';
+        messageText += `Status: Missed Call\n`;
+        messageText += `From: ${callerNumber}\n`;
+        messageText += `To Extension: ${extensionNumber} (${extensionUsername})\n`;
+        messageText += `Time: ${callTime}\n`;
+        messageText += `Ring Duration: ${duration}s\n`;
+        messageText += `Date: ${callDate}\n`;
+
+        const botToken = telegramConfig.bot_token;
+        const chatId = telegramConfig.chat_id;
+        const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+        const payload = {
+          chat_id: chatId,
+          text: messageText
+        };
+
+        logger.info(`Sending Telegram alert for missed call from ${callerNumber} to ${extensionNumber}`);
+
+        // Send to Telegram
+        const tgResp = await fetch(telegramApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const tgJson = await tgResp.json();
+
+        if (tgResp.ok && tgJson.ok) {
+          logger.info(`Telegram missed call alert sent successfully`);
+          notifiedMissedCalls.add(callKey);
+          db.logActivity('telegram_missed_call_alert', `Missed call alert sent: ${callerNumber} -> ${extensionNumber}`, 'success');
+        } else {
+          logger.error(`Telegram send failed: ${tgJson.description || 'Unknown error'}`);
+          db.logActivity('telegram_missed_call_alert_failed', `Failed to send alert for ${callerNumber}`, 'error');
+        }
+      } catch (error) {
+        logger.error(`Missed call alert error: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    logger.error(`Check missed calls error: ${error.message}`);
+  }
+}
+
+async function alertErrorImmediately(eventType, message) {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    
+    // Only send if telegram is enabled
+    if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      return;
+    }
+
+    let messageText = 'ERROR REPORT\n\n';
+    messageText += `Type: ${eventType}\n`;
+    messageText += `Message: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}\n`;
+    messageText += `Time: ${new Date().toLocaleString()}\n`;
+
+    const botToken = telegramConfig.bot_token;
+    const chatId = telegramConfig.chat_id;
+    const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+    const payload = {
+      chat_id: chatId,
+      text: messageText
+    };
+
+    logger.info(`Sending Telegram error alert: ${eventType}`);
+
+    // Send to Telegram
+    const tgResp = await fetch(telegramApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const tgJson = await tgResp.json();
+
+    if (tgResp.ok && tgJson.ok) {
+      logger.info(`Telegram error alert sent successfully`);
+    } else {
+      logger.error(`Telegram error send failed: ${tgJson.description || 'Unknown error'}`);
+    }
+  } catch (error) {
+    logger.error(`Error alert error: ${error.message}`);
+  }
+}
+
+// Start checking for missed calls every 30 seconds
+function startMissedCallAlerts() {
+  if (missedCallAlertInterval) {
+    clearInterval(missedCallAlertInterval);
+  }
+
+  logger.info('Missed call alert service ready (triggered on call sync)');
+}
+
+// Start the service
+startMissedCallAlerts();
+
+// ========================================
+// Daily Report Service
+// ========================================
+
+let dailyReportInterval = null;
+let lastReportDate = null;
+
+async function sendDailyReport() {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    
+    // Only send if telegram is enabled
+    if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      return;
+    }
+
+    // Get today's date
+    const today = new Date().toISOString().split('T')[0];
+
+    // === CALL STATISTICS ===
+    const callStats = db.db.prepare(`
+      SELECT 
+        cr.extension,
+        pe.username,
+        COUNT(*) as total_calls,
+        SUM(CASE WHEN cr.status = 'answered' THEN 1 ELSE 0 END) as received,
+        SUM(CASE WHEN cr.status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as missed,
+        SUM(CASE WHEN cr.status = 'busy' THEN 1 ELSE 0 END) as busy,
+        SUM(CASE WHEN cr.status = 'failed' THEN 1 ELSE 0 END) as failed
+      FROM call_records cr
+      LEFT JOIN pbx_extensions pe ON cr.extension = pe.extnumber
+      WHERE SUBSTR(cr.start_time, 1, 10) = ?
+      GROUP BY cr.extension
+      HAVING COUNT(*) > 0
+      ORDER BY total_calls DESC
+    `).all(today);
+
+    // === SMS STATISTICS ===
+    const smsStats = db.db.prepare(`
+      SELECT 
+        sender_number,
+        sim_port,
+        COUNT(*) as total_sms,
+        GROUP_CONCAT(message_content, ' | ') as messages
+      FROM sms_messages
+      WHERE SUBSTR(received_at, 1, 10) = ?
+      GROUP BY sender_number, sim_port
+      ORDER BY total_sms DESC
+      LIMIT 20
+    `).all(today);
+
+    const totalSmsToday = db.db.prepare(`
+      SELECT COUNT(*) as count FROM sms_messages 
+      WHERE SUBSTR(received_at, 1, 10) = ?
+    `).get(today).count;
+
+    // Check if there's any data to report
+    const hasCallData = callStats && callStats.length > 0;
+    const hasSmsData = smsStats && smsStats.length > 0;
+
+    if (!hasCallData && !hasSmsData) {
+      logger.info('No calls or SMS today, skipping daily report');
+      return;
+    }
+
+    let messageText = 'DAILY SYSTEM REPORT\n\n';
+    messageText += `Date: ${today}\n`;
+    messageText += `Report Time: 23:59:59 Nairobi Time\n`;
+    messageText += `\n========== CALLS ==========\n\n`;
+
+    if (hasCallData) {
+      const totalCalls = callStats.reduce((sum, stat) => sum + stat.total_calls, 0);
+      messageText += `Extensions with Calls: ${callStats.length}\n`;
+      messageText += `Total Calls: ${totalCalls}\n\n`;
+
+      // Format each extension's stats
+      callStats.forEach((stat, idx) => {
+        const username = stat.username || 'N/A';
+        messageText += `${idx + 1}. Ext ${stat.extension} (${username})\n`;
+        messageText += `   Total: ${stat.total_calls} | Received: ${stat.received || 0} | Missed: ${stat.missed || 0} | Busy: ${stat.busy || 0} | Failed: ${stat.failed || 0}\n\n`;
+      });
+    } else {
+      messageText += `No calls today.\n\n`;
+    }
+
+    messageText += `\n========== SMS ==========\n\n`;
+
+    if (hasSmsData) {
+      messageText += `Total SMS Received: ${totalSmsToday}\n`;
+      messageText += `Unique Senders: ${smsStats.length}\n\n`;
+
+      // Format SMS logs
+      smsStats.forEach((sms, idx) => {
+        const msgCount = sms.total_sms;
+        messageText += `${idx + 1}. From: ${sms.sender_number} (Port ${sms.sim_port})\n`;
+        messageText += `   Messages: ${msgCount}\n`;
+        // Show first message preview
+        const messages = sms.messages ? sms.messages.split(' | ') : [];
+        if (messages.length > 0) {
+          const preview = messages[0].substring(0, 60);
+          messageText += `   Preview: "${preview}${preview.length === 60 ? '...' : ''}"\n\n`;
+        }
+      });
+    } else {
+      messageText += `Total SMS Received: 0\n`;
+      messageText += `No SMS today.\n\n`;
+    }
+
+    messageText += `\n========== END REPORT ==========\n`;
+
+    const botToken = telegramConfig.bot_token;
+    const chatId = telegramConfig.chat_id;
+    const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+    const payload = {
+      chat_id: chatId,
+      text: messageText
+    };
+
+    logger.info('Sending daily system report to Telegram');
+
+    // Send to Telegram
+    const tgResp = await fetch(telegramApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const tgJson = await tgResp.json();
+
+    if (tgResp.ok && tgJson.ok) {
+      logger.info('Daily report sent successfully');
+      db.logActivity('daily_report_sent', `Daily report with ${callStats.length} extensions and ${totalSmsToday} SMS messages sent`, 'success');
+    } else {
+      logger.error(`Daily report send failed: ${tgJson.description || 'Unknown error'}`);
+    }
+  } catch (error) {
+    logger.error(`Daily report error: ${error.message}`);
+  }
+}
+
+function scheduleDailyReport() {
+  logger.info('Scheduling daily report for 23:59:59 Nairobi time (20:59:59 UTC)');
+
+  // Check every second if it's time to send the report
+  dailyReportInterval = setInterval(() => {
+    const now = new Date();
+    // Nairobi is UTC+3, so 23:59:59 Nairobi time = 20:59:59 UTC
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
+    const utcSeconds = now.getUTCSeconds();
+    const time = `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}:${String(utcSeconds).padStart(2, '0')}`;
+    const today = now.toISOString().split('T')[0];
+
+    // Send report at 20:59:59 UTC (23:59:59 Nairobi) and only once per day
+    if (time === '20:59:59' && lastReportDate !== today) {
+      lastReportDate = today;
+      sendDailyReport();
+    }
+  }, 1000); // Check every second
+}
+
+// Start scheduling the daily report
+scheduleDailyReport();
+
 async function recordHeartbeat() {
   try {
     const stats = db.getCallStats();
@@ -1002,7 +1333,7 @@ async function startSmsListener() {
           // If decoding fails, use original content
         }
 
-        logger.info(`💾 Saving SMS to database: From ${sms.sender}, ${messageContent.length} chars`);
+        logger.info(`💾 Saving SMS to database: From ${sms.sender}, ${messageContent.length} chars, Port ${sms.port}, ID: ${sms.id}`);
         
         // Use high-level insert for consistency
         const inserted = db.insertSMS({
@@ -1018,14 +1349,16 @@ async function startSmsListener() {
           logger.info(`✅ SMS SAVED: From ${sms.sender} on port ${sms.port}`);
           db.logActivity('sms_received', `New SMS from ${sms.sender} on port ${sms.port}: ${messageContent.substring(0, 50)}...`, 'success', sms.port);
         } else {
-          logger.error(`❌ SAVE FAILED: SMS from ${sms.sender} on port ${sms.port}`);
-          db.logActivity('sms_received_failed', `Failed to save SMS from ${sms.sender} on port ${sms.port}`, 'error', sms.port);
+          logger.error(`❌ SAVE FAILED: SMS from ${sms.sender} on port ${sms.port} (ID: ${sms.id})`);
+          logger.debug(`   Message: ${messageContent.substring(0, 100)}`);
+          db.logActivity('sms_received_failed', `Failed to save SMS from ${sms.sender} on port ${sms.port} (ID: ${sms.id})`, 'error', sms.port);
+          alertErrorImmediately('SMS Save Failed', `SMS from ${sms.sender} on port ${sms.port} could not be saved to database`);
         }
       } catch (err) {
         logger.error(`\n❌ SMS HANDLER ERROR: ${err && err.message ? err.message : String(err)}`);
         if (err && err.stack) logger.debug(err.stack);
         logErrorToFile(err);
-        try { db.logActivity('sms_handler_error', `Handler error: ${err && err.message ? err.message : String(err)}`, 'error'); } catch (e) {}
+        try { db.logActivity('sms_handler_error', `Handler error: ${err && err.message ? err.message : String(err)}`, 'error'); alertErrorImmediately('SMS Handler Error', err && err.message ? err.message : String(err)); } catch (e) {}
       }
     });
 
@@ -1129,6 +1462,18 @@ app.post('/api/auth/login', (req, res) => {
     const result = db.authenticateUser(email, password);
     
     if (result.success) {
+      // Get client IP address
+      const clientIP = req.headers['x-forwarded-for'] ? 
+        req.headers['x-forwarded-for'].split(',')[0].trim() : 
+        req.connection.remoteAddress || req.socket.remoteAddress || 'Unknown';
+      
+      // Log login activity with IP
+      db.logActivity('user_login', `User ${email} logged in from IP: ${clientIP}`, 'success', null, JSON.stringify({
+        email,
+        ip: clientIP,
+        timestamp: new Date().toISOString()
+      }));
+      
       // Generate token in format: user.id:user.role for easy parsing
       const token = `${result.user.id}:${result.user.role}`;
       
@@ -1139,6 +1484,17 @@ app.post('/api/auth/login', (req, res) => {
         user: result.user
       });
     } else {
+      // Log failed login attempt
+      const clientIP = req.headers['x-forwarded-for'] ? 
+        req.headers['x-forwarded-for'].split(',')[0].trim() : 
+        req.connection.remoteAddress || req.socket.remoteAddress || 'Unknown';
+      
+      db.logActivity('user_login_failed', `Failed login attempt for ${email} from IP: ${clientIP}`, 'error', null, JSON.stringify({
+        email,
+        ip: clientIP,
+        timestamp: new Date().toISOString()
+      }));
+      
       res.status(401).json({
         success: false,
         error: result.error
@@ -2498,9 +2854,9 @@ app.post('/api/telegram-send', async (req, res) => {
     
     // Handle test message
     if (action === 'test') {
-      messageText = '✅ *Telegram Connection Test*\n\n';
-      messageText += 'Your bot is properly configured and connected!\n';
-      messageText += `⏰ ${new Date().toLocaleString()}\n`;
+      messageText = 'Telegram Connection Test\n\n';
+      messageText += 'Your bot is properly configured and connected.\n';
+      messageText += `${new Date().toLocaleString()}\n`;
     }
     // Gather data based on action type
     else if (action === 'sms_logs') {
@@ -2512,15 +2868,15 @@ app.post('/api/telegram-send', async (req, res) => {
         ORDER BY received_at DESC LIMIT 20
       `).all(today);
       
-      messageText = '📨 *SMS Logs (Today)*\n\n';
+      messageText = 'SMS LOGS (TODAY)\n\n';
       if (smsMessages.length === 0) {
         messageText += 'No SMS messages today.';
       } else {
         smsMessages.forEach((msg, idx) => {
-          messageText += `${idx + 1}. 📱 ${msg.sender_number}\n`;
-          messageText += `   📝 ${msg.message_content?.substring(0, 60)}${msg.message_content?.length > 60 ? '...' : ''}\n`;
-          messageText += `   ⏰ ${msg.received_at}\n`;
-          messageText += `   🔌 Port: ${msg.sim_port}\n\n`;
+          messageText += `${idx + 1}. From: ${msg.sender_number}\n`;
+          messageText += `   ${msg.message_content?.substring(0, 60)}${msg.message_content?.length > 60 ? '...' : ''}\n`;
+          messageText += `   Time: ${msg.received_at}\n`;
+          messageText += `   Port: ${msg.sim_port}\n\n`;
         });
       }
     } else if (action === 'call_logs') {
@@ -2532,15 +2888,15 @@ app.post('/api/telegram-send', async (req, res) => {
         ORDER BY start_time DESC LIMIT 20
       `).all(today);
       
-      messageText = '📞 *Call Logs (Today)*\n\n';
+      messageText = 'CALL LOGS (TODAY)\n\n';
       if (callRecords.length === 0) {
         messageText += 'No call records today.';
       } else {
         callRecords.forEach((call, idx) => {
           const duration = call.total_duration ? `${Math.floor(call.total_duration / 60)}m` : 'N/A';
-          messageText += `${idx + 1}. From: ${call.caller_number} → ${call.callee_number}\n`;
-          messageText += `   📊 Status: ${call.status} | Duration: ${duration}\n`;
-          messageText += `   ⏰ ${call.start_time}\n\n`;
+          messageText += `${idx + 1}. From: ${call.caller_number} - To: ${call.callee_number}\n`;
+          messageText += `   Status: ${call.status} | Duration: ${duration}\n`;
+          messageText += `   ${call.start_time}\n\n`;
         });
       }
     } else if (action === 'activity_logs') {
@@ -2552,15 +2908,14 @@ app.post('/api/telegram-send', async (req, res) => {
         ORDER BY created_at DESC LIMIT 20
       `).all(today);
       
-      messageText = '📋 *Activity Logs (Today)*\n\n';
+      messageText = 'ACTIVITY LOGS (TODAY)\n\n';
       if (activities.length === 0) {
         messageText += 'No activities today.';
       } else {
         activities.forEach((activity, idx) => {
-          const icon = activity.severity === 'error' ? '❌' : activity.severity === 'success' ? '✅' : 'ℹ️';
-          messageText += `${idx + 1}. ${icon} ${activity.event_type}\n`;
+          messageText += `${idx + 1}. [${activity.severity.toUpperCase()}] ${activity.event_type}\n`;
           messageText += `   ${activity.message}\n`;
-          messageText += `   ⏰ ${activity.created_at}\n\n`;
+          messageText += `   ${activity.created_at}\n\n`;
         });
       }
     } else if (action === 'gateway_status') {
@@ -2569,39 +2924,20 @@ app.post('/api/telegram-send', async (req, res) => {
       const totalPorts = db.db.prepare('SELECT COUNT(*) as cnt FROM sim_port_config').get();
       const portDetails = db.db.prepare('SELECT port_number, enabled, status FROM sim_port_config ORDER BY port_number').all();
       
-      messageText = '🌐 *Gateway & PBX Status*\n\n';
-      messageText += `🔧 Gateway IP: ${gatewayConfig?.gateway_ip || 'Not configured'}\n`;
-      messageText += `🔧 PBX IP: ${pbxConfig?.pbx_ip || 'Not configured'}\n`;
-      messageText += `📊 Total SIM Ports: ${totalPorts.cnt}\n`;
+      messageText = 'GATEWAY & PBX STATUS\n\n';
+      messageText += `Gateway IP: ${gatewayConfig?.gateway_ip || 'Not configured'}\n`;
+      messageText += `PBX IP: ${pbxConfig?.pbx_ip || 'Not configured'}\n`;
+      messageText += `Total SIM Ports: ${totalPorts.cnt}\n`;
       if (portDetails.length > 0) {
-        messageText += `\n*Port Details:*\n`;
+        messageText += `\nPort Details:\n`;
         portDetails.forEach(port => {
-          const status = port.enabled ? '✅' : '❌';
-          messageText += `  Port ${port.port_number}: ${status} ${port.status}\n`;
+          const status = port.enabled ? 'ENABLED' : 'DISABLED';
+          messageText += `  Port ${port.port_number}: ${status} - ${port.status}\n`;
         });
       } else {
-        messageText += `\n⚠️ No SIM ports configured\n`;
+        messageText += `\nNo SIM ports configured\n`;
       }
-      messageText += `⏰ ${new Date().toLocaleString()}\n`;
-    } else if (action === 'error_logs') {
-      // Get errors from today only - use SUBSTR to handle mixed timestamp formats
-      const today = new Date().toISOString().split('T')[0];
-      const errors = db.db.prepare(`
-        SELECT * FROM activity_logs 
-        WHERE severity = 'error' AND SUBSTR(created_at, 1, 10) = ?
-        ORDER BY created_at DESC LIMIT 15
-      `).all(today);
-      
-      messageText = '⚠️ *Error Logs (Today)*\n\n';
-      if (errors.length === 0) {
-        messageText += '✅ No errors today.';
-      } else {
-        errors.forEach((error, idx) => {
-          messageText += `${idx + 1}. ❌ ${error.event_type}\n`;
-          messageText += `   ${error.message.substring(0, 100)}${error.message.length > 100 ? '...' : ''}\n`;
-          messageText += `   ⏰ ${error.created_at}\n\n`;
-        });
-      }
+      messageText += `${new Date().toLocaleString()}\n`;
     } else if (action === 'system_summary') {
       const today = new Date().toISOString().split('T')[0];
       const smsCount = db.db.prepare("SELECT COUNT(*) as cnt FROM sms_messages WHERE SUBSTR(received_at, 1, 10) = ?").get(today);
@@ -2610,21 +2946,20 @@ app.post('/api/telegram-send', async (req, res) => {
       const totalActivity = db.db.prepare("SELECT COUNT(*) as cnt FROM activity_logs WHERE SUBSTR(created_at, 1, 10) = ?").get(today);
       const totalPorts = db.db.prepare('SELECT COUNT(*) as cnt FROM sim_port_config').get();
       
-      messageText = '📊 *System Summary (Today)*\n\n';
-      messageText += `📨 SMS Messages: ${smsCount.cnt}\n`;
-      messageText += `📞 Call Records: ${callCount.cnt}\n`;
-      messageText += `📋 Activities: ${totalActivity.cnt}\n`;
-      messageText += `⚠️ Errors: ${errorCount.cnt}\n`;
-      messageText += `📱 Total SIM Ports: ${totalPorts.cnt}\n`;
-      messageText += `⏰ ${new Date().toLocaleString()}\n`;
+      messageText = 'SYSTEM SUMMARY (TODAY)\n\n';
+      messageText += `SMS Messages: ${smsCount.cnt}\n`;
+      messageText += `Call Records: ${callCount.cnt}\n`;
+      messageText += `Activities: ${totalActivity.cnt}\n`;
+      messageText += `Errors: ${errorCount.cnt}\n`;
+      messageText += `Total SIM Ports: ${totalPorts.cnt}\n`;
+      messageText += `${new Date().toLocaleString()}\n`;
     }
 
     // Send to Telegram API
     const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
     const payload = {
       chat_id: chatId,
-      text: messageText,
-      parse_mode: 'Markdown'
+      text: messageText
     };
 
     // Log the telegram send action
@@ -3198,6 +3533,7 @@ app.post('/api/debug/inject-sms', (req, res) => {
         return res.json({ success: true, message: 'Injected', id: sms.id });
       }
       db.logActivity('sms_injected_failed', `Failed to inject SMS from ${sms.sender}`, 'error', sms.port);
+      alertErrorImmediately('SMS Inject Failed', `Failed to inject SMS from ${sms.sender}`);
       return res.status(500).json({ success: false, error: 'Failed to insert' });
     } catch (err) {
       logErrorToFile(err);
@@ -3325,6 +3661,103 @@ app.use((err, req, res, next) => {
     error: 'Internal server error',
     message: err.message
   });
+});
+
+// Test missed call alert
+app.post('/api/test-missed-call-alert', async (req, res) => {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    
+    if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Telegram not configured. Please enable Telegram and set bot token and chat ID.'
+      });
+    }
+
+    // Create a test missed call record
+    const testCallRecord = {
+      external_id: `test-missed-${Date.now()}`,
+      caller_number: '254792064926',
+      callee_number: '',
+      caller_name: 'Test Caller',
+      extension: '101',
+      direction: 'inbound',
+      status: 'missed',
+      start_time: new Date().toISOString(),
+      answer_time: null,
+      ring_duration: 15,
+      created_at: new Date().toISOString()
+    };
+
+    // Save test call record
+    const saved = db.saveCallRecord(testCallRecord);
+    
+    if (!saved) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create test missed call record'
+      });
+    }
+
+    // Send test alert
+    const botToken = telegramConfig.bot_token;
+    const chatId = telegramConfig.chat_id;
+    const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+    let messageText = '📞 *MISSED CALL ALERT (TEST)*\n\n';
+    messageText += `🔴 *Status:* Missed Call\n`;
+    messageText += `📱 *From:* \`${testCallRecord.caller_number}\`\n`;
+    messageText += `👤 *Name:* ${testCallRecord.caller_name}\n`;
+    messageText += `📲 *To Extension:* \`${testCallRecord.extension}\`\n`;
+    messageText += `⏰ *Time:* ${new Date(testCallRecord.start_time).toLocaleTimeString()}\n`;
+    messageText += `⏱️ *Ring Duration:* ${testCallRecord.ring_duration}s\n`;
+    messageText += `📅 *Date:* ${new Date(testCallRecord.start_time).toLocaleDateString()}\n`;
+    messageText += `\n✅ This is a test message to verify Telegram integration is working correctly.`;
+
+    const payload = {
+      chat_id: chatId,
+      text: messageText,
+      parse_mode: 'Markdown'
+    };
+
+    logger.info('📬 Sending test missed call alert to Telegram...');
+
+    const tgResp = await fetch(telegramApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const tgJson = await tgResp.json();
+
+    if (tgResp.ok && tgJson.ok) {
+      logger.info('✅ Test missed call alert sent successfully');
+      db.logActivity('telegram_test_missed_call_alert', 'Test missed call alert sent successfully', 'success');
+      
+      res.json({
+        success: true,
+        message: 'Test missed call alert sent successfully to Telegram',
+        testCall: {
+          id: testCallRecord.external_id,
+          from: testCallRecord.caller_number,
+          to: testCallRecord.extension,
+          time: new Date(testCallRecord.start_time).toLocaleTimeString()
+        }
+      });
+    } else {
+      logger.error(`❌ Failed to send test alert: ${tgJson.description || 'Unknown error'}`);
+      db.logActivity('telegram_test_missed_call_alert_failed', `Failed to send test alert: ${tgJson.description}`, 'error');
+      
+      res.status(500).json({
+        success: false,
+        error: `Failed to send Telegram message: ${tgJson.description || 'Unknown error'}`
+      });
+    }
+  } catch (error) {
+    logger.error(`Test missed call alert error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.use((req, res) => {

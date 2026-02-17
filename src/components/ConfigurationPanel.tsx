@@ -250,15 +250,6 @@ export const ConfigurationPanel = ({
 
         <Separator className="my-4" />
 
-        <div className="space-y-3">
-          <Label className="text-muted-foreground">Local Network Integration</Label>
-          <div className="p-4 rounded-lg bg-muted/30 border border-border/30">
-            <p className="text-sm text-muted-foreground mb-3">
-              Since your TG400 is on a private network, use a local agent to sync SMS messages.
-            </p>
-            <LocalAgentGuide />
-          </div>
-        </div>
       </CardContent>
     </Card>
   );

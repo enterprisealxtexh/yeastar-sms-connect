@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import {
   BarChart,
   Bar,
@@ -16,8 +18,10 @@ import {
   LineChart,
   Line,
 } from "recharts";
-import { BarChart3, PieChartIcon, Clock, TrendingUp, MessageSquare, Phone, Zap } from "lucide-react";
+import { BarChart3, PieChartIcon, Clock, TrendingUp, MessageSquare, Phone, Zap, Download } from "lucide-react";
 import { useAnalytics } from "@/hooks/useAnalytics";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))"];
 const CALL_COLORS = {
@@ -28,8 +32,26 @@ const CALL_COLORS = {
   voicemail: "hsl(var(--chart-4))",
 };
 
+type TimePeriod = "day" | "week" | "month" | "year";
+
+const timePeriodDays: Record<TimePeriod, number> = {
+  day: 1,
+  week: 7,
+  month: 30,
+  year: 365,
+};
+
+const timePeriodLabels: Record<TimePeriod, string> = {
+  day: "Last 24 Hours",
+  week: "Last 7 Days",
+  month: "Last 30 Days",
+  year: "Last Year",
+};
+
 export const AnalyticsDashboard = () => {
-  const { data: analytics, isLoading } = useAnalytics(7);
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("week");
+  const { data: analytics, isLoading } = useAnalytics(timePeriodDays[timePeriod]);
+  const auth = useAuth();
 
   if (isLoading) {
     return (
@@ -55,8 +77,128 @@ export const AnalyticsDashboard = () => {
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   };
 
+  // Export SMS Report as CSV
+  const exportSmsReport = () => {
+    if (!analytics) return;
+    
+    const headers = ["Date", "Count"];
+    const rows = analytics.dailyMessages.map((day) => [day.date, day.count.toString()]);
+    
+    const csvContent = [
+      ["SMS Analytics Report", timePeriodLabels[timePeriod]],
+      [],
+      ["Summary"],
+      ["Total Messages", analytics.totalMessages.toString()],
+      ["Average per day", analytics.averageMessagesPerDay.toFixed(2)],
+      ["Busiest Port", `Port ${analytics.busiestPort || "N/A"}`],
+      [],
+      ["Daily Breakdown"],
+      headers,
+      ...rows,
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sms-report-${timePeriod}-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("SMS report exported");
+  };
+
+  // Export Call Report as CSV
+  const exportCallReport = () => {
+    if (!analytics) return;
+    
+    const headers = ["Date", "Call Count"];
+    const rows = analytics.dailyCalls.map((day) => [day.date, day.count.toString()]);
+    
+    const statusBreakdown = analytics.callStatusDistribution
+      .map((s) => [s.status.charAt(0).toUpperCase() + s.status.slice(1), s.count.toString()]);
+
+    const csvContent = [
+      ["Call Analytics Report", timePeriodLabels[timePeriod]],
+      [],
+      ["Summary"],
+      ["Total Calls", analytics.totalCalls.toString()],
+      ["Average per day", analytics.averageCallsPerDay.toFixed(2)],
+      ["Total Duration", formatDuration(analytics.totalCallDuration)],
+      [],
+      ["Call Status Breakdown"],
+      ["Status", "Count"],
+      ...statusBreakdown,
+      [],
+      ["Daily Breakdown"],
+      headers,
+      ...rows,
+    ]
+      .map((row) => row.join(","))
+      .join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `call-report-${timePeriod}-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Call report exported");
+  };
+
   return (
     <div className="space-y-6">
+      {/* Time Period Selector and Export Controls */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-2">
+          {(["day", "week", "month", "year"] as const).map((period) => (
+            <Button
+              key={period}
+              variant={timePeriod === period ? "default" : "outline"}
+              size="sm"
+              onClick={() => setTimePeriod(period)}
+              className="capitalize"
+            >
+              {period === "day"
+                ? "24h"
+                : period === "week"
+                  ? "7d"
+                  : period === "month"
+                    ? "30d"
+                    : "1y"}
+            </Button>
+          ))}
+        </div>
+
+        {/* Export Controls - Admin Only */}
+        {auth?.user?.role === "admin" && (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportSmsReport}
+              className="gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export SMS</span>
+              <span className="inline sm:hidden">SMS</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportCallReport}
+              className="gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export Calls</span>
+              <span className="inline sm:hidden">Calls</span>
+            </Button>
+          </div>
+        )}
+      </div>
+
       <Tabs defaultValue="overview" className="space-y-6">
         <TabsList className="bg-card border border-border/50">
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -76,7 +218,7 @@ export const AnalyticsDashboard = () => {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{analytics.totalMessages}</p>
-                    <p className="text-xs text-muted-foreground">Messages (7 days)</p>
+                    <p className="text-xs text-muted-foreground">Messages ({timePeriodLabels[timePeriod]})</p>
                   </div>
                 </div>
               </CardContent>
@@ -90,7 +232,7 @@ export const AnalyticsDashboard = () => {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{analytics.totalCalls}</p>
-                    <p className="text-xs text-muted-foreground">Calls (7 days)</p>
+                    <p className="text-xs text-muted-foreground">Calls ({timePeriodLabels[timePeriod]})</p>
                   </div>
                 </div>
               </CardContent>

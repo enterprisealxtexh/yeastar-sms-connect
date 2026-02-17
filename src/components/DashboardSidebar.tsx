@@ -30,8 +30,6 @@ export type DashboardTab =
   | "config"
   | "users"
   | "profile"
-  | "ai"
-  | "telegram"
   | "messages"
   | "extensions";
 
@@ -46,12 +44,9 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "messages", label: "Messages", icon: FileText },
   { id: "calls", label: "Calls", icon: PhoneCall },
-  { id: "extensions", label: "Extensions", icon: Phone },
+  { id: "extensions", label: "Extensions", icon: Phone, adminOnly: true },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "logs", label: "Logs", icon: FileText },
-  { id: "telegram", label: "Telegram", icon: Send },
-  { id: "profile", label: "Profile", icon: User },
-  { id: "ai", label: "AI & Diagnostics", icon: Brain },
   { id: "users", label: "Users", icon: Users, adminOnly: true },
   { id: "config", label: "Configuration", icon: Settings, adminOnly: true },
 ];

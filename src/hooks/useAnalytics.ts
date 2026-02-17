@@ -56,22 +56,27 @@ export const useAnalytics = (days: number = 7) => {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
       const timeZone = 'Africa/Nairobi';
 
-      // Helper to parse database timestamps (format: "YYYY-MM-DD HH:MM:SS" in local/Nairobi time)
+      // Helper to parse database timestamps (format: "YYYY-MM-DD HH:MM:SS" stored as UTC)
       const parseDBTimestamp = (dateStr: string): Date => {
-        // Parse "2026-02-16 13:00:00" as if it's in Africa/Nairobi time
-        const isoStr = dateStr.replace(' ', 'T');
-        const localDate = new Date(isoStr); // Parsed as browser local time initially
-        // Convert from Nairobi time to UTC
-        return fromZonedTime(localDate, timeZone);
+        // Parse "2026-02-16 13:00:00" as UTC by appending Z
+        const isoStr = dateStr.replace(' ', 'T') + 'Z';
+        return new Date(isoStr);
       };
 
-      // Calculate start date in Nairobi local time (not UTC!)
+      // Calculate start date - get start of day in Nairobi timezone
       const nowInNairobi = toZonedTime(new Date(), timeZone);
       const startDateInNairobi = startOfDay(subDays(nowInNairobi, days - 1));
       
-      // Fetch SMS messages using the locally-timed start date
+      // Convert Nairobi date to UTC for database query
+      // If it's Feb 18, 2026 00:00:00 in Nairobi (UTC+3), that's Feb 17, 2026 21:00:00 UTC
+      const startUTC = new Date(startDateInNairobi.getTime() - (3 * 60 * 60 * 1000));
+      
+      // Format as "YYYY-MM-DD HH:MM:SS" for database query
+      const startDateStr = startUTC.toISOString().replace('T', ' ').substring(0, 19);
+      
+      // Fetch SMS messages using the UTC-converted start date
       const { data: messages, error: msgError } = await apiClient.getSmsMessages({
-        since: startDateInNairobi.toISOString(),
+        since: startDateStr,
         limit: 10000,
       });
 
@@ -83,7 +88,7 @@ export const useAnalytics = (days: number = 7) => {
           const callData = await callResponse.json();
           calls = (callData.data || []).filter((call: any) => {
             const callDate = parseDBTimestamp(call.start_time);
-            return callDate >= startDateInNairobi;
+            return callDate >= startUTC;
           });
         }
       } catch (e) {

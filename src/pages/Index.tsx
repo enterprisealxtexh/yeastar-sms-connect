@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
+import { SystemFooter } from "@/components/SystemFooter";
 import { SimPortCard } from "@/components/SimPortCard";
 import { SystemStatusCard } from "@/components/SystemStatusCard";
 import { SmsInbox } from "@/components/SmsInbox";
@@ -15,12 +16,9 @@ import { CallStatsCards } from "@/components/CallStatsCards";
 import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
-import { AiConfigPanel } from "@/components/AiConfigPanel";
-import { TelegramPanel } from "@/components/TelegramPanel";
 import ExtensionsPanel from "@/components/ExtensionsPanel";
 import { AllSmsPanel } from "@/components/AllSmsPanel";
-import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
-import { AiAutomationPanel } from "@/components/AiAutomationPanel";
+
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, Phone, Database } from "lucide-react";
@@ -93,7 +91,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Header lastSync={lastSync} onRefresh={handleRefresh} />
+      <Header onProfileClick={() => setActiveTab("profile")} />
 
       <div className="flex flex-1 overflow-hidden">
         <DashboardSidebar activeTab={activeTab} onTabChange={setActiveTab} />
@@ -214,22 +212,12 @@ const Index = () => {
             />
           )}
 
-          {activeTab === "ai" && (
-            <>
-              <AiAutomationPanel />
-              <PredictiveMaintenancePanel />
-              <div className="grid gap-6 lg:grid-cols-2">
-                <ErrorLogsPanel />
-                <AiConfigPanel />
-              </div>
-            </>
-          )}
-
-          {activeTab === "telegram" && <TelegramPanel />}
           {activeTab === "messages" && <AllSmsPanel />}
           {activeTab === "extensions" && <ExtensionsPanel />}
         </main>
       </div>
+
+      <SystemFooter lastSync={lastSync} onRefresh={handleRefresh} />
     </div>
   );
 };

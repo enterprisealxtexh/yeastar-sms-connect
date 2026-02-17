@@ -77,6 +77,22 @@ export const login = async (credentials: LoginCredentials) => {
     localStorage.setItem('user', JSON.stringify(result.user));
     localStorage.setItem('authToken', result.token);
     
+    // Log login activity
+    try {
+      await fetch(`${apiUrl}/api/activity-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: 'user_login',
+          message: `User ${credentials.email} logged in`,
+          severity: 'success',
+          username: credentials.email
+        }),
+      });
+    } catch (e) {
+      console.error('Failed to log login activity:', e);
+    }
+    
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Login failed';
