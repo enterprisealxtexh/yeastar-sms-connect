@@ -166,6 +166,12 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                       <span className="font-mono text-sm font-medium text-foreground">
                         {message.sender}
                       </span>
+                      {getContactName(message.sender) && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <User className="w-3 h-3" />
+                          {getContactName(message.sender)}
+                        </span>
+                      )}
                       <Badge
                         variant="outline"
                         className="text-xs font-mono border-primary/30 text-primary"
@@ -185,7 +191,7 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                       <Button
-                        size="sm"
+                        size="xs"
                         variant="ghost"
                         onClick={() => handleMarkRead(message.id)}
                         className="p-1 h-auto"

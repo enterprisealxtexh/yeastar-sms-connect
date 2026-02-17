@@ -185,7 +185,7 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                       <Button
-                        size="sm"
+                        size="xs"
                         variant="ghost"
                         onClick={() => handleMarkRead(message.id)}
                         className="p-1 h-auto"
