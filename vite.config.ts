@@ -11,6 +11,11 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
+  preview: {
+    host: "0.0.0.0",
+    port: 4173,
+    allowedHosts: ["calls.alxtexh.top", "localhost", "127.0.0.1"],
+  },
   plugins: [react()],
   resolve: {
     alias: {
