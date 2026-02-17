@@ -108,7 +108,22 @@ WantedBy=multi-user.target
 EOF
 ```
 
-### 2. Frontend Service
+### 2. Update vite.config.ts for Production Domain
+```bash
+# Edit vite.config.ts to add allowedHosts
+nano /opt/yeastar-sms-connect/vite.config.ts
+```
+
+Add this to the config:
+```typescript
+preview: {
+  host: "0.0.0.0",
+  port: 4173,
+  allowedHosts: ["calls.alxtexh.top", "localhost", "127.0.0.1"],
+},
+```
+
+### 3. Frontend Service
 ```bash
 sudo tee /etc/systemd/system/yeastar-vite.service > /dev/null << 'EOF'
 [Unit]
@@ -133,7 +148,7 @@ EOF
 sudo systemctl daemon-reload
 ```
 
-### 3. Start Services
+### 4. Start Services
 ```bash
 sudo systemctl start yeastar-api yeastar-vite
 sudo systemctl enable yeastar-api yeastar-vite
@@ -164,22 +179,35 @@ server {
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
     gzip_min_length 1000;
 
+    # Security & CORS Headers
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
     # Root for static files
     root /opt/yeastar-sms-connect/dist;
 
-    # Frontend - Vite Preview
+    # Handle CORS preflight requests
+    if ($request_method = 'OPTIONS') {
+        return 204;
+    }
+
+    # Frontend - Vite Preview on port 4173
     location / {
         try_files $uri $uri/ /index.html;
-        proxy_pass http://localhost:5173;
-        proxy_set_header Host $host;
+        proxy_pass http://127.0.0.1:4173;
+        proxy_set_header Host localhost;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # API Backend
+    # API Backend on port 2003
     location /api/ {
-        proxy_pass http://localhost:2003;
+        proxy_pass http://127.0.0.1:2003;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -193,11 +221,16 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
+
+        # Ensure CORS headers are passed through
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
     }
 
     # Health check
     location /health {
-        proxy_pass http://localhost:2003;
+        proxy_pass http://127.0.0.1:2003;
         access_log off;
     }
 }
@@ -230,6 +263,11 @@ sudo lsof -i -P -n | grep LISTEN
 
 # Test API locally
 curl http://localhost:2003/api/health
+
+# Test login
+curl -X POST http://localhost:2003/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@nosteq.co.ke","password":"admin123"}'
 
 # Visit in browser
 https://calls.alxtexh.top
@@ -274,10 +312,47 @@ echo "0 2 * * * cp /var/lib/yeastar-sms-connect/sms.db /var/backups/sms_db_\$(da
 ```bash
 # Check logs
 sudo journalctl -u yeastar-api -n 50
+sudo journalctl -u yeastar-vite -n 50
 
 # Check port availability
 sudo lsof -i :2003
-sudo lsof -i :5173
+sudo lsof -i :4173
+```
+
+### Vite Host Not Allowed Error
+If you see: "Blocked request. This host is not allowed"
+```bash
+# Ensure vite.config.ts has allowedHosts configured
+sudo nano /opt/yeastar-sms-connect/vite.config.ts
+
+# Add to preview section:
+allowedHosts: ["calls.alxtexh.top", "localhost", "127.0.0.1"]
+
+# Rebuild and restart
+cd /opt/yeastar-sms-connect
+npm run build
+sudo systemctl restart yeastar-vite
+```
+
+### Ad Blocker / Brave Blocking Requests
+If you see `ERR_BLOCKED_BY_CLIENT`:
+
+**The app now includes proper CORS headers** - this should work with most ad blockers enabled.
+
+If still blocked:
+1. Check Nginx is reloaded:
+   ```bash
+   sudo systemctl reload nginx
+   ```
+2. Check Brave's "Shields" (⚔️ icon top-right) - can lower to allow more requests
+3. Check browser extensions in `Settings → Extensions` and disable for this domain
+4. Try Incognito mode (no extensions)
+
+The CORS headers we added (`Access-Control-Allow-*`) tell ad blockers this is legitimate internal traffic, not tracking.
+
+If you run into persistent issues, check that Nginx has the updated config:
+```bash
+sudo cat /etc/nginx/sites-available/calls.alxtexh.top | grep -A 5 "Add_header Access-Control"
 ```
 
 ### Nginx Issues
