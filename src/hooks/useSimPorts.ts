@@ -1,6 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/integrations/supabase/api-client";
 
 export interface SimPort {
   port: number;
@@ -24,51 +23,25 @@ export interface SimPortConfig {
 }
 
 export const useSimPorts = () => {
-  const queryClient = useQueryClient();
-
-  // Subscribe to realtime changes on sim_port_config
-  useEffect(() => {
-    const channel = supabase
-      .channel("sim-ports-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "sim_port_config",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["sim-ports"] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
 
   return useQuery({
     queryKey: ["sim-ports"],
     queryFn: async (): Promise<{ ports: SimPort[]; configs: SimPortConfig[] }> => {
       // Fetch SIM port configs
-      const { data: configs, error: configError } = await supabase
-        .from("sim_port_config")
-        .select("*")
-        .order("port_number", { ascending: true });
+      const { data: configs, error: configError } = await apiClient.getPortStatus();
 
       if (configError) throw configError;
 
-      // Fetch message counts per SIM port
-      const { data: messageCounts, error: countError } = await supabase
-        .from("sms_messages")
-        .select("sim_port");
+      const configArray = Array.isArray(configs) ? configs : (configs ? [configs] : []);
+
+      // Fetch all SMS messages to count per SIM port
+      const { data: messages, error: countError } = await apiClient.getSmsMessages({ limit: 10000 });
 
       if (countError) throw countError;
 
       // Count messages per port
       const countsByPort =
-        messageCounts?.reduce(
+        (Array.isArray(messages) ? messages : [])?.reduce(
           (acc, msg) => {
             acc[msg.sim_port] = (acc[msg.sim_port] || 0) + 1;
             return acc;
@@ -76,7 +49,7 @@ export const useSimPorts = () => {
           {} as Record<number, number>
         ) || {};
 
-      const ports = (configs || []).map((config) => {
+      const ports = (configArray || []).map((config) => {
         // Determine status based on enabled state and last_seen_at
         let status: "online" | "offline" | "warning" = "offline";
         if (config.enabled) {
@@ -105,7 +78,7 @@ export const useSimPorts = () => {
 
       return {
         ports,
-        configs: (configs || []).map((c) => ({
+        configs: (configArray || []).map((c) => ({
           id: c.id,
           port_number: c.port_number,
           extension: c.extension,

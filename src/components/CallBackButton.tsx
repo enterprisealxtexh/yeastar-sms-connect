@@ -12,8 +12,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Phone, Loader2 } from "lucide-react";
-import { useInitiateCall } from "@/hooks/useCallQueue";
-import { useSimPorts } from "@/hooks/useSimPorts";
+import { useExtensions } from "@/hooks/useExtensions";
+import { toast } from "@/hooks/use-toast";
 
 interface CallBackButtonProps {
   phoneNumber: string;
@@ -24,27 +24,55 @@ interface CallBackButtonProps {
 export const CallBackButton = ({ phoneNumber, variant = "ghost", size = "icon" }: CallBackButtonProps) => {
   const [open, setOpen] = useState(false);
   const [selectedExtension, setSelectedExtension] = useState("");
-  const { mutate: initiateCall, isPending } = useInitiateCall();
-  const { data: simPortsData } = useSimPorts();
+  const [isPending, setIsPending] = useState(false);
+  const { extensions, isLoading } = useExtensions();
 
-  const configs = simPortsData?.configs || [];
-  const enabledConfigs = configs.filter(c => c.enabled && c.extension);
+  const initiateCall = async (fromExtension: string, toNumber: string) => {
+    setIsPending(true);
+    try {
+      const response = await fetch("http://localhost:2003/api/pbx-call/dial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caller: fromExtension,
+          callee: toNumber,
+          autoanswer: "no"
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "✅ Call Initiated",
+          description: `Calling ${toNumber} from extension ${fromExtension}${data.data?.callid ? ` (ID: ${data.data.callid})` : ''}`,
+        });
+        return { success: true };
+      } else {
+        throw new Error(data.error || "Failed to initiate call");
+      }
+    } catch (error) {
+      toast({
+        title: "❌ Call Failed",
+        description: error instanceof Error ? error.message : "Unable to initiate call. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setIsPending(false);
+    }
+  };
 
-  const handleCall = () => {
+  const handleCall = async () => {
     if (!selectedExtension) return;
     
-    initiateCall(
-      {
-        fromExtension: selectedExtension,
-        toNumber: phoneNumber,
-      },
-      {
-        onSuccess: () => {
-          setOpen(false);
-          setSelectedExtension("");
-        },
-      }
-    );
+    try {
+      await initiateCall(selectedExtension, phoneNumber);
+      setOpen(false);
+      setSelectedExtension("");
+    } catch (error) {
+      // Error already handled in initiateCall
+    }
   };
 
   return (
@@ -64,39 +92,27 @@ export const CallBackButton = ({ phoneNumber, variant = "ghost", size = "icon" }
         <div className="grid gap-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="from-ext">From Extension</Label>
-            <Select value={selectedExtension} onValueChange={setSelectedExtension}>
+            <Select value={selectedExtension} onValueChange={setSelectedExtension} disabled={isLoading || isPending}>
               <SelectTrigger id="from-ext">
-                <SelectValue placeholder="Select extension to call from" />
+                <SelectValue placeholder={isLoading ? "Loading..." : "Select extension"} />
               </SelectTrigger>
               <SelectContent>
-                {enabledConfigs.map((config) => (
-                  <SelectItem key={config.id} value={config.extension!}>
-                    {config.extension} - {config.label || `Port ${config.port_number}`}
+                {extensions.map((ext) => (
+                  <SelectItem key={ext.extnumber} value={ext.extnumber}>
+                    {ext.extnumber} - {ext.username}
                   </SelectItem>
                 ))}
-                {enabledConfigs.length === 0 && (
-                  <SelectItem value="none" disabled>
-                    No extensions configured
-                  </SelectItem>
-                )}
               </SelectContent>
             </Select>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            Cancel
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
+            Close
           </Button>
-          <Button
-            onClick={handleCall}
-            disabled={!selectedExtension || isPending}
-          >
-            {isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            ) : (
-              <Phone className="h-4 w-4 mr-2" />
-            )}
-            Call
+          <Button onClick={handleCall} disabled={isPending || !selectedExtension}>
+            {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Phone className="h-4 w-4 mr-2" />}
+            {isPending ? "Calling..." : "Call"}
           </Button>
         </DialogFooter>
       </DialogContent>

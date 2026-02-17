@@ -2,15 +2,18 @@ import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, Eye, EyeOff, Phone, Wifi, WifiOff, CheckCircle2 } from "lucide-react";
+import { Loader2, Save, Eye, EyeOff, Phone, Wifi, WifiOff, CheckCircle2, Trash2 } from "lucide-react";
 import { usePbxConfig } from "@/hooks/usePbxConfig";
-import { toast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+
+const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
 
 export const PbxSettingsForm = () => {
   const { config, isLoading, updateConfig } = usePbxConfig();
+  const { toast } = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [localConfig, setLocalConfig] = useState({
     pbx_ip: "",
@@ -35,17 +38,17 @@ export const PbxSettingsForm = () => {
   const handleSave = async () => {
     try {
       await updateConfig.mutateAsync(localConfig);
-
-      await supabase.from("activity_logs").insert({
-        event_type: "config_update",
-        message: "S100 PBX configuration updated",
-        severity: "info",
-        metadata: { updated_fields: ["pbx_ip", "pbx_port", "api_username", "api_password", "web_port"] },
-      });
-
-      toast({
-        title: "PBX settings saved",
-        description: "S100 PBX configuration has been updated.",
+      
+      // Log activity via local API
+      await fetch(`${apiUrl}/api/activity-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: "config_update",
+          message: "S100 PBX configuration updated",
+          severity: "success",
+          metadata: JSON.stringify({ updated_fields: ["pbx_ip", "pbx_port", "api_username", "api_password", "web_port"] }),
+        }),
       });
       
       setConnectionStatus('idle');
@@ -55,6 +58,55 @@ export const PbxSettingsForm = () => {
         description: error instanceof Error ? error.message : "Failed to save PBX settings",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleClearCalls = async () => {
+    if (!confirm('Are you sure you want to delete all call records? This action cannot be undone.')) {
+      return;
+    }
+
+    setIsClearing(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/clear-calls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        toast({
+          title: "Success",
+          description: `✅ Deleted ${result.deleted} call records`,
+        });
+
+        // Log activity
+        await fetch(`${apiUrl}/api/activity-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_type: "data_management",
+            message: `Cleared ${result.deleted} call records from database`,
+            severity: "success",
+            metadata: JSON.stringify({ deleted_count: result.deleted }),
+          }),
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: result.error || "Failed to clear call records",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to clear call records",
+        variant: "destructive",
+      });
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -69,31 +121,72 @@ export const PbxSettingsForm = () => {
     setIsTesting(true);
     setConnectionStatus('idle');
 
-    // Simulate connection test (actual implementation would ping the PBX)
     try {
-      // Since PBX is on local network, we simulate a basic connectivity check
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      if (localConfig.pbx_ip) {
+      // Use the real PBX API test endpoint
+      const response = await fetch(`${apiUrl}/api/pbx-test`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
         setConnectionStatus('success');
         toast({
-          title: "Connection check complete",
-          description: `S100 PBX at ${localConfig.pbx_ip} is configured. Use local agent to verify connectivity.`,
+          title: "PBX Connection Successful!",
+          description: `✅ S100 PBX at ${localConfig.pbx_ip} - Authentication successful (Token: ${result.token})`,
+        });
+
+        // Log successful test
+        await fetch(`${apiUrl}/api/activity-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_type: "pbx_test",
+            message: `PBX connection test successful for ${localConfig.pbx_ip}`,
+            severity: "success",
+            metadata: JSON.stringify({ pbx_ip: localConfig.pbx_ip, status: result.status }),
+          }),
         });
       } else {
         setConnectionStatus('error');
         toast({
-          title: "Configuration incomplete",
-          description: "Please enter the PBX IP address",
+          title: "PBX Connection Failed",
+          description: `❌ ${result.error || 'Unknown error during connection test'}`,
           variant: "destructive",
+        });
+
+        // Log failed test
+        await fetch(`${apiUrl}/api/activity-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_type: "pbx_test",
+            message: `PBX connection test failed for ${localConfig.pbx_ip}`,
+            severity: "error",
+            metadata: JSON.stringify({ pbx_ip: localConfig.pbx_ip, error: result.error }),
+          }),
         });
       }
     } catch (error) {
       setConnectionStatus('error');
+      const errorMessage = error instanceof Error ? error.message : "Failed to test connection";
       toast({
         title: "Test failed",
-        description: error instanceof Error ? error.message : "Failed to test connection",
+        description: `❌ ${errorMessage}`,
         variant: "destructive",
+      });
+
+      // Log connection error
+      await fetch(`${apiUrl}/api/activity-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: "pbx_test",
+          message: `PBX connection test error: ${errorMessage}`,
+          severity: "error",
+          metadata: JSON.stringify({ pbx_ip: localConfig.pbx_ip }),
+        }),
       });
     } finally {
       setIsTesting(false);
@@ -215,39 +308,56 @@ export const PbxSettingsForm = () => {
         </div>
       </div>
 
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex items-center justify-between gap-2 pt-2 flex-wrap">
         <Button
           size="sm"
           variant="outline"
-          onClick={handleTestConnection}
-          disabled={isTesting || !localConfig.pbx_ip}
-          className="gap-2"
+          onClick={handleClearCalls}
+          disabled={isClearing}
+          className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
         >
-          {isTesting ? (
+          {isClearing ? (
             <Loader2 className="w-4 h-4 animate-spin" />
-          ) : connectionStatus === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          ) : connectionStatus === 'error' ? (
-            <WifiOff className="w-4 h-4 text-destructive" />
           ) : (
-            <Wifi className="w-4 h-4" />
+            <Trash2 className="w-4 h-4" />
           )}
-          {isTesting ? "Testing..." : "Test Connection"}
+          {isClearing ? "Clearing..." : "Clear Call Records"}
         </Button>
 
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={updateConfig.isPending}
-          className="gap-2"
-        >
-          {updateConfig.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Save className="w-4 h-4" />
-          )}
-          {updateConfig.isPending ? "Saving..." : "Save PBX Settings"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleTestConnection}
+            disabled={isTesting || !localConfig.pbx_ip}
+            className="gap-2"
+          >
+            {isTesting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : connectionStatus === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            ) : connectionStatus === 'error' ? (
+              <WifiOff className="w-4 h-4 text-destructive" />
+            ) : (
+              <Wifi className="w-4 h-4" />
+            )}
+            {isTesting ? "Testing..." : "Test Connection"}
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={updateConfig.isPending}
+            className="gap-2"
+          >
+            {updateConfig.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {updateConfig.isPending ? "Saving..." : "Save PBX Settings"}
+          </Button>
+        </div>
       </div>
     </div>
   );

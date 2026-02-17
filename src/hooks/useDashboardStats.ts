@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface DashboardStats {
   totalMessages: number;
   activeSims: number;
   totalSims: number;
+  availablePorts: number[];
   unreadMessages: number;
 }
 
@@ -12,44 +12,35 @@ export const useDashboardStats = () => {
   return useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: async (): Promise<DashboardStats> => {
-      // Get total messages count
-      const { count: totalMessages, error: msgError } = await supabase
-        .from("sms_messages")
-        .select("*", { count: "exact", head: true });
-
-      if (msgError) throw msgError;
-
-      // Get unread messages count
-      const { count: unreadMessages, error: unreadError } = await supabase
-        .from("sms_messages")
-        .select("*", { count: "exact", head: true })
-        .eq("status", "unread");
-
-      if (unreadError) throw unreadError;
-
-      // Get SIM port stats
-      const { data: simConfigs, error: simError } = await supabase
-        .from("sim_port_config")
-        .select("enabled, last_seen_at");
-
-      if (simError) throw simError;
-
-      const totalSims = simConfigs?.length || 0;
-      const activeSims = simConfigs?.filter((sim) => {
-        if (!sim.enabled || !sim.last_seen_at) return false;
-        const lastSeen = new Date(sim.last_seen_at);
-        const now = new Date();
-        const diffMinutes = (now.getTime() - lastSeen.getTime()) / (1000 * 60);
-        return diffMinutes < 30;
-      }).length || 0;
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      
+      const response = await fetch(`${apiUrl}/api/statistics`);
+      if (!response.ok) throw new Error("Failed to fetch statistics");
+      
+      const data = await response.json();
+      const stats = data.data || data;
+      
+      // Calculate total and active SIMs
+      const portStatus = stats.portStatus || [];
+      const totalSims = portStatus.length;
+      
+      // Count active SIMs (enabled ports)
+      const activeSims = portStatus.filter((port: any) => port.enabled === true || port.enabled === 1).length;
+      
+      // Get available ports (enabled ports)
+      const availablePorts = portStatus
+        .filter((port: any) => port.enabled === true || port.enabled === 1)
+        .map((port: any) => port.port_number)
+        .sort((a: number, b: number) => a - b);
 
       return {
-        totalMessages: totalMessages || 0,
+        totalMessages: stats.totalMessages || 0,
         activeSims,
         totalSims,
-        unreadMessages: unreadMessages || 0,
+        availablePorts,
+        unreadMessages: stats.unreadMessages || 0,
       };
     },
-    refetchInterval: 30000,
+    refetchInterval: 5000, // 5 seconds for near real-time updates
   });
 };

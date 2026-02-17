@@ -9,8 +9,8 @@ import { Phone, Search, Clock, Timer } from "lucide-react";
 import { CallStatusBadge, CallDirectionBadge } from "./CallStatusBadge";
 import { CallBackButton } from "./CallBackButton";
 import { CallRecord } from "@/hooks/useCallRecords";
-import { useContactLookup } from "@/hooks/useContactLookup";
-import { format } from "date-fns";
+import { useExtensions } from "@/hooks/useExtensions";
+import { formatDateNairobi } from "@/lib/dateUtils";
 
 interface CallRecordsTableProps {
   calls: CallRecord[];
@@ -28,20 +28,30 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [directionFilter, setDirectionFilter] = useState<string>("all");
-  const { getContactName } = useContactLookup();
+  const [extensionFilter, setExtensionFilter] = useState<string>("all");
+  const { extensions } = useExtensions();
 
   const filteredCalls = calls.filter((call) => {
+    const callerDisplay = call.caller_extension_username 
+      ? `${call.caller_number} ${call.caller_extension_username}`
+      : call.caller_number;
+    const calleeDisplay = call.callee_extension_username
+      ? `${call.callee_number} ${call.callee_extension_username}`
+      : call.callee_number;
+    
     const matchesSearch =
       call.caller_number.toLowerCase().includes(search.toLowerCase()) ||
       call.callee_number.toLowerCase().includes(search.toLowerCase()) ||
-      call.caller_name?.toLowerCase().includes(search.toLowerCase()) ||
-      call.callee_name?.toLowerCase().includes(search.toLowerCase()) ||
-      call.extension?.toLowerCase().includes(search.toLowerCase());
+      call.caller_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
+      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
+      calleeDisplay.toLowerCase().includes(search.toLowerCase()) ||
+      callerDisplay.toLowerCase().includes(search.toLowerCase());
 
     const matchesStatus = statusFilter === "all" || call.status === statusFilter;
     const matchesDirection = directionFilter === "all" || call.direction === directionFilter;
+    const matchesExtension = extensionFilter === "all" || call.extension === extensionFilter;
 
-    return matchesSearch && matchesStatus && matchesDirection;
+    return matchesSearch && matchesStatus && matchesDirection && matchesExtension;
   });
 
   return (
@@ -58,12 +68,25 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search calls..."
+                placeholder="Search calls or extensions..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-8 w-48"
               />
             </div>
+            <Select value={extensionFilter} onValueChange={setExtensionFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="Extension" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Extensions</SelectItem>
+                {extensions.map((ext) => (
+                  <SelectItem key={ext.extnumber} value={ext.extnumber}>
+                    {ext.extnumber} - {ext.username}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Status" />
@@ -108,7 +131,6 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                   <TableHead>From</TableHead>
                   <TableHead>To</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Extension</TableHead>
                   <TableHead className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Timer className="w-3 h-3" />
@@ -127,7 +149,7 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
               <TableBody>
                 {filteredCalls.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                       No call records found
                     </TableCell>
                   </TableRow>
@@ -139,32 +161,37 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                     return (
                       <TableRow key={call.id} className="hover:bg-muted/20">
                         <TableCell className="font-mono text-xs">
-                          {format(new Date(call.start_time), "MMM dd HH:mm")}
+                          {formatDateNairobi(call.start_time)}
                         </TableCell>
                         <TableCell>
                           <CallDirectionBadge direction={call.direction} />
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-medium">{call.caller_number}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {call.caller_name || getContactName(call.caller_number) || ""}
-                            </span>
+                            {call.caller_extension_username ? (
+                              <>
+                                <span className="font-semibold text-primary">{call.caller_number}</span>
+                                <span className="text-xs text-muted-foreground">{call.caller_extension_username}</span>
+                              </>
+                            ) : (
+                              <span className="font-medium">{call.caller_number}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-medium">{call.callee_number}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {call.callee_name || getContactName(call.callee_number) || ""}
-                            </span>
+                            {call.callee_extension_username ? (
+                              <>
+                                <span className="font-semibold text-primary">{call.callee_number}</span>
+                                <span className="text-xs text-muted-foreground">{call.callee_extension_username}</span>
+                              </>
+                            ) : (
+                              <span className="font-medium">{call.callee_number}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
                           <CallStatusBadge status={call.status} />
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">
-                          {call.extension || "—"}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {formatDuration(call.ring_duration)}

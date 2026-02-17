@@ -12,12 +12,15 @@ import {
   ChevronRight,
   Menu,
   X,
+  Phone,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useAuth } from "@/hooks/useAuth";
 
 export type DashboardTab =
   | "dashboard"
@@ -25,25 +28,32 @@ export type DashboardTab =
   | "analytics"
   | "logs"
   | "config"
+  | "users"
+  | "profile"
   | "ai"
   | "telegram"
-  | "contacts";
+  | "messages"
+  | "extensions";
 
 interface NavItem {
   id: DashboardTab;
   label: string;
   icon: React.ElementType;
+  adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "messages", label: "Messages", icon: FileText },
   { id: "calls", label: "Calls", icon: PhoneCall },
+  { id: "extensions", label: "Extensions", icon: Phone },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "logs", label: "Logs", icon: FileText },
-  { id: "contacts", label: "Contacts", icon: Users },
   { id: "telegram", label: "Telegram", icon: Send },
+  { id: "profile", label: "Profile", icon: User },
   { id: "ai", label: "AI & Diagnostics", icon: Brain },
-  { id: "config", label: "Configuration", icon: Settings },
+  { id: "users", label: "Users", icon: Users, adminOnly: true },
+  { id: "config", label: "Configuration", icon: Settings, adminOnly: true },
 ];
 
 interface DashboardSidebarProps {
@@ -55,15 +65,19 @@ const NavItems = ({
   activeTab,
   onTabChange,
   collapsed,
+  isAdmin,
   onItemClick,
 }: {
   activeTab: DashboardTab;
   onTabChange: (tab: DashboardTab) => void;
   collapsed: boolean;
+  isAdmin: boolean;
   onItemClick?: () => void;
 }) => (
   <nav className="flex-1 flex flex-col gap-1 px-2">
-    {navItems.map((item) => {
+    {navItems
+      .filter((item) => !item.adminOnly || isAdmin)
+      .map((item) => {
       const isActive = activeTab === item.id;
       const button = (
         <button
@@ -103,6 +117,7 @@ const NavItems = ({
 
 export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarProps) => {
   const isMobile = useIsMobile();
+  const { isAdmin } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -133,6 +148,7 @@ export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarPro
               activeTab={activeTab}
               onTabChange={onTabChange}
               collapsed={false}
+              isAdmin={isAdmin}
               onItemClick={() => setMobileOpen(false)}
             />
           </div>
@@ -162,7 +178,7 @@ export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarPro
           </Button>
         </div>
 
-        <NavItems activeTab={activeTab} onTabChange={onTabChange} collapsed={collapsed} />
+        <NavItems activeTab={activeTab} onTabChange={onTabChange} collapsed={collapsed} isAdmin={isAdmin} />
       </aside>
     </TooltipProvider>
   );

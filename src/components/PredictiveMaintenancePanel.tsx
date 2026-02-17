@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 import { 
   Brain, 
   RefreshCw, 
@@ -49,16 +48,11 @@ export function PredictiveMaintenancePanel() {
   const runFullOptimization = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ai-diagnostics', {
-        body: { action: 'auto_optimize' }
-      });
-
-      if (error) throw error;
-
-      setLastResult(data.results);
+      // AI diagnostics not available in local SQLite mode
       toast({
-        title: "AI Optimization Complete",
-        description: `Risk level: ${data.results.prediction.risk_level.toUpperCase()}`,
+        title: "AI Features Unavailable",
+        description: "AI optimization is not available in local development mode. Deploy to production to enable cloud-based AI diagnostics.",
+        variant: "default",
       });
     } catch (error) {
       toast({
@@ -74,13 +68,15 @@ export function PredictiveMaintenancePanel() {
   const runPredictiveCheck = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('ai-diagnostics', {
-        body: { action: 'predict_issues' }
+      // AI diagnostics not available in local SQLite mode
+      toast({
+        title: "AI Features Unavailable",
+        description: "Predictive analysis is not available in local development mode. Deploy to production to enable cloud-based AI diagnostics.",
+        variant: "default",
       });
+      return;
 
-      if (error) throw error;
-
-      setLastResult(prev => prev ? { ...prev, prediction: data.prediction } : null);
+      setLastResult(prev => prev ? { ...prev, prediction: {} } : null);
       toast({
         title: "Predictive Analysis Complete",
         description: data.prediction.prediction,

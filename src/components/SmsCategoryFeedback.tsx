@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,9 +9,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Edit2, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Database } from "@/integrations/supabase/types";
 
-type SmsCategory = Database["public"]["Enums"]["sms_category"];
+type SmsCategory = "otp" | "marketing" | "personal" | "transactional" | "notification" | "spam" | "unknown";
 
 const categories: SmsCategory[] = [
   "otp",
@@ -51,33 +49,20 @@ export const SmsCategoryFeedback = ({
 
   const submitFeedback = useMutation({
     mutationFn: async (newCategory: SmsCategory) => {
-      // Record the feedback for AI learning
-      const { error: feedbackError } = await supabase
-        .from("sms_category_feedback")
-        .insert({
-          sms_id: smsId,
-          original_category: currentCategory || "unknown",
-          corrected_category: newCategory,
-        });
-
-      if (feedbackError) throw feedbackError;
-
-      // Update the SMS with the corrected category
-      const { error: updateError } = await supabase
-        .from("sms_messages")
-        .update({ category: newCategory })
-        .eq("id", smsId);
-
-      if (updateError) throw updateError;
-
+      // SMS category feedback not available in local SQLite mode
+      toast({
+        title: "Category Update Unavailable",
+        description: "SMS categorization is not available in local development mode.",
+        variant: "default",
+      });
       return newCategory;
     },
     onSuccess: (newCategory) => {
       queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
       onCategoryChange?.(newCategory);
       toast({
-        title: "Category Updated",
-        description: "Your feedback helps improve AI categorization.",
+        title: "Category Status",
+        description: "SMS categorization unavailable in local mode.",
       });
     },
     onError: (error: Error) => {

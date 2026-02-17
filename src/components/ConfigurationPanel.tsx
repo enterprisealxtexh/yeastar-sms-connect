@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Settings, Save, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { apiClient } from "@/integrations/supabase/api-client";
 import { toast } from "@/hooks/use-toast";
 import { GatewaySettingsForm } from "./GatewaySettingsForm";
 import { PbxSettingsForm } from "./PbxSettingsForm";
+import { TelegramSettingsForm } from "./TelegramSettingsForm";
 import { LocalAgentGuide } from "./LocalAgentGuide";
 
 interface SimPortConfig {
@@ -43,7 +44,7 @@ export const ConfigurationPanel = ({
       mappings[port.port_number] = {
         extension: port.extension || "",
         label: port.label || "",
-        enabled: port.enabled,
+        enabled: !!port.enabled,
       };
     });
     setLocalMappings(mappings);
@@ -66,45 +67,49 @@ export const ConfigurationPanel = ({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // Update each SIM port configuration
+      // Update each SIM port configuration - Use local API instead of Supabase client
       const updates = simPorts.map((port) => {
         const mapping = localMappings[port.port_number];
-        return supabase
-          .from("sim_port_config")
-          .update({
+        return fetch(`http://localhost:2003/api/port-status/${port.port_number}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             extension: mapping?.extension?.trim() || null,
             label: mapping?.label?.trim() || null,
             enabled: mapping?.enabled ?? true,
           })
-          .eq("id", port.id);
+        });
       });
 
       const results = await Promise.all(updates);
-      const errors = results.filter((r) => r.error);
+      const failures = results.filter((r) => !r.ok);
 
-      if (errors.length > 0) {
-        throw new Error(errors[0].error?.message || "Failed to save configuration");
+      if (failures.length > 0) {
+        throw new Error("Failed to save some port configurations. Please try again.");
       }
 
-      // Log the configuration change
-      await supabase.from("activity_logs").insert({
-        event_type: "config_update",
-        message: "SIM port configuration updated",
-        severity: "info",
-        metadata: { updated_ports: Object.keys(localMappings).map(Number) },
-      });
+      // Log the configuration change locally
+      await fetch('http://localhost:2003/api/activity-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: "config_update",
+          message: "SIM port configuration updated",
+          severity: "info",
+          metadata: { updated_ports: Object.keys(localMappings).map(Number) },
+        })
+      }).catch(err => console.error("Failed to log activity:", err));
 
       toast({
         title: "Configuration saved",
         description: "SIM port mappings have been updated successfully.",
       });
 
-      onConfigSaved?.();
+      if (onConfigSaved) onConfigSaved();
     } catch (error) {
-      console.error("Error saving configuration:", error);
       toast({
-        title: "Save failed",
-        description: error instanceof Error ? error.message : "Failed to save configuration",
+        title: "Error saving configuration",
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
         variant: "destructive",
       });
     } finally {
@@ -238,6 +243,10 @@ export const ConfigurationPanel = ({
         <Separator className="my-4" />
 
         <PbxSettingsForm />
+
+        <Separator className="my-4" />
+
+        <TelegramSettingsForm />
 
         <Separator className="my-4" />
 

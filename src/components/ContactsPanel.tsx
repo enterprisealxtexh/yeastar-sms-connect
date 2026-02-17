@@ -29,6 +29,7 @@ import {
 import { useContacts, contactsToGoogleCSV, parseGoogleCSV, Contact } from "@/hooks/useContacts";
 import { useGoogleContacts } from "@/hooks/useGoogleContacts";
 import { format } from "date-fns";
+import { formatDateNairobi } from "@/lib/dateUtils";
 
 export const ContactsPanel = () => {
   const { data: contacts = [], isLoading, updateContact, importContacts } = useContacts();
@@ -254,7 +255,7 @@ export const ContactsPanel = () => {
                     <TableCell className="text-center text-sm">{contact.sms_count}</TableCell>
                     <TableCell className="text-center text-sm">{contact.call_count}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {format(new Date(contact.last_seen_at), "MMM d, HH:mm")}
+                      {formatDateNairobi(contact.last_seen_at)}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-xs capitalize">

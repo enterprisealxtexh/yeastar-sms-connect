@@ -1,7 +1,6 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/integrations/supabase/api-client";
 import { format } from "date-fns";
-import { useEffect } from "react";
 
 export interface LogEntry {
   id: string;
@@ -11,39 +10,11 @@ export interface LogEntry {
 }
 
 export const useActivityLogs = (limit = 50) => {
-  const queryClient = useQueryClient();
-
-  // Subscribe to realtime changes
-  useEffect(() => {
-    const channel = supabase
-      .channel("activity-logs-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "activity_logs",
-        },
-        () => {
-          // Invalidate and refetch on any change
-          queryClient.invalidateQueries({ queryKey: ["activity-logs"] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
 
   return useQuery({
     queryKey: ["activity-logs", limit],
     queryFn: async (): Promise<LogEntry[]> => {
-      const { data, error } = await supabase
-        .from("activity_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      const { data, error } = await apiClient.getActivityLogs({ limit });
 
       if (error) throw error;
 

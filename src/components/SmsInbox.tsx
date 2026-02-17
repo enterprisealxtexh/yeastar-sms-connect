@@ -2,13 +2,13 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { MessageSquare, Clock, User, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Clock, Sparkles, Loader2, User } from "lucide-react";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
-import { ManualSmsImport } from "./ManualSmsImport";
 import { SmsCategoryBadge, SmsCategory } from "./SmsCategoryBadge";
-import { useCategorizeMessages } from "@/hooks/useSmsMessages";
 import { useContactLookup } from "@/hooks/useContactLookup";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface SmsMessage {
   id: string;
@@ -38,8 +38,10 @@ const initialFilters: SmsFiltersState = {
 
 export const SmsInbox = ({ messages }: SmsInboxProps) => {
   const [filters, setFilters] = useState<SmsFiltersState>(initialFilters);
-  const categorize = useCategorizeMessages();
   const { getContactName } = useContactLookup();
+  const queryClient = useQueryClient();
+  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+  const token = localStorage.getItem('authToken');
 
   // Get unique SIM ports from messages
   const simPorts = useMemo(() => {
@@ -47,10 +49,34 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
     return Array.from(ports).sort((a, b) => a - b);
   }, [messages]);
 
-  // Count uncategorized messages
-  const uncategorizedCount = useMemo(() => {
-    return messages.filter((m) => m.category === "unknown").length;
+  // Count messages received today
+  const todaySmsCount = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return messages.filter((m) => m.receivedAt >= today).length;
   }, [messages]);
+
+  const handleMarkRead = async (id: string) => {
+    try {
+      const res = await fetch(`${apiUrl}/api/sms-messages/${id}/status`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: "read" }),
+      });
+      const result = await res.json();
+      if (res.ok) {
+        toast.success("Marked as read");
+        queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
+      } else {
+        toast.error(result.error || "Failed to update");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update");
+    }
+  };
 
   // Filter messages based on current filters
   const filteredMessages = useMemo(() => {
@@ -94,10 +120,6 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
     });
   }, [messages, filters]);
 
-  const handleCategorizeAll = () => {
-    categorize.mutate({ batch: true });
-  };
-
   return (
     <Card className="card-glow border-border/50 bg-card h-full">
       <CardHeader className="pb-3">
@@ -106,31 +128,15 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
             <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
               <MessageSquare className="w-5 h-5 text-primary" />
             </div>
-            <CardTitle className="text-base font-semibold">SMS Inbox</CardTitle>
+            <div>
+              <CardTitle className="text-base font-semibold">SMS Inbox</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">{todaySmsCount} received today</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {uncategorizedCount > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCategorizeAll}
-                disabled={categorize.isPending}
-                className="gap-1.5 text-xs"
-              >
-                {categorize.isPending ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3 h-3" />
-                )}
-                Categorize ({uncategorizedCount})
-              </Button>
-            )}
-            <ManualSmsImport />
-            <Badge variant="secondary" className="font-mono">
-              {filteredMessages.length}
-              {filteredMessages.length !== messages.length && ` / ${messages.length}`} messages
-            </Badge>
-          </div>
+          <Badge variant="secondary" className="font-mono">
+            {filteredMessages.length}
+            {filteredMessages.length !== messages.length && ` / ${messages.length}`} messages
+          </Badge>
         </div>
         <SmsFilters
           filters={filters}
@@ -185,9 +191,24 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-                      <Clock className="w-3 h-3" />
-                      <span className="font-mono">{message.timestamp}</span>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => handleMarkRead(message.id)}
+                        className="p-1 h-auto"
+                        title={message.isNew ? "Mark as read" : "Already read"}
+                      >
+                        {message.isNew ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        <span className="font-mono">{message.timestamp}</span>
+                      </div>
                     </div>
                   </div>
                   <p className="text-sm text-secondary-foreground leading-relaxed">

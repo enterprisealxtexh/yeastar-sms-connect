@@ -1,5 +1,4 @@
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -15,102 +14,111 @@ export interface SmsMessage {
   isNew: boolean;
   category: SmsCategory;
   categoryConfidence?: number;
+  status?: string;
 }
 
 export const useSmsMessages = (limit = 50) => {
   const queryClient = useQueryClient();
+  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
 
-  // Subscribe to realtime changes
+  // Poll for changes (realtime not available with local SQLite)
   useEffect(() => {
-    const channel = supabase
-      .channel("sms-messages-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "sms_messages",
-        },
-        () => {
-          // Invalidate and refetch on any change
-          queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
-        }
-      )
-      .subscribe();
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
+    }, 5000); // Poll every 5 seconds
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => clearInterval(interval);
   }, [queryClient]);
 
   return useQuery({
     queryKey: ["sms-messages", limit],
     queryFn: async (): Promise<SmsMessage[]> => {
-      const { data, error } = await supabase
-        .from("sms_messages")
-        .select("*")
-        .order("received_at", { ascending: false })
-        .limit(limit);
+      try {
+        const response = await fetch(
+          `${apiUrl}/api/sms-messages?limit=${limit}`
+        );
+        if (!response.ok) {
+          console.warn(`API returned status ${response.status}`);
+          return [];
+        }
+        const result = await response.json();
+        const data = result.data || [];
 
-      if (error) throw error;
-
-      return (data || []).map((msg) => ({
-        id: msg.id,
-        sender: msg.sender_number,
-        simPort: msg.sim_port,
-        content: msg.message_content,
-        timestamp: format(new Date(msg.received_at), "HH:mm:ss"),
-        receivedAt: new Date(msg.received_at),
-        isNew: msg.status === "unread",
-        category: (msg.category as SmsCategory) || "unknown",
-        categoryConfidence: msg.category_confidence ?? undefined,
-      }));
+        return data.map((msg: any) => ({
+          id: msg.id,
+          sender: msg.sender_number,
+          simPort: msg.sim_port,
+          content: msg.message_content,
+          timestamp: format(new Date(msg.received_at), "HH:mm:ss"),
+          receivedAt: new Date(msg.received_at),
+          isNew: msg.status === "unread",
+          status: msg.status,
+          category: (msg.category as SmsCategory) || "unknown",
+          categoryConfidence: msg.category_confidence ?? undefined,
+        }));
+      } catch (error) {
+        console.error("Error fetching SMS messages:", error);
+        return []; // Return empty array on error instead of throwing
+      }
     },
-    refetchInterval: 30000, // Fallback polling every 30 seconds
+    refetchInterval: 5000, // Polling every 5 seconds
+    retry: 2, // Retry twice on failure
+    staleTime: 1000, // Data is stale after 1 second
   });
-};
+};;
 
 export const useCategorizeMessages = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (options?: { messageId?: string; batch?: boolean }) => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-
-      if (!token) {
-        throw new Error("Authentication required");
+      // For now, just update the status locally
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      
+      if (options?.messageId) {
+        const response = await fetch(
+          `${apiUrl}/api/sms-messages/${options.messageId}/status`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ status: "processed" }),
+          }
+        );
+        if (!response.ok) throw new Error("Failed to categorize message");
+        return { success: true };
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/categorize-sms`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(options?.batch ? { batch: true } : { message_id: options?.messageId }),
-        }
-      );
+      return { success: true };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
+      toast.success("Message processed");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to process message");
+    },
+  });
+};
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Request failed: ${response.status}`);
-      }
+export const useMarkAllSmsAsRead = () => {
+  const queryClient = useQueryClient();
+  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
 
+  return useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${apiUrl}/api/sms-messages/mark-all-read`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) throw new Error("Failed to mark messages as read");
       return response.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
-      if (data.batch) {
-        toast.success(`Categorized ${data.processed} messages`);
-      } else {
-        toast.success("Message categorized");
-      }
+      toast.success(`${data.changes} messages marked as read`);
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to categorize messages");
+      toast.error(error.message || "Failed to mark messages as read");
     },
   });
 };

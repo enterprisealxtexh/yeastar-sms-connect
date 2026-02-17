@@ -33,7 +33,7 @@ export const AgentStatusIndicator = ({
     
     switch (agentStatus.status) {
       case "online":
-        return "Syncing";
+        return "Running";
       case "warning":
         return "Idle";
       case "offline":
@@ -42,17 +42,21 @@ export const AgentStatusIndicator = ({
   };
 
   const getTooltipText = () => {
-    if (isLoading) return "Checking agent status...";
-    if (!agentStatus?.lastSyncAt) return "No agent activity detected. Is the local agent running?";
+    if (isLoading) return "Checking system status...";
+    if (!agentStatus) return "Unable to determine system status";
     
-    const timeAgo = formatTimeSince(agentStatus.syncAgeSeconds);
+    const timeAgo = agentStatus.lastSyncAt ? formatTimeSince(agentStatus.syncAgeSeconds) : "Never";
+    const details = agentStatus.messagesSynced > 0 
+      ? ` (${agentStatus.messagesSynced} messages, ${agentStatus.errorsCount} errors)`
+      : "";
+    
     switch (agentStatus.status) {
       case "online":
-        return `Local agent actively syncing. Last activity: ${timeAgo}`;
+        return `✅ API Server is running and responding. Last heartbeat: ${timeAgo}${details}`;
       case "warning":
-        return `Agent idle. Last activity: ${timeAgo}. Check if the agent is still running.`;
+        return `⚠️ System responding but idle. Last activity: ${timeAgo}. Check if SMS listener and PBX sync are running.${details}`;
       case "offline":
-        return `Agent offline. Last activity: ${timeAgo}. The local agent may have stopped.`;
+        return `❌ System not responding. The API server may have stopped. Restart the SMS service with 'npm run sms:start'`;
     }
   };
 

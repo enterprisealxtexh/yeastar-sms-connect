@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { SimPortCard } from "@/components/SimPortCard";
 import { SystemStatusCard } from "@/components/SystemStatusCard";
 import { SmsInbox } from "@/components/SmsInbox";
 import { ActivityLog } from "@/components/ActivityLog";
+import { CallsSummaryPanel } from "@/components/CallsSummaryPanel";
+import { UserManager } from "@/components/UserManager";
+import { UserProfilePanel } from "@/components/UserProfilePanel";
 import { ConfigurationPanel } from "@/components/ConfigurationPanel";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { CallRecordsTable } from "@/components/CallRecordsTable";
@@ -14,7 +17,8 @@ import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
 import { AiConfigPanel } from "@/components/AiConfigPanel";
 import { TelegramPanel } from "@/components/TelegramPanel";
-import { ContactsPanel } from "@/components/ContactsPanel";
+import ExtensionsPanel from "@/components/ExtensionsPanel";
+import { AllSmsPanel } from "@/components/AllSmsPanel";
 import { PredictiveMaintenancePanel } from "@/components/PredictiveMaintenancePanel";
 import { AiAutomationPanel } from "@/components/AiAutomationPanel";
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
@@ -25,12 +29,27 @@ import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useActivityLogs } from "@/hooks/useActivityLogs";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
-import { useCallRecords, useCallStats } from "@/hooks/useCallRecords";
+import { usePbxConfig } from "@/hooks/usePbxConfig";
+import { usePbxStatus } from "@/hooks/usePbxStatus";
+import { useGatewayStatus } from "@/hooks/useGatewayStatus";
+import { useCallRecords, useCallStats, useAllTimeCallStats } from "@/hooks/useCallRecords";
+import { formatDateNairobi } from "@/lib/dateUtils";
 
 const Index = () => {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<DashboardTab>("dashboard");
-  const [lastSync, setLastSync] = useState(() => new Date().toLocaleString("sv-SE").replace(",", ""));
+  
+  // Initialize activeTab from localStorage, default to "dashboard"
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
+    const saved = localStorage.getItem("activeTab");
+    return (saved as DashboardTab) || "dashboard";
+  });
+  
+  // Save activeTab to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem("activeTab", activeTab);
+  }, [activeTab]);
+  
+  const [lastSync, setLastSync] = useState(() => formatDateNairobi());
 
   const { data: simData, isLoading: simLoading } = useSimPorts();
   const simPorts = simData?.ports || [];
@@ -40,23 +59,41 @@ const Index = () => {
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const { data: calls = [], isLoading: callsLoading } = useCallRecords();
   const { data: callStats, isLoading: callStatsLoading } = useCallStats();
+  const { data: allTimeCallStats, isLoading: allTimeCallStatsLoading } = useAllTimeCallStats();
+  const { config: pbxConfig } = usePbxConfig();
+  const { data: pbxStatus } = usePbxStatus();
+  const { data: gatewayStatus } = useGatewayStatus();
+
+  // Determine gateway status based on actual connection
+  const gatewayStatusValue = gatewayStatus?.connected
+    ? "online"
+    : gatewayStatus?.configured
+    ? "warning"
+    : "offline";
+  const gatewayStatusLabel = gatewayStatus?.connected
+    ? "Connected"
+    : gatewayStatus?.configured
+    ? "Configured (Connecting...)"
+    : "Not Configured";
+  
+  // Determine PBX status - only show connected if we have actual IP configured
+  const pbxStatusValue = pbxStatus?.configured && pbxStatus?.pbx_ip ? "online" : "offline";
+  const pbxStatusLabel = pbxStatus?.configured && pbxStatus?.pbx_ip 
+    ? "Connected" 
+    : pbxStatus?.configured 
+    ? "Configured (No IP)"
+    : "Not Configured";
 
   const handleRefresh = async () => {
     await queryClient.invalidateQueries();
-    const now = new Date().toLocaleString("sv-SE").replace(",", "");
+    const now = formatDateNairobi();
     setLastSync(now);
     toast.success("System data refreshed");
   };
 
-  const systemStatus = simPorts.some((p) => p.status === "online")
-    ? "online"
-    : simPorts.some((p) => p.status === "warning")
-    ? "warning"
-    : "offline";
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Header systemStatus={systemStatus} lastSync={lastSync} onRefresh={handleRefresh} />
+      <Header lastSync={lastSync} onRefresh={handleRefresh} />
 
       <div className="flex flex-1 overflow-hidden">
         <DashboardSidebar activeTab={activeTab} onTabChange={setActiveTab} />
@@ -68,21 +105,24 @@ const Index = () => {
               <div className="grid gap-4 md:grid-cols-3">
                 <SystemStatusCard
                   title="TG400 Gateway"
-                  status={systemStatus}
-                  statusLabel={systemStatus === "online" ? "Connected" : systemStatus === "warning" ? "Degraded" : "Disconnected"}
+                  status={gatewayStatusValue as "online" | "warning" | "offline"}
+                  statusLabel={gatewayStatusLabel}
                   icon={Server}
                   details={[
+                    { label: "Gateway IP", value: gatewayStatus?.gateway_ip || "Not configured" },
+                    { label: "Port", value: String(gatewayStatus?.gateway_port) || "—" },
+                    { label: "Available Ports", value: stats?.availablePorts ? `${stats.availablePorts.join(", ")}` : "—" },
                     { label: "Active SIMs", value: statsLoading ? "..." : `${stats?.activeSims || 0}/${stats?.totalSims || 0}` },
-                    { label: "Last Poll", value: lastSync.split(" ")[1] || lastSync },
                   ]}
                 />
                 <SystemStatusCard
                   title="S100 PBX"
-                  status="online"
-                  statusLabel="Connected"
+                  status={pbxStatusValue as "online" | "warning" | "offline"}
+                  statusLabel={pbxStatusLabel}
                   icon={Phone}
                   details={[
-                    { label: "Extensions", value: "Configured" },
+                    { label: "PBX IP", value: pbxStatus?.pbx_ip || "Not configured" },
+                    { label: "Port", value: String(pbxStatus?.pbx_port) || "—" },
                     { label: "SMS Queue", value: statsLoading ? "..." : `${stats?.unreadMessages || 0} pending` },
                   ]}
                 />
@@ -119,27 +159,30 @@ const Index = () => {
                 ) : (
                   <SmsInbox messages={messages} />
                 )}
-                {logsLoading ? (
-                  <Skeleton className="h-[300px] rounded-lg" />
-                ) : (
-                  <ActivityLog logs={logs} />
-                )}
+                <div className="flex flex-col gap-6">
+                  {callsLoading ? (
+                    <Skeleton className="h-[200px] rounded-lg" />
+                  ) : (
+                    <CallsSummaryPanel calls={calls} />
+                  )}
+                  {logsLoading ? (
+                    <Skeleton className="h-[200px] rounded-lg" />
+                  ) : (
+                    <ActivityLog logs={logs} />
+                  )}
+                </div>
               </div>
             </>
           )}
 
           {activeTab === "calls" && (
             <>
-              <CallStatsCards stats={callStats} isLoading={callStatsLoading} />
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="lg:col-span-2">
-                  <CallRecordsTable calls={calls} isLoading={callsLoading} />
-                </div>
-                <div className="space-y-6">
-                  <QuickDialWidget />
-                  <CallQueueStatus />
-                </div>
-              </div>
+              <CallStatsCards 
+                allTimeStats={allTimeCallStats} 
+                todayStats={callStats}
+                isLoading={allTimeCallStatsLoading || callStatsLoading} 
+              />
+              <CallRecordsTable calls={calls} isLoading={callsLoading} />
             </>
           )}
 
@@ -151,6 +194,14 @@ const Index = () => {
             ) : (
               <ActivityLog logs={logs} />
             )
+          )}
+
+          {activeTab === "users" && (
+            <UserManager />
+          )}
+
+          {activeTab === "profile" && (
+            <UserProfilePanel />
           )}
 
           {activeTab === "config" && (
@@ -175,8 +226,8 @@ const Index = () => {
           )}
 
           {activeTab === "telegram" && <TelegramPanel />}
-
-          {activeTab === "contacts" && <ContactsPanel />}
+          {activeTab === "messages" && <AllSmsPanel />}
+          {activeTab === "extensions" && <ExtensionsPanel />}
         </main>
       </div>
     </div>

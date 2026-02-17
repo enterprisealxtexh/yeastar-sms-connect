@@ -5,27 +5,50 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Phone, X, Loader2 } from "lucide-react";
-import { useInitiateCall } from "@/hooks/useCallQueue";
-import { useSimPorts } from "@/hooks/useSimPorts";
+import { useExtensions } from "@/hooks/useExtensions";
+import { toast } from "@/hooks/use-toast";
 
 export const QuickDialWidget = () => {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedExtension, setSelectedExtension] = useState("");
-  const { mutate: initiateCall, isPending } = useInitiateCall();
-  const { data: simPortsData } = useSimPorts();
+  const [isDialing, setIsDialing] = useState(false);
+  const { extensions, isLoading, getExtensionName } = useExtensions();
 
-  const configs = simPortsData?.configs || [];
-  const enabledConfigs = configs.filter(c => c.enabled && c.extension);
-
-  const handleDial = () => {
+  const handleDial = async () => {
     if (!phoneNumber.trim() || !selectedExtension) return;
     
-    initiateCall({
-      fromExtension: selectedExtension,
-      toNumber: phoneNumber.trim(),
-    });
-    
-    setPhoneNumber("");
+    setIsDialing(true);
+    try {
+      const response = await fetch("http://localhost:2003/api/pbx-call/dial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          caller: selectedExtension,
+          callee: phoneNumber,
+          autoanswer: "no"
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast({
+          title: "✅ Call Initiated",
+          description: `Calling ${phoneNumber} from extension ${selectedExtension} (Call ID: ${data.data?.callid || 'pending'})`,
+        });
+        setPhoneNumber("");
+      } else {
+        throw new Error(data.error || "Failed to initiate call");
+      }
+    } catch (error) {
+      toast({
+        title: "❌ Call Failed",
+        description: error instanceof Error ? error.message : "Failed to initiate call",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDialing(false);
+    }
   };
 
   const handleKeypadClick = (digit: string) => {
@@ -54,17 +77,17 @@ export const QuickDialWidget = () => {
         {/* Extension selector */}
         <div className="space-y-2">
           <Label htmlFor="extension">From Extension</Label>
-          <Select value={selectedExtension} onValueChange={setSelectedExtension}>
+          <Select value={selectedExtension} onValueChange={setSelectedExtension} disabled={isLoading || isDialing}>
             <SelectTrigger id="extension">
-              <SelectValue placeholder="Select extension" />
+              <SelectValue placeholder={isLoading ? "Loading..." : "Select extension"} />
             </SelectTrigger>
             <SelectContent>
-              {enabledConfigs.map((config) => (
-                <SelectItem key={config.id} value={config.extension!}>
-                  {config.extension} - {config.label || `Port ${config.port_number}`}
+              {extensions.map((ext) => (
+                <SelectItem key={ext.extnumber} value={ext.extnumber}>
+                  {ext.extnumber} - {ext.username}
                 </SelectItem>
               ))}
-              {enabledConfigs.length === 0 && (
+              {!isLoading && extensions.length === 0 && (
                 <SelectItem value="default" disabled>
                   No extensions configured
                 </SelectItem>
@@ -84,9 +107,10 @@ export const QuickDialWidget = () => {
               onChange={(e) => setPhoneNumber(e.target.value)}
               placeholder="Enter phone number"
               className="text-lg font-mono"
+              disabled={isDialing}
             />
             {phoneNumber && (
-              <Button variant="ghost" size="icon" onClick={handleClear}>
+              <Button variant="ghost" size="icon" onClick={handleClear} disabled={isDialing}>
                 <X className="h-4 w-4" />
               </Button>
             )}
@@ -101,6 +125,7 @@ export const QuickDialWidget = () => {
               variant="outline"
               className="h-12 text-lg font-semibold"
               onClick={() => handleKeypadClick(digit)}
+              disabled={isDialing}
             >
               {digit}
             </Button>
@@ -113,21 +138,17 @@ export const QuickDialWidget = () => {
             variant="outline"
             className="flex-1"
             onClick={handleBackspace}
-            disabled={!phoneNumber}
+            disabled={!phoneNumber || isDialing}
           >
             ← Delete
           </Button>
           <Button
             className="flex-1 bg-primary hover:bg-primary/90"
             onClick={handleDial}
-            disabled={!phoneNumber.trim() || !selectedExtension || isPending}
+            disabled={isDialing || !phoneNumber || !selectedExtension}
           >
-            {isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            ) : (
-              <Phone className="h-4 w-4 mr-2" />
-            )}
-            Call
+            {isDialing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Phone className="h-4 w-4 mr-2" />}
+            {isDialing ? "Dialing..." : "Call"}
           </Button>
         </div>
       </CardContent>

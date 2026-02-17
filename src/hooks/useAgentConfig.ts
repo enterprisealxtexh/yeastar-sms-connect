@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 export interface AgentConfig {
@@ -23,38 +22,21 @@ export const useAgentConfig = () => {
   const query = useQuery({
     queryKey: ["agent-config"],
     queryFn: async (): Promise<AgentConfig[]> => {
-      const { data, error } = await supabase
-        .from("agent_config")
-        .select("*")
-        .order("config_key");
-
-      if (error) throw error;
-      return (data || []).map(item => ({
-        ...item,
-        config_value: item.config_value as AgentConfig["config_value"],
-      }));
+      // agent_config table not available in local SQLite mode
+      return [];
     },
   });
 
   const updateConfig = useMutation({
     mutationFn: async ({ key, value }: { key: string; value: unknown }) => {
-      const { error } = await supabase
-        .from("agent_config")
-        .update({
-          config_value: value as AgentConfig["config_value"],
-          ai_tuned: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("config_key", key);
-
-      if (error) throw error;
+      toast({
+        title: "Configuration Update",
+        description: "Agent configuration updates are not available in local development mode.",
+        variant: "default",
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agent-config"] });
-      toast({
-        title: "Configuration Updated",
-        description: "The agent will pick up the new settings on next poll.",
-      });
     },
     onError: (error: Error) => {
       toast({
@@ -67,18 +49,19 @@ export const useAgentConfig = () => {
 
   const triggerAiTuning = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("ai-diagnostics", {
-        body: { action: "tune_config" },
+      // AI tuning requires edge function not available in local mode
+      toast({
+        title: "AI Tuning Unavailable",
+        description: "AI configuration tuning is not available in local development mode.",
+        variant: "default",
       });
-
-      if (error) throw error;
-      return data;
+      return { tuning: { recommendations: [] } };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["agent-config"] });
       const count = data?.tuning?.recommendations?.length || 0;
       toast({
-        title: "AI Tuning Complete",
+        title: "AI Tuning Status",
         description: count > 0 
           ? `Made ${count} configuration adjustment(s)`
           : "No adjustments needed at this time",

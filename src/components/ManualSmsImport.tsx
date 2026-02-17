@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Upload, Plus, FileText } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { apiClient } from "@/integrations/supabase/api-client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -45,7 +45,7 @@ export const ManualSmsImport = () => {
 
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("sms_messages").insert({
+      const { error } = await apiClient.saveSmsMessage({
         sender_number: senderNumber.trim(),
         message_content: messageContent.trim(),
         sim_port: parseInt(simPort),
@@ -120,11 +120,12 @@ export const ManualSmsImport = () => {
         external_id: `manual-bulk-${Date.now()}-${i}`,
       }));
 
-      const { error } = await supabase.from("sms_messages").insert(messagesWithMeta);
+      // Bulk save using local API
+      const { error } = await apiClient.saveBulkSmsMessages(messagesWithMeta);
 
       if (error) throw error;
 
-      toast.success(`Imported ${messages.length} messages`);
+      toast.success(`Successfully imported ${messagesWithMeta.length} message(s)`);
       queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
       
       setBulkData("");

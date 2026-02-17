@@ -42,7 +42,7 @@ export function AiAutomationPanel() {
   } = useAiAutomation();
 
   const [activeCategory, setActiveCategory] = useState("all");
-  const isRunning = runAiAction.isPending;
+  const isRunning = runAiAction.isPending || false;
 
   const allRecs = recommendations.data || [];
   const filtered = activeCategory === "all"

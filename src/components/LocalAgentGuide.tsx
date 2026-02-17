@@ -11,11 +11,13 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Server, Copy, Check, Terminal, Zap, Settings, HelpCircle } from "lucide-react";
+import { Server, Copy, Check, Terminal, Zap, Settings, HelpCircle, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
+import { useGatewayConfig } from "@/hooks/useGatewayConfig";
 
 export const LocalAgentGuide = () => {
   const [copied, setCopied] = useState<string | null>(null);
+  const { config } = useGatewayConfig();
 
   const copyCommand = async (text: string, id: string) => {
     await navigator.clipboard.writeText(text);
@@ -24,7 +26,13 @@ export const LocalAgentGuide = () => {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  // Get the actual gateway config or use defaults
+  const gatewayIp = config?.gateway_ip || "192.168.5.3";
+  const apiUsername = config?.api_username || "NOSTEQ";
+  const apiPort = config?.api_port || 5038;
+
   const installCommand = `curl -fsSL https://id-preview--02b61bbc-2d1a-4cc5-b544-9f855adac829.lovable.app/local-agent/install.sh | sudo bash`;
+  const testCommand = `curl -u ${apiUsername}:password http://${gatewayIp}:${apiPort}/api/v1.0/system/status`;
 
   return (
     <Dialog>
@@ -34,7 +42,7 @@ export const LocalAgentGuide = () => {
           Local Agent Setup
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[700px] max-h-[85vh]">
+      <DialogContent className="sm:max-w-[700px] max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Terminal className="h-5 w-5" />
@@ -45,7 +53,8 @@ export const LocalAgentGuide = () => {
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="quick" className="w-full">
+        <div className="flex-1 overflow-y-auto">
+          <Tabs defaultValue="quick" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="quick" className="gap-1.5">
               <Zap className="h-3.5 w-3.5" />
@@ -64,6 +73,34 @@ export const LocalAgentGuide = () => {
           <ScrollArea className="h-[450px] mt-4">
             {/* Quick Install Tab */}
             <TabsContent value="quick" className="space-y-6 pr-4">
+              {/* Configuration Status */}
+              <section className="p-3 rounded-lg border bg-card">
+                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                  <Badge variant="outline">Current Configuration</Badge>
+                </h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                    <span className="text-muted-foreground">Gateway IP:</span>
+                    <code className="font-mono font-semibold">{gatewayIp}</code>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                    <span className="text-muted-foreground">API Port:</span>
+                    <code className="font-mono font-semibold">{apiPort}</code>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                    <span className="text-muted-foreground">Username:</span>
+                    <code className="font-mono font-semibold">{apiUsername}</code>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                    <span className="text-muted-foreground">Status:</span>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                      <span className="text-green-600 text-xs font-semibold">Configured</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               <section>
                 <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
                   <Badge variant="outline">Why?</Badge>
@@ -226,10 +263,11 @@ export const LocalAgentGuide = () => {
                   <Badge variant="destructive">Cannot connect to gateway</Badge>
                 </h3>
                 <div className="space-y-2 text-sm text-muted-foreground">
-                  <p>1. Verify the gateway IP is correct:</p>
-                  <code className="block bg-muted p-2 rounded text-xs font-mono">ping 192.168.5.3</code>
+                  <p>Configured gateway: <code className="bg-muted px-1 rounded text-xs font-mono">{gatewayIp}:{apiPort}</code></p>
+                  <p>1. Verify the gateway IP is reachable:</p>
+                  <code className="block bg-muted p-2 rounded text-xs font-mono">ping {gatewayIp}</code>
                   <p>2. Test API access manually:</p>
-                  <code className="block bg-muted p-2 rounded text-xs font-mono">curl -u admin:password http://192.168.5.3/api/v1.0/system/status</code>
+                  <code className="block bg-muted p-2 rounded text-xs font-mono">{testCommand}</code>
                   <p>3. Check if web interface is accessible in a browser</p>
                 </div>
               </section>
@@ -287,6 +325,7 @@ sudo systemctl daemon-reload`}
             </TabsContent>
           </ScrollArea>
         </Tabs>
+        </div>
       </DialogContent>
     </Dialog>
   );

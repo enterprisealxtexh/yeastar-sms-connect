@@ -1,6 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/integrations/supabase/api-client";
 
 export interface AgentStatus {
   isConnected: boolean;
@@ -15,103 +14,120 @@ export interface AgentStatus {
 }
 
 // Agent is considered:
-// - "online" if heartbeat within last 2 minutes
-// - "warning" if heartbeat within last 5 minutes
-// - "offline" if no heartbeat in over 5 minutes
-const ONLINE_THRESHOLD_SECONDS = 120;
-const WARNING_THRESHOLD_SECONDS = 300;
+// - "online" if heartbeat within last 90 seconds (services report every 60s)
+// - "warning" if heartbeat within last 3 minutes or recent activity detected
+// - "offline" if no activity in over 5 minutes
+const ONLINE_THRESHOLD_SECONDS = 90;
+const WARNING_THRESHOLD_SECONDS = 180;
+const OFFLINE_THRESHOLD_SECONDS = 300;
 
 export const useAgentStatus = () => {
-  const queryClient = useQueryClient();
-
-  // Subscribe to realtime changes on agent_heartbeat
-  useEffect(() => {
-    const channel = supabase
-      .channel("agent-heartbeat-realtime")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "agent_heartbeat",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["agent-status"] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
 
   return useQuery({
     queryKey: ["agent-status"],
     queryFn: async (): Promise<AgentStatus> => {
-      // First check the dedicated heartbeat table
-      const { data: heartbeat, error: heartbeatError } = await supabase
-        .from("agent_heartbeat")
-        .select("*")
-        .order("last_seen_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        // First check the dedicated heartbeat endpoint
+        const { data: heartbeat, error: heartbeatError } = await apiClient.getHeartbeat();
 
-      if (!heartbeatError && heartbeat) {
-        const lastSync = new Date(heartbeat.last_seen_at);
-        const now = new Date();
-        const syncAgeSeconds = Math.floor((now.getTime() - lastSync.getTime()) / 1000);
+        if (!heartbeatError && heartbeat && !Array.isArray(heartbeat)) {
+          // Parse UTC timestamp from database and convert to local time
+          const utcString = heartbeat.last_seen_at.replace(' ', 'T') + 'Z';
+          const lastSync = new Date(utcString);
+          const now = new Date();
+          const syncAgeSeconds = Math.floor((now.getTime() - lastSync.getTime()) / 1000);
 
-        let status: "online" | "warning" | "offline";
-        if (syncAgeSeconds <= ONLINE_THRESHOLD_SECONDS) {
-          status = "online";
-        } else if (syncAgeSeconds <= WARNING_THRESHOLD_SECONDS) {
-          status = "warning";
-        } else {
-          status = "offline";
+          let status: "online" | "warning" | "offline";
+          if (syncAgeSeconds <= ONLINE_THRESHOLD_SECONDS) {
+            status = "online";
+          } else if (syncAgeSeconds <= WARNING_THRESHOLD_SECONDS) {
+            status = "warning";
+          } else if (syncAgeSeconds <= OFFLINE_THRESHOLD_SECONDS) {
+            status = "warning"; // Still showing activity within 5 min
+          } else {
+            status = "offline";
+          }
+
+          return {
+            isConnected: status !== "offline",
+            lastSyncAt: lastSync,
+            syncAgeSeconds,
+            status,
+            agentId: heartbeat.agent_id,
+            messagesSynced: heartbeat.messages_synced || 0,
+            errorsCount: heartbeat.errors_count || 0,
+            version: heartbeat.version,
+            hostname: heartbeat.hostname,
+          };
         }
-
-        return {
-          isConnected: status !== "offline",
-          lastSyncAt: lastSync,
-          syncAgeSeconds,
-          status,
-          agentId: heartbeat.agent_id,
-          messagesSynced: heartbeat.messages_synced || 0,
-          errorsCount: heartbeat.errors_count || 0,
-          version: heartbeat.version,
-          hostname: heartbeat.hostname,
-        };
+      } catch (error) {
+        console.debug("Heartbeat check failed:", error);
       }
 
-      // Fallback: check activity logs for any agent activity
-      const { data: logs } = await supabase
-        .from("activity_logs")
-        .select("created_at, event_type, message")
-        .or("event_type.eq.agent_poll,event_type.eq.sms_received,event_type.eq.agent_sync,event_type.eq.sms_sync")
-        .order("created_at", { ascending: false })
-        .limit(1);
+      // Fallback: check if API server is responding (health check)
+      try {
+        const healthResult = await apiClient.health();
+        if (healthResult) {
+          // API is up, check for recent activity
+          const { data: logs } = await apiClient.getActivityLogs({ limit: 5 });
+          
+          const recentActivities = logs?.filter((log: any) => {
+            const utcString = log.created_at.replace(' ', 'T') + 'Z';
+            const logTime = new Date(utcString);
+            const now = new Date();
+            const ageSeconds = Math.floor((now.getTime() - logTime.getTime()) / 1000);
+            return ageSeconds < OFFLINE_THRESHOLD_SECONDS;
+          }) || [];
 
-      const lastSync = logs?.[0]?.created_at ? new Date(logs[0].created_at) : null;
-      const now = new Date();
-      const syncAgeSeconds = lastSync 
-        ? Math.floor((now.getTime() - lastSync.getTime()) / 1000) 
-        : Infinity;
+          if (recentActivities.length > 0) {
+            const utcString = recentActivities[0].created_at.replace(' ', 'T') + 'Z';
+            const lastSync = new Date(utcString);
+            const now = new Date();
+            const syncAgeSeconds = Math.floor((now.getTime() - lastSync.getTime()) / 1000);
+            
+            let status: "online" | "warning" | "offline" = "warning";
+            if (syncAgeSeconds <= ONLINE_THRESHOLD_SECONDS) {
+              status = "online";
+            } else if (syncAgeSeconds <= WARNING_THRESHOLD_SECONDS) {
+              status = "warning";
+            }
 
-      let status: "online" | "warning" | "offline";
-      if (syncAgeSeconds <= ONLINE_THRESHOLD_SECONDS) {
-        status = "online";
-      } else if (syncAgeSeconds <= WARNING_THRESHOLD_SECONDS) {
-        status = "warning";
-      } else {
-        status = "offline";
+            return {
+              isConnected: true,
+              lastSyncAt: lastSync,
+              syncAgeSeconds,
+              status,
+              agentId: null,
+              messagesSynced: 0,
+              errorsCount: 0,
+              version: null,
+              hostname: null,
+            };
+          } else {
+            // API is up but no recent activity - still show as online if API responds
+            return {
+              isConnected: true,
+              lastSyncAt: null,
+              syncAgeSeconds: Infinity,
+              status: "online", // API server is responding = system is available
+              agentId: null,
+              messagesSynced: 0,
+              errorsCount: 0,
+              version: "Unknown",
+              hostname: null,
+            };
+          }
+        }
+      } catch (error) {
+        console.debug("Health check failed:", error);
       }
 
+      // Completely offline - API not responding
       return {
-        isConnected: status !== "offline",
-        lastSyncAt: lastSync,
-        syncAgeSeconds,
-        status,
+        isConnected: false,
+        lastSyncAt: null,
+        syncAgeSeconds: Infinity,
+        status: "offline",
         agentId: null,
         messagesSynced: 0,
         errorsCount: 0,

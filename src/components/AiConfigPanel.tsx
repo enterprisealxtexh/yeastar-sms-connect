@@ -6,6 +6,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Brain, RefreshCw, Settings, Sparkles } from "lucide-react";
 import { format } from "date-fns";
+import { formatDateNairobi } from "@/lib/dateUtils";
 import { useState } from "react";
 
 const configLabels: Record<string, { label: string; description: string; unit?: string }> = {
@@ -178,7 +179,7 @@ export const AiConfigPanel = () => {
 
               {config.last_tuned_at && (
                 <p className="text-xs text-muted-foreground">
-                  Last tuned: {format(new Date(config.last_tuned_at), "MMM d, yyyy HH:mm")}
+                  Last tuned: {formatDateNairobi(config.last_tuned_at)}
                 </p>
               )}
             </div>

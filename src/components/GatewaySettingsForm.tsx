@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Save, Eye, EyeOff, Server, Wifi, WifiOff, CheckCircle2 } from "lucide-react";
 import { useGatewayConfig } from "@/hooks/useGatewayConfig";
 import { toast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 
 export const GatewaySettingsForm = () => {
   const { config, isLoading, updateConfig } = useGatewayConfig();
@@ -30,14 +29,24 @@ export const GatewaySettingsForm = () => {
 
   const handleSave = async () => {
     try {
-      await updateConfig.mutateAsync(localConfig);
+      console.log('[GatewaySettingsForm] Starting save...');
+      console.log('[GatewaySettingsForm] localConfig:', localConfig);
+      
+      console.log('[GatewaySettingsForm] Calling updateConfig.mutateAsync()...');
+      const result = await updateConfig.mutateAsync(localConfig);
+      console.log('[GatewaySettingsForm] ✓ mutateAsync completed, result:', result);
 
-      await supabase.from("activity_logs").insert({
-        event_type: "config_update",
-        message: "Gateway configuration updated",
-        severity: "info",
-        metadata: { updated_fields: ["gateway_ip", "api_username", "api_password"] },
-      });
+      // Log to local API instead of Supabase
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+      await fetch(`${apiUrl}/api/activity-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: "config_update",
+          message: "Gateway configuration updated",
+          severity: "info",
+        })
+      }).catch(() => {});
 
       toast({
         title: "Gateway settings saved",
@@ -46,6 +55,7 @@ export const GatewaySettingsForm = () => {
       
       setConnectionStatus('idle');
     } catch (error) {
+      console.error('[GatewaySettingsForm] Save error:', error);
       toast({
         title: "Save failed",
         description: error instanceof Error ? error.message : "Failed to save gateway settings",
@@ -66,29 +76,28 @@ export const GatewaySettingsForm = () => {
     setConnectionStatus('idle');
 
     try {
-      const { data, error } = await supabase.functions.invoke('test-gateway-connection');
-
-      if (error) throw error;
-
-      if (data?.success) {
+      // Test real connection to TG400 Gateway via backend endpoint
+      const gateway_ip = localConfig.gateway_ip || '192.168.5.3';
+      const api_port = localConfig.api_port || 5038;
+      
+      const response = await fetch(`http://localhost:2003/api/gateway-test`);
+      const result = await response.json();
+      
+      if (response.ok && result.success) {
         setConnectionStatus('success');
         toast({
           title: "Connection successful",
-          description: `Connected to gateway at ${localConfig.gateway_ip} (${data.responseTime}ms)`,
+          description: `✅ Connected to TG400 at ${gateway_ip}:${api_port} - Authentication successful`,
         });
       } else {
-        setConnectionStatus('error');
-        toast({
-          title: "Connection failed",
-          description: data?.error || "Could not connect to gateway",
-          variant: "destructive",
-        });
+        throw new Error(result.error || `Failed to connect to TG400 (${result.status || 'Unknown error'})`);
       }
     } catch (error) {
       setConnectionStatus('error');
+      console.error('Test connection error:', error);
       toast({
         title: "Test failed",
-        description: error instanceof Error ? error.message : "Failed to test connection",
+        description: error instanceof Error ? error.message : "Failed to test connection to TG400 Gateway.",
         variant: "destructive",
       });
     } finally {

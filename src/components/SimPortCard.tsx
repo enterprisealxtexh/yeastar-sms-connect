@@ -39,11 +39,8 @@ export const SimPortCard = ({
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 text-primary font-mono font-semibold">
-              {port}
-            </div>
             <div>
-              <h3 className="font-semibold text-foreground">SIM Port {port}</h3>
+              <h3 className="font-semibold text-foreground">Port {port}</h3>
               <p className="text-xs font-mono text-muted-foreground">{phoneNumber}</p>
             </div>
           </div>

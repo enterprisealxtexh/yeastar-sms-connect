@@ -2,8 +2,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Phone, Clock, CheckCircle2, XCircle, Loader2, X } from "lucide-react";
-import { useCallQueue, useCancelCall, type CallQueueItem } from "@/hooks/useCallQueue";
+import { useCallQueue, type CallQueueItem } from "@/hooks/useCallQueue";
 import { formatDistanceToNow } from "date-fns";
+import { formatDateNairobi } from "@/lib/dateUtils";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ElementType }> = {
   pending: { label: "Pending", variant: "outline", icon: Clock },
@@ -14,7 +15,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
 };
 
 const CallQueueItem = ({ item }: { item: CallQueueItem }) => {
-  const { mutate: cancelCall, isPending: isCancelling } = useCancelCall();
   const config = statusConfig[item.status] || statusConfig.pending;
   const Icon = config.icon;
 
@@ -24,7 +24,7 @@ const CallQueueItem = ({ item }: { item: CallQueueItem }) => {
         <div className="flex flex-col">
           <span className="font-medium">{item.to_number}</span>
           <span className="text-xs text-muted-foreground">
-            From: {item.from_extension} • {formatDistanceToNow(new Date(item.requested_at), { addSuffix: true })}
+            From: {item.from_extension} • {formatDateNairobi(item.requested_at)}
           </span>
         </div>
       </div>

@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 export interface Contact {
@@ -23,28 +22,18 @@ export const useContacts = () => {
   const query = useQuery({
     queryKey: ["contacts"],
     queryFn: async (): Promise<Contact[]> => {
-      const { data, error } = await supabase
-        .from("contacts")
-        .select("*")
-        .order("last_seen_at", { ascending: false });
-
-      if (error) throw error;
-      return data || [];
+      // Contacts table not available in local SQLite mode
+      return [];
     },
   });
 
   const updateContact = useMutation({
     mutationFn: async ({ id, name, notes }: { id: string; name?: string; notes?: string }) => {
-      const updates: Record<string, unknown> = {};
-      if (name !== undefined) updates.name = name;
-      if (notes !== undefined) updates.notes = notes;
-
-      const { error } = await supabase
-        .from("contacts")
-        .update(updates)
-        .eq("id", id);
-
-      if (error) throw error;
+      toast({
+        title: "Update Unavailable",
+        description: "Contact management is not available in local development mode.",
+        variant: "default",
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
@@ -60,28 +49,18 @@ export const useContacts = () => {
 
   const importContacts = useMutation({
     mutationFn: async (contacts: { phone_number: string; name: string }[]) => {
-      let imported = 0;
-      for (const contact of contacts) {
-        if (!contact.phone_number) continue;
-        const { error } = await supabase
-          .from("contacts")
-          .upsert(
-            {
-              phone_number: contact.phone_number,
-              name: contact.name || null,
-              source: "import",
-            },
-            { onConflict: "phone_number" }
-          );
-        if (!error) imported++;
-      }
-      return imported;
+      toast({
+        title: "Import Unavailable",
+        description: "Contact management is not available in local development mode.",
+        variant: "default",
+      });
+      return 0;
     },
     onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
       toast({
-        title: "Import Complete",
-        description: `${count} contacts imported successfully.`,
+        title: "Import Status",
+        description: count > 0 ? `${count} contacts imported successfully.` : "Import unavailable in local mode.",
       });
     },
     onError: (error: Error) => {

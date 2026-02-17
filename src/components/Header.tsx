@@ -1,6 +1,5 @@
 import { Radio, RefreshCw, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { StatusIndicator } from "./StatusIndicator";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { useAuth, signOut } from "@/hooks/useAuth";
 import {
@@ -15,12 +14,11 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 interface HeaderProps {
-  systemStatus: "online" | "offline" | "warning";
   lastSync: string;
   onRefresh: () => void;
 }
 
-export const Header = ({ systemStatus, lastSync, onRefresh }: HeaderProps) => {
+export const Header = ({ lastSync, onRefresh }: HeaderProps) => {
   const { user, role, isAdmin } = useAuth();
 
   const handleSignOut = async () => {
@@ -56,8 +54,6 @@ export const Header = ({ systemStatus, lastSync, onRefresh }: HeaderProps) => {
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-4 text-sm">
             <AgentStatusIndicator />
-            <div className="h-4 w-px bg-border" />
-            <StatusIndicator status={systemStatus} label="System" />
             <div className="h-4 w-px bg-border" />
             <span className="text-muted-foreground">
               Last sync: <span className="font-mono text-foreground">{lastSync}</span>

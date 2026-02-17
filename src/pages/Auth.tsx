@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Radio, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { login, register } from "@/hooks/useAuth";
 
 const authSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -20,25 +20,17 @@ const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isSignUp, setIsSignUp] = useState(false);
 
   useEffect(() => {
-    // Check if already logged in
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (session?.user) {
-          navigate("/", { replace: true });
-        }
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        navigate("/", { replace: true });
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    // Check if already logged in by checking localStorage
+    const authToken = localStorage.getItem('authToken');
+    const user = localStorage.getItem('user');
+    if (authToken && user) {
+      navigate("/", { replace: true });
+    }
   }, [navigate]);
 
   const validateForm = () => {
@@ -61,24 +53,17 @@ const Auth = () => {
     setIsLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      if (error.message.includes("Invalid login credentials")) {
-        setError("Invalid email or password");
-      } else if (error.message.includes("Email not confirmed")) {
-        setError("Please verify your email before signing in");
-      } else {
-        setError(error.message);
-      }
-    } else {
+    try {
+      const result = await login({ email, password });
       toast.success("Signed in successfully");
+      navigate("/", { replace: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Login failed";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -88,27 +73,19 @@ const Auth = () => {
     setIsLoading(true);
     setError(null);
 
-    const redirectUrl = `${window.location.origin}/`;
-    
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-      },
-    });
-
-    if (error) {
-      if (error.message.includes("already registered")) {
-        setError("This email is already registered. Please sign in.");
-      } else {
-        setError(error.message);
-      }
-    } else {
-      toast.success("Check your email to confirm your account");
+    try {
+      await register(email, password, name || undefined);
+      toast.success("Account created successfully. Please sign in.");
+      setIsSignUp(false);
+      setPassword("");
+      setName("");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Registration failed";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   return (
@@ -123,15 +100,14 @@ const Auth = () => {
           <div>
             <CardTitle className="text-2xl">SMS Gateway Manager</CardTitle>
             <CardDescription className="mt-2">
-              Sign in to manage your TG400 gateway and S100 PBX
+              Sign in with your local credentials to manage your TG400 gateway and S100 PBX
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="signin" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-1">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
             </TabsList>
 
             {error && (
@@ -148,7 +124,7 @@ const Auth = () => {
                   <Input
                     id="signin-email"
                     type="email"
-                    placeholder="admin@example.com"
+                    placeholder="admin@nosteq.co.ke"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={isLoading}
@@ -174,41 +150,7 @@ const Auth = () => {
               </form>
             </TabsContent>
 
-            <TabsContent value="signup">
-              <form onSubmit={handleSignUp} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="signup-email">Email</Label>
-                  <Input
-                    id="signup-email"
-                    type="email"
-                    placeholder="admin@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={isLoading}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-password">Password</Label>
-                  <Input
-                    id="signup-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={isLoading}
-                    required
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Create Account
-                </Button>
-                <p className="text-xs text-muted-foreground text-center">
-                  First user automatically becomes admin
-                </p>
-              </form>
-            </TabsContent>
+
           </Tabs>
         </CardContent>
       </Card>
