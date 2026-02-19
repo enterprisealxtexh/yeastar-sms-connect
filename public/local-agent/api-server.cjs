@@ -125,7 +125,7 @@ class YeastarPBXAPI {
 
     const passwordHash = this.md5Hash(config.api_password);
     
-    logger.info(`🔐 Authenticating with PBX: ${config.pbx_ip}:${config.pbx_port}`);
+    logger.info(`Authenticating with PBX: ${config.pbx_ip}:${config.pbx_port}`);
     
     // S-Series v1.1.0 requires port number where the app server listens for callbacks
     const response = await this.makeRequest('POST', '/api/v1.1.0/login', {
@@ -144,7 +144,7 @@ class YeastarPBXAPI {
         this.token = null;
       }, 25 * 60 * 1000);
       
-      logger.info(`✅ PBX Authentication successful, token: ${this.token.substr(0, 8)}...`);
+      logger.info(`PBX Authentication successful, token: ${this.token.substr(0, 8)}...`);
       return this.token;
     } else {
       logger.error(`Authentication failed response:`, response);
@@ -213,7 +213,7 @@ class YeastarPBXAPI {
 
       for (const endpoint of endpoints) {
         try {
-          logger.info(`📋 Querying CDR: ${endpoint}`);
+          logger.info(`Querying CDR: ${endpoint}`);
           const response = await this.makeRequest('GET', endpoint);
           if (response.status === 'Success' || response.errcode === 0) {
             return response;
@@ -282,9 +282,9 @@ class YeastarPBXAPI {
         });
         
         if (success) {
-          logger.info(`✅ ${endpoint.url} - Working! Data: ${hasData ? 'Yes' : 'No'}`);
+          logger.info(` ${endpoint.url} - Working! Data: ${hasData ? 'Yes' : 'No'}`);
         } else {
-          logger.debug(`❌ ${endpoint.url} - Error: ${response.errno || response.errcode}`);
+          logger.debug(` ${endpoint.url} - Error: ${response.errno || response.errcode}`);
         }
         
         // Small delay between requests
@@ -299,7 +299,7 @@ class YeastarPBXAPI {
           error: error.message,
           hasData: false
         });
-        logger.debug(`❌ ${endpoint.url} - Failed: ${error.message}`);
+        logger.debug(` ${endpoint.url} - Failed: ${error.message}`);
       }
     }
     
@@ -344,11 +344,11 @@ class YeastarPBXAPI {
       if (response.status === 'Success' && response.extinfos) {
         return response;
       } else {
-        logger.error(`❌ Extensions API failed: ${response.errmsg || 'Unknown error'}`);
+        logger.error(` Extensions API failed: ${response.errmsg || 'Unknown error'}`);
         return { status: 'Failed', error: response.errmsg || 'Extensions query failed' };
       }
     } catch (error) {
-      logger.error(`❌ Extensions API Error: ${error.message}`);
+      logger.error(` Extensions API Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -372,10 +372,10 @@ class YeastarPBXAPI {
         });
         
         if (response.status === 'Success' || response.callid) {
-          logger.info(`✅ Internal call initiated successfully. Call ID: ${response.callid}`);
+          logger.info(` Internal call initiated successfully. Call ID: ${response.callid}`);
           return { status: 'Success', ...response };
         } else {
-          logger.error(`❌ Dial failed: ${response.errno || response.errmsg || 'Unknown error'}`);
+          logger.error(` Dial failed: ${response.errno || response.errmsg || 'Unknown error'}`);
           return response;
         }
       } else {
@@ -387,15 +387,15 @@ class YeastarPBXAPI {
         });
         
         if (response.status === 'Success' || response.callid) {
-          logger.info(`✅ Outbound call initiated successfully. Call ID: ${response.callid}`);
+          logger.info(` Outbound call initiated successfully. Call ID: ${response.callid}`);
           return { status: 'Success', ...response };
         } else {
-          logger.error(`❌ Dial failed: ${response.errno || response.errmsg || 'Unknown error'}`);
+          logger.error(` Dial failed: ${response.errno || response.errmsg || 'Unknown error'}`);
           return response;
         }
       }
     } catch (error) {
-      logger.error(`❌ Dial Error: ${error.message}`);
+      logger.error(` Dial Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -413,14 +413,14 @@ class YeastarPBXAPI {
       });
       
       if (response.status === 'Success') {
-        logger.info(`✅ Call hung up successfully for extension ${extid}`);
+        logger.info(` Call hung up successfully for extension ${extid}`);
         return { status: 'Success', ...response };
       } else {
-        logger.error(`❌ Hangup failed: ${response.errno || response.errmsg || 'Unknown error'}`);
+        logger.error(` Hangup failed: ${response.errno || response.errmsg || 'Unknown error'}`);
         return response;
       }
     } catch (error) {
-      logger.error(`❌ Hangup Error: ${error.message}`);
+      logger.error(` Hangup Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -451,14 +451,14 @@ class YeastarPBXAPI {
       const response = await this.makeRequest('POST', `/api/v1.1.0/${endpoint}?token=${token}`, requestBody);
       
       if (response.status === 'Success' || response.Calls) {
-        logger.info(`✅ Calls queried successfully. Found ${response.Calls ? response.Calls.length : 0} calls`);
+        logger.info(` Calls queried successfully. Found ${response.Calls ? response.Calls.length : 0} calls`);
         return { status: 'Success', ...response };
       } else {
-        logger.error(`❌ Query failed: ${response.errno || response.errmsg || 'Unknown error'}`);
+        logger.error(` Query failed: ${response.errno || response.errmsg || 'Unknown error'}`);
         return response;
       }
     } catch (error) {
-      logger.error(`❌ Query Error: ${error.message}`);
+      logger.error(` Query Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -478,14 +478,14 @@ class YeastarPBXAPI {
       const response = await this.makeRequest('POST', `/api/v1.1.0/inbound/query?token=${token}`, requestBody);
       
       if (response.status === 'Success') {
-        logger.info(`✅ Inbound calls queried. Total: ${response.inbound ? response.inbound.length : 0}`);
+        logger.info(`Inbound calls queried. Total: ${response.inbound ? response.inbound.length : 0}`);
         return {
           status: 'Success',
           inbound: response.inbound || [],
           totalCalls: response.inbound ? response.inbound.length : 0
         };
       } else {
-        logger.warn(`⚠️ Inbound query returned: ${response.errno || response.errmsg || 'No data'}`);
+        logger.warn(`Inbound query returned: ${response.errno || response.errmsg || 'No data'}`);
         return {
           status: 'Success',
           inbound: [],
@@ -494,7 +494,7 @@ class YeastarPBXAPI {
         };
       }
     } catch (error) {
-      logger.error(`❌ Inbound Query Error: ${error.message}`);
+      logger.error(` Inbound Query Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -514,14 +514,14 @@ class YeastarPBXAPI {
       const response = await this.makeRequest('POST', `/api/v1.1.0/outbound/query?token=${token}`, requestBody);
       
       if (response.status === 'Success') {
-        logger.info(`✅ Outbound calls queried. Total: ${response.outbound ? response.outbound.length : 0}`);
+        logger.info(`Outbound calls queried. Total: ${response.outbound ? response.outbound.length : 0}`);
         return {
           status: 'Success',
           outbound: response.outbound || [],
           totalCalls: response.outbound ? response.outbound.length : 0
         };
       } else {
-        logger.warn(`⚠️ Outbound query returned: ${response.errno || response.errmsg || 'No data'}`);
+        logger.warn(`Outbound query returned: ${response.errno || response.errmsg || 'No data'}`);
         return {
           status: 'Success',
           outbound: [],
@@ -530,7 +530,7 @@ class YeastarPBXAPI {
         };
       }
     } catch (error) {
-      logger.error(`❌ Outbound Query Error: ${error.message}`);
+      logger.error(`Outbound Query Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -540,12 +540,12 @@ class YeastarPBXAPI {
     const token = await this.getToken();
     
     try {
-      logger.info(`📞 Querying all extensions from PBX`);
+      logger.info(`Querying all extensions from PBX`);
       
       const response = await this.makeRequest('POST', `/api/v1.1.0/extensionlist/query?token=${token}`, {});
       
       if (response.status === 'Success' && Array.isArray(response.extlist)) {
-        logger.info(`✅ Extensions queried. Total: ${response.extlist.length}`);
+        logger.info(` Extensions queried. Total: ${response.extlist.length}`);
         return {
           status: 'Success',
           extensions: response.extlist,
@@ -553,14 +553,14 @@ class YeastarPBXAPI {
         };
       } else if (response.extlist && Array.isArray(response.extlist)) {
         // Sometimes it returns list without explicit status
-        logger.info(`✅ Extensions queried. Total: ${response.extlist.length}`);
+        logger.info(` Extensions queried. Total: ${response.extlist.length}`);
         return {
           status: 'Success',
           extensions: response.extlist,
           totalExtensions: response.extlist.length
         };
       } else {
-        logger.warn(`⚠️ Extensions query returned: ${JSON.stringify(response).substring(0, 100)}`);
+        logger.warn(` Extensions query returned: ${JSON.stringify(response).substring(0, 100)}`);
         return {
           status: 'Failed',
           error: response.errno || response.errmsg || 'Failed to query extensions',
@@ -569,7 +569,7 @@ class YeastarPBXAPI {
         };
       }
     } catch (error) {
-      logger.error(`❌ Extensions Query Error: ${error.message}`);
+      logger.error(` PBX Info Query Error: ${error.message}`);
       return { status: 'Failed', error: error.message, extensions: [], totalExtensions: 0 };
     }
   }
@@ -579,25 +579,25 @@ class YeastarPBXAPI {
     const token = await this.getToken();
     
     try {
-      logger.info(`📞 Querying PBX device information`);
+      logger.info(` Querying PBX device information`);
       
       const response = await this.makeRequest('POST', `/api/v1.1.0/deviceinfo/query?token=${token}`, {});
       
       if (response.status === 'Success' && response.deviceinfo) {
-        logger.info(`✅ PBX Info: ${response.deviceinfo.devicename} - Firmware: ${response.deviceinfo.firmwarever}`);
+        logger.info(` PBX Info: ${response.deviceinfo.devicename} - Firmware: ${response.deviceinfo.firmwarever}`);
         return {
           status: 'Success',
           deviceinfo: response.deviceinfo
         };
       } else {
-        logger.warn(`⚠️ Device info query returned: ${response.errno || response.errmsg || 'No data'}`);
+        logger.warn(` Device info query returned: ${response.errno || response.errmsg || 'No data'}`);
         return {
           status: 'Failed',
           error: response.errno || response.errmsg || 'Failed to query device info'
         };
       }
     } catch (error) {
-      logger.error(`❌ PBX Info Query Error: ${error.message}`);
+      logger.error(` PBX Info Query Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -616,7 +616,7 @@ class YeastarPBXAPI {
       });
       
       if (response.status === 'Success' && response.random) {
-        logger.info(`✅ CDR random token obtained`);
+        logger.info(`CDR random token obtained`);
         return { 
           status: 'Success',
           extid: response.extid || extid,
@@ -627,11 +627,11 @@ class YeastarPBXAPI {
         };
       } else {
         const errCode = response.errno || response.errmsg || 'Unknown error';
-        logger.warn(`⚠️ CDR random failed: ${errCode} (This may indicate PBX permissions issue)`);
+        logger.warn(` CDR random failed: ${errCode} (This may indicate PBX permissions issue)`);
         return { status: 'Failed', error: errCode };
       }
     } catch (error) {
-      logger.debug(`CDR Random error: ${error.message}`);
+      logger.debug(` CDR Random error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -646,7 +646,7 @@ class YeastarPBXAPI {
     }
     
     try {
-      logger.info(`📋 Downloading CDR: extid=${extid}, starttime=${starttime}, endtime=${endtime}`);
+      logger.info(`Downloading CDR: extid=${extid}, starttime=${starttime}, endtime=${endtime}`);
       
       // Step 1: Get random token
       const randomResponse = await this.getCDRRandom(extid, starttime, endtime);
@@ -664,7 +664,7 @@ class YeastarPBXAPI {
         `&token=${token}` +
         `&random=${randomToken}`;
       
-      logger.info(`📥 Downloading CDR from: ${downloadUrl.substring(0, 100)}...`);
+      logger.info(`Downloading CDR from: ${downloadUrl.substring(0, 100)}...`);
       
       return new Promise((resolve, reject) => {
         const options = {
@@ -683,7 +683,7 @@ class YeastarPBXAPI {
           res.on('data', (chunk) => data += chunk);
           res.on('end', () => {
             if (res.statusCode === 200) {
-              logger.info(`✅ CDR downloaded successfully, size: ${data.length} bytes`);
+              logger.info(` CDR downloaded successfully, size: ${data.length} bytes`);
               const parsedCalls = this.parseCDRData(data);
               resolve({
                 status: 'Success',
@@ -704,7 +704,7 @@ class YeastarPBXAPI {
         req.end();
       });
     } catch (error) {
-      logger.error(`❌ CDR Download Error: ${error.message}`);
+      logger.error(` CDR Download Error: ${error.message}`);
       return { status: 'Failed', error: error.message };
     }
   }
@@ -714,7 +714,7 @@ class YeastarPBXAPI {
     try {
       const lines = csvText.trim().split('\n');
       if (lines.length < 2) {
-        logger.warn('⚠️ CDR data has no headers or data rows');
+        logger.warn(' CDR data has no headers or data rows');
         return [];
       }
       
@@ -751,7 +751,7 @@ class YeastarPBXAPI {
         values.push(current.trim());
         
         if (values.length !== headers.length) {
-          logger.debug(`⚠️ Row ${i} has ${values.length} values but headers has ${headers.length}`);
+          logger.debug(` Row ${i} has ${values.length} values but headers has ${headers.length}`);
           continue;
         }
         
@@ -780,10 +780,10 @@ class YeastarPBXAPI {
         });
       }
       
-      logger.info(`✅ Parsed ${calls.length} CDR records`);
+      logger.info(` Parsed ${calls.length} CDR records`);
       return calls;
     } catch (error) {
-      logger.error(`❌ CDR Parse Error: ${error.message}`);
+      logger.error(` CDR Parse Error: ${error.message}`);
       return [];
     }
   }
@@ -805,7 +805,7 @@ async function startCallSync() {
     const config = db.getPbxConfig();
     
     if (!config || !config.pbx_ip || !config.api_username) {
-      logger.debug('⏳ Waiting for PBX configuration for call sync...');
+      logger.debug(' Waiting for PBX configuration for call sync...');
       setTimeout(startCallSync, 30000); // Retry after 30 seconds
       return;
     }
@@ -814,7 +814,7 @@ async function startCallSync() {
       clearInterval(callSyncInterval);
     }
 
-    logger.info('🔄 Starting background call sync service...');
+    logger.info(' Starting background call sync service...');
     
     // Sync immediately on start
     await syncCallRecords();
@@ -837,12 +837,12 @@ async function startCallSync() {
 // Sync call records from PBX
 async function syncCallRecords() {
   try {
-    logger.info('📋 Syncing call records from PBX...');
+    logger.info(' Syncing call records from PBX...');
     
     // On first sync (cold start), backfill last 7 days; otherwise sync last hour
     let startDate;
     if (isFirstSync) {
-      logger.info('🔙 First sync detected - backfilling historical data from last 7 days...');
+      logger.info(' First sync detected - backfilling historical data from last 7 days...');
       startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       isFirstSync = false; // Only do historical backfill once
     } else {
@@ -851,23 +851,57 @@ async function syncCallRecords() {
     
     const now = new Date().toISOString().split('T')[0];
     
-    logger.info(`📅 Querying CDR from ${startDate} to ${now}`);
+    logger.info(` Querying CDR from ${startDate} to ${now}`);
     
     // Use the downloadCDRData method which returns proper S-Series v1.1.0 format
     let cdrResult;
     try {
       cdrResult = await pbxAPI.downloadCDRData('all', `${startDate} 00:00:00`, `${now} 23:59:59`);
     } catch (error) {
-      logger.warn(`⚠️ CDR download failed (PBX may not have CDR module enabled or user lacks permissions): ${error.message}`);
+      logger.warn(` CDR download failed (PBX may not have CDR module enabled or user lacks permissions): ${error.message}`);
       cdrResult = null;
     }
     
     if (cdrResult && cdrResult.status === 'Success' && cdrResult.data && Array.isArray(cdrResult.data)) {
       let savedCount = 0;
       
-      logger.info(`🔄 Processing ${cdrResult.data.length} CDR records...`);
+      logger.info(` Processing ${cdrResult.data.length} CDR records...`);
       
       for (const call of cdrResult.data) {
+        // Determine extension - could be caller or callee (whichever is an extension)
+        let extension = null;
+        
+        // First, try to find extension by looking up callerid in pbx_extensions
+        const findExtensionByCallerId = (phoneNumber) => {
+          if (!phoneNumber) return null;
+          // Try exact match first, then try without country code
+          const records = db.db.prepare(`
+            SELECT extnumber FROM pbx_extensions 
+            WHERE callerid = ? OR callerid LIKE ?
+            LIMIT 1
+          `).all(phoneNumber, `%${phoneNumber.slice(-9)}`);
+          return records.length > 0 ? records[0].extnumber : null;
+        };
+        
+        // Check if caller is an extension by callerid lookup
+        let foundExtension = findExtensionByCallerId(call.callfrom);
+        if (foundExtension) {
+          extension = foundExtension;
+        } else {
+          // Check if callee is an extension by callerid lookup
+          foundExtension = findExtensionByCallerId(call.callto);
+          if (foundExtension) {
+            extension = foundExtension;
+          } else {
+            // Fallback to direct digit matching for internal extensions
+            if (call.callto && /^\d{1,4}$/.test(call.callto)) {
+              extension = call.callto;
+            } else if (call.type === 'Outbound' && call.callfrom && /^\d{1,4}$/.test(call.callfrom)) {
+              extension = call.callfrom;
+            }
+          }
+        }
+        
         const callRecord = {
           external_id: call.cdrid || `${call.callfrom}_${call.callto}_${call.timestart}`,
           caller_number: call.callfrom,
@@ -876,7 +910,7 @@ async function syncCallRecords() {
           callee_name: null,
           direction: call.type === 'Inbound' ? 'inbound' : call.type === 'Outbound' ? 'outbound' : 'internal',
           status: mapCallStatus(call.status),
-          extension: call.callto.length <= 4 ? call.callto : null, // If destination is extension (4 digits or less)
+          extension: extension,
           start_time: call.timestart,
           answer_time: call.talkduraction > 0 ? call.timestart : null,
           end_time: call.timestart,
@@ -889,22 +923,24 @@ async function syncCallRecords() {
         
         if (db.saveCallRecord(callRecord)) {
           savedCount++;
+          
+          // EVENT-DRIVEN: Send missed call alert immediately when saved
+          if (['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
+            await sendMissedCallAlert(callRecord);
+          }
         }
       }
       
       if (savedCount > 0) {
-        logger.info(`✅ Synced ${savedCount} new call records from PBX (out of ${cdrResult.data.length} total)`);
+        logger.info(`Synced ${savedCount} new call records from PBX (out of ${cdrResult.data.length} total)`);
         
         // Log activity
         db.logActivity('call_sync', `Synced ${savedCount} call records from PBX`, 'success', null, JSON.stringify({
           total: cdrResult.data.length,
           saved: savedCount
         }));
-        
-        // Trigger missed call alerts instantly for newly synced calls
-        await checkAndAlertMissedCalls();
       } else {
-        logger.debug(`📋 No new records to save (checked ${cdrResult.data.length} CDR records)`);
+        logger.debug(` No new records to save (checked ${cdrResult.data.length} CDR records)`);
       }
     } else {
       logger.warn(`No CDR data received or error: ${cdrResult?.error || 'Unknown error'}`);
@@ -921,110 +957,177 @@ async function syncCallRecords() {
 setTimeout(startCallSync, 5000); // Start after 5 seconds
 
 // ========================================
-// Missed Call Alert Service
+// Telegram Rate Limiter (for Missed Calls only)
 // ========================================
 
-let missedCallAlertInterval = null;
+const missedCallAlertQueue = [];
+let isSendingMissedCallAlert = false;
+const MISSED_CALL_DELAY_MS = 300; // 300ms delay between missed call sends (prevents rate limiting)
+
+async function processMissedCallQueue() {
+  if (isSendingMissedCallAlert || missedCallAlertQueue.length === 0) {
+    return;
+  }
+
+  isSendingMissedCallAlert = true;
+  
+  try {
+    const item = missedCallAlertQueue.shift();
+    
+    if (item && typeof item.fn === 'function') {
+      await item.fn();
+    }
+    
+    // Wait before processing next item
+    await new Promise(resolve => setTimeout(resolve, MISSED_CALL_DELAY_MS));
+  } catch (error) {
+    logger.error(`Missed call queue error: ${error.message}`);
+  } finally {
+    isSendingMissedCallAlert = false;
+    
+    // Process next item if queue not empty
+    if (missedCallAlertQueue.length > 0) {
+      processMissedCallQueue();
+    }
+  }
+}
+
+// ========================================
+// Event-Driven Missed Call Alert (No Polling)
+// ========================================
+
 const notifiedMissedCalls = new Set(); // Track which missed calls we've already alerted
 
-async function checkAndAlertMissedCalls() {
+async function sendMissedCallAlert(callRecord) {
   try {
     const telegramConfig = db.getTelegramConfig();
     
-    // Only check if telegram is enabled
+    // Only send if telegram is enabled and configured
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      logger.debug(' Telegram not enabled - skipping alert');
       return;
     }
 
-    logger.debug('Checking for new missed calls...');
-    
-    // Get recent calls from last 5 minutes
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    
-    const missedCalls = db.db.prepare(`
-      SELECT * FROM call_records 
-      WHERE 
-        status IN ('missed', 'no-answer', 'noanswer', 'failed')
-        AND created_at >= ?
-        AND (answer_time IS NULL OR answer_time = '')
-      ORDER BY start_time DESC
-    `).all(fiveMinutesAgo);
-
-    if (!missedCalls || missedCalls.length === 0) {
+    // Skip if not a missed call or already notified
+    if (!['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
       return;
     }
 
-    logger.info(`Found ${missedCalls.length} recent missed calls`);
-
-    for (const call of missedCalls) {
-      // Use call ID as unique identifier to avoid duplicate alerts
-      const callKey = call.id || call.external_id;
+    // ✅ CHECK CHECKPOINT - Only alert for NEW calls after Telegram was enabled
+    const checkpoint = db.getAlertCheckpoint('missed_call');
+    if (checkpoint) {
+      const callTime = new Date(callRecord.start_time).getTime();
+      const checkpointTime = new Date(checkpoint).getTime();
       
-      if (notifiedMissedCalls.has(callKey)) {
-        logger.debug(`Already notified for missed call: ${callKey}, skipping...`);
-        continue;
+      if (callTime <= checkpointTime) {
+        logger.debug(`⏭️ Skipping old call (${callRecord.start_time} <= ${checkpoint})`);
+        return;
       }
+    }
 
-      try {
-        // Format Telegram message
-        const callTime = new Date(call.start_time).toLocaleTimeString();
-        const callDate = new Date(call.start_time).toLocaleDateString();
-        const callerNumber = call.caller_number || 'Unknown';
-        const extensionNumber = call.extension || 'General Queue';
-        const duration = call.ring_duration || 0;
-        
-        // Get extension username from database
-        let extensionUsername = 'N/A';
-        if (extensionNumber !== 'General Queue') {
-          const extInfo = db.db.prepare('SELECT username FROM pbx_extensions WHERE extnumber = ? LIMIT 1').get(extensionNumber);
-          if (extInfo?.username) {
-            extensionUsername = extInfo.username;
+    const callKey = callRecord.external_id || callRecord.id;
+    if (notifiedMissedCalls.has(callKey)) {
+      logger.debug(` Alert already sent for: ${callKey}`);
+      return;
+    }
+
+    try {
+      // Format Telegram message with Nairobi timezone (UTC+3)
+      const callDateTime = new Date(callRecord.start_time);
+      const nairobiTime = new Date(callDateTime.getTime() + 3 * 60 * 60 * 1000);
+      
+      const callTime = nairobiTime.toLocaleTimeString('en-KE', { 
+        timeZone: 'Africa/Nairobi',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+      
+      const callDate = nairobiTime.toLocaleDateString('en-KE', {
+        timeZone: 'Africa/Nairobi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      
+      const callerNumber = callRecord.caller_number || 'Unknown';
+      const extensionNumber = callRecord.extension || 'General Queue';
+      const duration = callRecord.ring_duration || 0;
+      
+      // Get extension username from database
+      let extensionUsername = 'N/A';
+      if (extensionNumber !== 'General Queue') {
+        const extInfo = db.db.prepare('SELECT username FROM pbx_extensions WHERE extnumber = ? LIMIT 1').get(extensionNumber);
+        if (extInfo?.username) {
+          extensionUsername = extInfo.username;
+        }
+      }
+      
+      let messageText = '🔔 MISSED CALL ALERT\n\n';
+      messageText += `Caller: ${callerNumber}\n`;
+      messageText += `Extension: ${extensionNumber} (${extensionUsername})\n`;
+      messageText += `Time: ${callTime} (Nairobi)\n`;
+      messageText += `Date: ${callDate}\n`;
+      messageText += `Ring Duration: ${duration}s\n`;
+
+      const botToken = telegramConfig.bot_token;
+      const chatId = telegramConfig.chat_id;
+      const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+      const payload = {
+        chat_id: chatId,
+        text: messageText
+      };
+
+      logger.info(`🔔 Queuing missed call alert: ${callerNumber} → Ext ${extensionNumber}`);
+
+      // Queue ONLY missed call alerts (other sends bypass queue to avoid bottlenecks)
+      missedCallAlertQueue.push({
+        fn: async () => {
+          try {
+            const tgResp = await fetch(telegramApiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            const tgJson = await tgResp.json();
+
+            if (tgResp.ok && tgJson.ok) {
+              logger.info(`✅ Missed call alert delivered to ${callerNumber}`);
+              notifiedMissedCalls.add(callKey);
+              
+              // ✅ Update checkpoint to this call's time so we only check forward from here
+              db.updateAlertCheckpoint('missed_call', callRecord.start_time);
+              
+              db.logActivity('telegram_missed_call_alert', `Missed call alert sent: ${callerNumber} -> ${extensionNumber}`, 'success');
+            } else {
+              logger.warn(`⏳ Telegram rate limited (will retry): ${tgJson.description || 'Unknown error'}`);
+              db.logActivity('telegram_missed_call_alert_failed', `Failed to send alert for ${callerNumber}: ${tgJson.description || tgResp.statusText}`, 'error');
+            }
+          } catch (error) {
+            logger.error(`❌ Queue send error: ${error.message}`);
           }
         }
-        
-        let messageText = 'MISSED CALL ALERT\n\n';
-        messageText += `Status: Missed Call\n`;
-        messageText += `From: ${callerNumber}\n`;
-        messageText += `To Extension: ${extensionNumber} (${extensionUsername})\n`;
-        messageText += `Time: ${callTime}\n`;
-        messageText += `Ring Duration: ${duration}s\n`;
-        messageText += `Date: ${callDate}\n`;
+      });
 
-        const botToken = telegramConfig.bot_token;
-        const chatId = telegramConfig.chat_id;
-        const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
-
-        const payload = {
-          chat_id: chatId,
-          text: messageText
-        };
-
-        logger.info(`Sending Telegram alert for missed call from ${callerNumber} to ${extensionNumber}`);
-
-        // Send to Telegram
-        const tgResp = await fetch(telegramApiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        const tgJson = await tgResp.json();
-
-        if (tgResp.ok && tgJson.ok) {
-          logger.info(`Telegram missed call alert sent successfully`);
-          notifiedMissedCalls.add(callKey);
-          db.logActivity('telegram_missed_call_alert', `Missed call alert sent: ${callerNumber} -> ${extensionNumber}`, 'success');
-        } else {
-          logger.error(`Telegram send failed: ${tgJson.description || 'Unknown error'}`);
-          db.logActivity('telegram_missed_call_alert_failed', `Failed to send alert for ${callerNumber}`, 'error');
-        }
-      } catch (error) {
-        logger.error(`Missed call alert error: ${error.message}`);
-      }
+      // Process queue
+      processMissedCallQueue();
+    } catch (error) {
+      logger.error(`❌ Missed call alert error: ${error.message}`);
+      db.logActivity('telegram_alert_exception', `Alert exception: ${error.message}`, 'error');
     }
   } catch (error) {
-    logger.error(`Check missed calls error: ${error.message}`);
+    logger.error(`Missed call alert wrapper error: ${error.message}`);
   }
+}
+
+// ========================================
+// Deprecated: checkAndAlertMissedCalls (replaced by event-driven sendMissedCallAlert)
+// ========================================
+// This function is kept for backwards compatibility but is no longer called
+async function checkAndAlertMissedCalls() {
+  logger.info(' Legacy polling function - skipped, using event-driven alerts instead');
 }
 
 async function alertErrorImmediately(eventType, message) {
@@ -1036,10 +1139,23 @@ async function alertErrorImmediately(eventType, message) {
       return;
     }
 
-    let messageText = 'ERROR REPORT\n\n';
+    // Format time in Nairobi timezone (UTC+3)
+    const now = new Date();
+    const nairobiTime = now.toLocaleString('en-KE', {
+      timeZone: 'Africa/Nairobi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
+
+    let messageText = 'ERROR ALERT\n\n';
     messageText += `Type: ${eventType}\n`;
     messageText += `Message: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}\n`;
-    messageText += `Time: ${new Date().toLocaleString()}\n`;
+    messageText += `Time: ${nairobiTime} (Nairobi)\n`;
 
     const botToken = telegramConfig.bot_token;
     const chatId = telegramConfig.chat_id;
@@ -1063,6 +1179,7 @@ async function alertErrorImmediately(eventType, message) {
 
     if (tgResp.ok && tgJson.ok) {
       logger.info(`Telegram error alert sent successfully`);
+      db.logActivity('error_alert_sent', `Error alert sent: ${eventType}`, 'success');
     } else {
       logger.error(`Telegram error send failed: ${tgJson.description || 'Unknown error'}`);
     }
@@ -1071,16 +1188,14 @@ async function alertErrorImmediately(eventType, message) {
   }
 }
 
-// Start checking for missed calls every 30 seconds
+// Start checking for missed calls independently every 3 minutes
 function startMissedCallAlerts() {
-  if (missedCallAlertInterval) {
-    clearInterval(missedCallAlertInterval);
-  }
-
-  logger.info('Missed call alert service ready (triggered on call sync)');
+  // EVENT-DRIVEN ALERT: Polling is now disabled in favor of instant alerts
+  // Alerts are sent immediately when a missed call is saved in syncCallRecords()
+  logger.info('✅ Missed call alert service: EVENT-DRIVEN (instant alerts on call save)');
 }
 
-// Start the service
+// Initialize event-driven alerts
 startMissedCallAlerts();
 
 // ========================================
@@ -1395,26 +1510,35 @@ async function startSmsListener() {
       }
     })();
     
-    // Start polling for port status every 60 seconds
+    // Start polling for port status every 10 minutes (600s) - just to check which ports are being used
     if (pollingInterval) clearInterval(pollingInterval);
     pollingInterval = setInterval(async () => {
       try {
-        const ports = await tg400Api.getAllPortsInfo();
+        const ports = await Promise.race([
+          tg400Api.getAllPortsInfo(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Port polling timeout - skipping this cycle')), 8000)
+          )
+        ]);
         if (ports && Array.isArray(ports)) {
           ports.forEach(port => {
-            db.updatePortStatus(port.portNumber, {
-              status: port.status,
-              isUp: port.isUp,
-              isPowerOn: port.isPowerOn
-            });
+            try {
+              db.updatePortStatus(port.portNumber, {
+                status: port.status,
+                isUp: port.isUp,
+                isPowerOn: port.isPowerOn
+              });
+            } catch (updateErr) {
+              logger.debug(`[Poll] Skipped port ${port.portNumber} update: ${updateErr.message}`);
+            }
           });
         }
       } catch (err) {
-        console.error('[Poll] Error polling port status:', err.message);
+        logger.debug(`[Poll] Port status polling skipped: ${err.message}`);
       }
-    }, 60000);
+    }, 600000);
   } catch (error) {
-    logger.error(`\n❌ Failed to start SMS listener: ${error.message}`);
+    logger.error(`\n Failed to start SMS listener: ${error.message}`);
     logger.info('Retrying in 30 seconds...\n');
     setTimeout(startSmsListener, 30000); // Retry later
   }
@@ -2006,7 +2130,7 @@ app.get('/api/gateway-test', async (req, res) => {
     const username = gatewayConfig.api_username || 'admin';
     const password = gatewayConfig.api_password || '';
 
-    logger.info(`📡 Attempting TCP connection to TG400 at ${gateway_ip}:${api_port} (user: ${username})...`);
+    logger.info(` Attempting TCP connection to TG400 at ${gateway_ip}:${api_port} (user: ${username})...`);
 
     // Create TCP connection to test
     const net = require('net');
@@ -2019,7 +2143,7 @@ app.get('/api/gateway-test', async (req, res) => {
       if (!authCompleted && !errorOccurred) {
         errorOccurred = true;
         socket.destroy();
-        logger.error(`❌ Gateway connection timeout after ${connectionTimeout}ms`);
+        logger.error(` Gateway connection timeout after ${connectionTimeout}ms`);
         res.status(500).json({
           success: false,
           error: `Connection timeout to ${gateway_ip}:${api_port}`,
@@ -2029,7 +2153,7 @@ app.get('/api/gateway-test', async (req, res) => {
     }, connectionTimeout);
 
     socket.on('connect', () => {
-      logger.info(`✅ TCP socket connected to ${gateway_ip}:${api_port}`);
+      logger.info(` TCP socket connected to ${gateway_ip}:${api_port}`);
       // Send login command with credentials
       const loginCmd = `Action: Login\r\nUsername: ${username}\r\nSecret: ${password}\r\n\r\n`;
       socket.write(loginCmd);
@@ -2037,13 +2161,13 @@ app.get('/api/gateway-test', async (req, res) => {
 
     socket.on('data', (data) => {
       const response = data.toString();
-      logger.info(`📥 Received from TG400: ${response.substring(0, 100)}`);
+      logger.info(` Received from TG400: ${response.substring(0, 100)}`);
       
       if (response.includes('Response: Success') || response.includes('Welcome')) {
         authCompleted = true;
         clearTimeout(timeoutHandle);
         socket.destroy();
-        logger.info(`✅ Authentication successful with TG400`);
+        logger.info(` Authentication successful with TG400`);
         res.json({
           success: true,
           error: null,
@@ -2054,7 +2178,7 @@ app.get('/api/gateway-test', async (req, res) => {
         authCompleted = true;
         clearTimeout(timeoutHandle);
         socket.destroy();
-        logger.error(`❌ Authentication failed with TG400`);
+        logger.error(` Authentication failed with TG400`);
         res.status(500).json({
           success: false,
           error: 'Authentication failed - check credentials',
@@ -2067,7 +2191,7 @@ app.get('/api/gateway-test', async (req, res) => {
       if (!errorOccurred) {
         errorOccurred = true;
         clearTimeout(timeoutHandle);
-        logger.error(`❌ Socket connection error: ${error.message}`);
+        logger.error(` Socket connection error: ${error.message}`);
         res.status(500).json({
           success: false,
           error: error.message,
@@ -2078,7 +2202,7 @@ app.get('/api/gateway-test', async (req, res) => {
 
     socket.on('close', () => {
       if (!authCompleted && !errorOccurred) {
-        logger.warn(`⚠️ Socket closed before authentication completed`);
+        logger.warn(`Socket closed before authentication completed`);
       }
     });
   } catch (error) {
@@ -2091,10 +2215,77 @@ app.get('/api/gateway-test', async (req, res) => {
   }
 });
 
+// SMS Gateway URLs endpoints
+app.post('/api/sms-gateway-url', (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
+
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (e) {
+      return res.status(400).json({ success: false, error: 'Invalid URL format' });
+    }
+
+    // Store the SMS gateway URL in database or config
+    db.saveSmsGatewayUrl(url);
+    logger.info(`📱 SMS Gateway URL saved: ${url}`);
+    res.json({ success: true, message: 'SMS gateway URL saved' });
+  } catch (error) {
+    logger.error(`Error saving SMS gateway URL: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Test SMS Gateway URL connectivity
+app.post('/api/test-sms-gateway', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
+
+    logger.info(`🧪 Testing SMS gateway URL: ${url}`);
+
+    // Test the URL with a simple fetch with timeout
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Connection timeout')), 5000)
+    );
+
+    const fetchPromise = fetch(url, {
+      method: 'HEAD',
+      timeout: 5000,
+    }).catch(() => {
+      // If HEAD fails, try GET
+      return fetch(url, {
+        method: 'GET',
+        timeout: 5000,
+      });
+    });
+
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
+
+    if (response?.ok) {
+      logger.info(`✅ SMS gateway URL test successful: ${url}`);
+      res.json({ success: true, message: 'Connection successful' });
+    } else {
+      logger.warn(`⚠️  SMS gateway URL returned status ${response?.status}: ${url}`);
+      res.status(500).json({ success: false, message: `HTTP ${response?.status}` });
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error(`❌ SMS gateway URL test failed: ${errorMsg}`);
+    res.status(500).json({ success: false, message: errorMsg });
+  }
+});
+
 // Query active calls
 app.get('/api/pbx-calls', async (req, res) => {
   try {
-    logger.info('📞 Querying active calls...');
+    logger.info(' Querying active calls...');
     const calls = await pbxAPI.queryCalls();
     res.json({ success: true, data: calls });
   } catch (error) {
@@ -2107,7 +2298,7 @@ app.get('/api/pbx-calls', async (req, res) => {
 app.get('/api/pbx-cdr', async (req, res) => {
   try {
     const { startTime, endTime, limit } = req.query;
-    logger.info(`📋 Querying CDR from PBX...`);
+    logger.info(` Querying CDR from PBX...`);
     const cdr = await pbxAPI.queryCDR(startTime, endTime, parseInt(limit) || 100);
     res.json({ success: true, data: cdr });
   } catch (error) {
@@ -2131,7 +2322,7 @@ app.get('/api/pbx-endpoints', async (req, res) => {
 // Get real PBX system information
 app.get('/api/pbx-system-info', async (req, res) => {
   try {
-    logger.info('ℹ️ Getting PBX system information...');
+    logger.info('Getting PBX system information...');
     const info = await pbxAPI.getSystemInfo();
     res.json({ success: true, data: info });
   } catch (error) {
@@ -2155,7 +2346,7 @@ app.get('/api/pbx-extensions', async (req, res) => {
 // Sync extensions from PBX to database
 app.post('/api/pbx-sync-extensions', async (req, res) => {
   try {
-    logger.info('🔄 Syncing extensions from PBX to database...');
+    logger.info(' Syncing extensions from PBX to database...');
     const response = await pbxAPI.getExtensions();
     
     if (!response || !response.extinfos) {
@@ -2182,7 +2373,7 @@ app.post('/api/pbx-sync-extensions', async (req, res) => {
       if (saved) savedCount++;
     }
 
-    logger.info(`✅ Synchronized ${savedCount} extensions to database`);
+    logger.info(` Synchronized ${savedCount} extensions to database`);
     res.json({
       success: true,
       message: `Synchronized ${savedCount} extensions from PBX`,
@@ -2211,7 +2402,7 @@ app.post('/api/pbx-call/dial', async (req, res) => {
       });
     }
 
-    logger.info(`📞 Making call: ${caller} -> ${callee}`);
+    logger.info(` Making call: ${caller} -> ${callee}`);
     const result = await pbxAPI.dialCall(caller, callee, autoanswer);
     
     res.json({ success: result.status === 'Success', data: result });
@@ -2276,7 +2467,7 @@ app.post('/api/pbx-call/logs', async (req, res) => {
       ...outboundCalls.map(c => ({ ...c, type: 'outbound' }))
     ];
     
-    logger.info(`✅ Call logs fetched: ${inboundCalls.length} inbound, ${outboundCalls.length} outbound`);
+    logger.info(`Call logs fetched: ${inboundCalls.length} inbound, ${outboundCalls.length} outbound`);
     
     res.json({
       success: true,
@@ -2304,7 +2495,7 @@ app.get('/api/call-logs/stored', (req, res) => {
   try {
     const { direction, status, extension, limit = 100, offset = 0, sort = 'desc' } = req.query;
     
-    logger.info(`📋 Getting stored call logs: limit=${limit}, offset=${offset}, filter: direction=${direction}, status=${status}`);
+    logger.info(` Getting stored call logs: limit=${limit}, offset=${offset}, filter: direction=${direction}, status=${status}`);
     
     // Build WHERE clause for filtering
     let where = [];
@@ -2364,7 +2555,7 @@ app.get('/api/call-logs/stored', (req, res) => {
 // Sync and store all call logs from PBX to local database
 app.post('/api/call-logs/sync', async (req, res) => {
   try {
-    logger.info(`📡 Syncing all call logs from PBX to local storage...`);
+    logger.info(` Syncing all call logs from PBX to local storage...`);
     
     // Use CDR endpoint to get historical call records
     // CDR (Call Detail Records) contains all completed calls, not just active ones
@@ -2377,7 +2568,7 @@ app.post('/api/call-logs/sync', async (req, res) => {
     const startStr = startTime.toISOString().split('T')[0];
     const endStr = endTime.toISOString().split('T')[0];
     
-    logger.info(`📋 Querying CDR from ${startStr} to ${endStr}`);
+    logger.info(` Querying CDR from ${startStr} to ${endStr}`);
     
     // Try CDR endpoint
     let cdrData = [];
@@ -2395,7 +2586,7 @@ app.post('/api/call-logs/sync', async (req, res) => {
         cdrData = cdrResponse;
       }
       
-      logger.info(`✅ CDR query returned ${cdrData.length} call records`);
+      logger.info(` CDR query returned ${cdrData.length} call records`);
     } catch (err) {
       logger.warn(`CDR query failed: ${err.message}`);
     }
@@ -2460,7 +2651,7 @@ app.post('/api/call-logs/sync', async (req, res) => {
 // Get extensions from database
 app.get('/api/extensions', (req, res) => {
   try {
-    logger.info('📋 Getting extensions from database...');
+    logger.info(' Getting extensions from database...');
     const extensions = db.getExtensions();
     const stats = db.getExtensionStats();
     
@@ -2507,37 +2698,35 @@ app.get('/api/extensions/:extnumber', (req, res) => {
 app.get('/api/extensions/:extnumber/call-logs', (req, res) => {
   try {
     const { extnumber } = req.params;
-    const limit = parseInt(req.query.limit) || 50;
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 50;
+    const offset = (page - 1) * pageSize;
     
-    logger.info(`📞 Getting call logs for extension ${extnumber}...`);
+    // Get total count of calls for this extension
+    const countStmt = db.db.prepare(`
+      SELECT COUNT(*) as total FROM call_records
+      WHERE extension = ? OR caller_number = ? OR callee_number = ?
+    `);
+    const { total } = countStmt.get(extnumber, extnumber, extnumber);
     
-    // Get call records from database for this extension
-    const callRecords = db.getCallRecords(limit);
-    
-    // Filter for calls involving this extension
-    const extensionCalls = callRecords.filter(record => 
-      record.extension === extnumber || 
-      record.caller_number === extnumber || 
-      record.callee_number === extnumber
-    );
-    
-    // Transform call records to call logs format
-    const callLogs = extensionCalls.map(record => ({
-      id: record.id,
-      caller_number: record.caller_number,
-      callee_number: record.callee_number,
-      direction: record.extension === extnumber ? 
-        (record.direction || 'outbound') : 'inbound',
-      status: record.status,
-      start_time: record.start_time,
-      duration: record.total_duration || 0,
-      recording_url: record.recording_url
-    }));
+    // Get paginated call records
+    const stmt = db.db.prepare(`
+      SELECT * FROM call_records
+      WHERE extension = ? OR caller_number = ? OR callee_number = ?
+      ORDER BY start_time DESC
+      LIMIT ? OFFSET ?
+    `);
+    const records = stmt.all(extnumber, extnumber, extnumber, pageSize, offset);
     
     res.json({
       success: true,
-      data: callLogs,
-      total: callLogs.length,
+      data: records,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize)
+      },
       extension: extnumber
     });
   } catch (error) {
@@ -2552,7 +2741,7 @@ app.post('/api/extensions/:extnumber/sync-call-logs', async (req, res) => {
     const { extnumber } = req.params;
     const days = parseInt(req.query.days) || 7; // Default last 7 days
     
-    logger.info(`🔄 Syncing call logs for extension ${extnumber} (${days} days)...`);
+    logger.info(`Syncing call logs for extension ${extnumber} (${days} days)...`);
     
     // Try to fetch call logs from PBX for this extension
     const endDate = new Date();
@@ -2635,29 +2824,6 @@ app.post('/api/extensions/:extnumber/sync-call-logs', async (req, res) => {
 // Call Records API Endpoints
 // ========================================
 
-// Get call records from database
-app.get('/api/call-records', (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 100;
-    const calls = db.getCallRecords(limit);
-    res.json({ success: true, data: calls });
-  } catch (error) {
-    logger.error(`Get Call Records Error: ${error.message}`);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get call statistics
-app.get('/api/call-stats', (req, res) => {
-  try {
-    const stats = db.getCallStats();
-    res.json({ success: true, data: stats });
-  } catch (error) {
-    logger.error(`Get Call Stats Error: ${error.message}`);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Save a call record
 app.post('/api/call-records', (req, res) => {
   try {
@@ -2678,7 +2844,7 @@ app.post('/api/clear-test-data', (req, res) => {
   try {
     const result = db.db.prepare("DELETE FROM call_records WHERE external_id LIKE 'test-call-%'").run();
     const stats = db.getCallStats();
-    logger.info(`🗑️ Cleared ${result.changes} test call records`);
+    logger.info(` Cleared ${result.changes} test call records`);
     res.json({ 
       success: true, 
       message: `Cleared ${result.changes} test call records from database`,
@@ -2694,7 +2860,7 @@ app.post('/api/clear-test-data', (req, res) => {
 app.post('/api/clear-calls', (req, res) => {
   try {
     const result = db.db.prepare("DELETE FROM call_records").run();
-    logger.info(`🗑️ Cleared ${result.changes} call records from database`);
+    logger.info(` Cleared ${result.changes} call records from database`);
     res.json({ 
       success: true, 
       message: `Cleared ${result.changes} call records from database`,
@@ -2709,7 +2875,7 @@ app.post('/api/clear-calls', (req, res) => {
 // Sync calls from PBX and store locally
 app.post('/api/pbx-sync-calls', async (req, res) => {
   try {
-    logger.info('🔄 Syncing calls from PBX...');
+    logger.info(' Syncing calls from PBX...');
     const pbxCalls = await pbxAPI.queryCalls();
     
     if (pbxCalls && pbxCalls.status === 'Success' && pbxCalls.data) {
@@ -2852,11 +3018,23 @@ app.post('/api/telegram-send', async (req, res) => {
 
     let messageText = '';
     
+    // Format Nairobi timezone for all messages
+    const nairobiTime = new Date().toLocaleString('en-KE', {
+      timeZone: 'Africa/Nairobi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
+    
     // Handle test message
     if (action === 'test') {
-      messageText = 'Telegram Connection Test\n\n';
+      messageText = 'Telegram Connection Test \n\n';
       messageText += 'Your bot is properly configured and connected.\n';
-      messageText += `${new Date().toLocaleString()}\n`;
+      messageText += `Time: ${nairobiTime} (Nairobi, UTC+3)\n`;
     }
     // Gather data based on action type
     else if (action === 'sms_logs') {
@@ -2937,7 +3115,7 @@ app.post('/api/telegram-send', async (req, res) => {
       } else {
         messageText += `\nNo SIM ports configured\n`;
       }
-      messageText += `${new Date().toLocaleString()}\n`;
+      messageText += `Time: ${nairobiTime} (Nairobi, UTC+3)\n`;
     } else if (action === 'system_summary') {
       const today = new Date().toISOString().split('T')[0];
       const smsCount = db.db.prepare("SELECT COUNT(*) as cnt FROM sms_messages WHERE SUBSTR(received_at, 1, 10) = ?").get(today);
@@ -2952,7 +3130,7 @@ app.post('/api/telegram-send', async (req, res) => {
       messageText += `Activities: ${totalActivity.cnt}\n`;
       messageText += `Errors: ${errorCount.cnt}\n`;
       messageText += `Total SIM Ports: ${totalPorts.cnt}\n`;
-      messageText += `${new Date().toLocaleString()}\n`;
+      messageText += `Time: ${nairobiTime} (Nairobi, UTC+3)\n`;
     }
 
     // Send to Telegram API
@@ -3008,7 +3186,7 @@ app.post('/api/telegram-send', async (req, res) => {
 // Query active inbound calls
 app.get('/api/pbx-call-history/inbound', async (req, res) => {
   try {
-    logger.info('📥 Querying active inbound calls...');
+    logger.info(' Querying active inbound calls...');
     const result = await pbxAPI.queryInboundCalls();
     res.json({ 
       success: result.status === 'Success', 
@@ -3020,10 +3198,10 @@ app.get('/api/pbx-call-history/inbound', async (req, res) => {
   }
 });
 
-// Query active outbound calls
+// Query active outbound callsadmin
 app.get('/api/pbx-call-history/outbound', async (req, res) => {
   try {
-    logger.info('📤 Querying active outbound calls...');
+    logger.info(' Querying active outbound calls...');
     const result = await pbxAPI.queryOutboundCalls();
     res.json({ 
       success: result.status === 'Success', 
@@ -3038,7 +3216,7 @@ app.get('/api/pbx-call-history/outbound', async (req, res) => {
 // Query all active calls (both inbound and outbound)
 app.get('/api/pbx-call-history/active', async (req, res) => {
   try {
-    logger.info('☎️ Querying all active calls...');
+    logger.info(' Querying all active calls...');
     const inbound = await pbxAPI.queryInboundCalls();
     const outbound = await pbxAPI.queryOutboundCalls();
     
@@ -3068,7 +3246,7 @@ app.post('/api/pbx-call-history/cdr', async (req, res) => {
       });
     }
     
-    logger.info(`📋 Downloading CDR: ext=${extid}, from=${starttime} to=${endtime}`);
+    logger.info(` Downloading CDR: ext=${extid}, from=${starttime} to=${endtime}`);
     
     const result = await pbxAPI.downloadCDRData(extid, starttime, endtime);
     
@@ -3099,7 +3277,7 @@ app.get('/api/pbx-call-history/extension/:extid', async (req, res) => {
     const { extid } = req.params;
     const { days = 7, limit = 100 } = req.query;
     
-    logger.info(`📞 Getting call history for extension ${extid} (last ${days} days)`);
+    logger.info(` Getting call history for extension ${extid} (last ${days} days)`);
     
     // Calculate date range
     const endTime = new Date();
@@ -3157,7 +3335,7 @@ app.get('/api/pbx-call-history/extension/:extid', async (req, res) => {
 // Get all extensions with their details
 app.get('/api/pbx-call-history/extensions', async (req, res) => {
   try {
-    logger.info('📞 Getting all PBX extensions...');
+    logger.info(' Getting all PBX extensions...');
     const result = await pbxAPI.queryExtensions();
     
     res.json({
@@ -3176,7 +3354,7 @@ app.get('/api/pbx-call-history/extensions', async (req, res) => {
 // Get PBX system information
 app.get('/api/pbx-call-history/info', async (req, res) => {
   try {
-    logger.info('ℹ️ Getting PBX system information...');
+    logger.info(' Getting PBX system information...');
     const result = await pbxAPI.queryPBXInfo();
     
     res.json({
@@ -3192,7 +3370,7 @@ app.get('/api/pbx-call-history/info', async (req, res) => {
 // Manual trigger for call record sync (for testing/forcing updates)
 app.post('/api/pbx-call-history/sync', async (req, res) => {
   try {
-    logger.info('🔄 Manual sync triggered via API');
+    logger.info(' Manual sync triggered via API');
     await syncCallRecords();
     
     const stats = db.getCallStats();
@@ -3211,12 +3389,53 @@ app.post('/api/pbx-call-history/sync', async (req, res) => {
 // SMS Messages Endpoints
 // ========================================
 
-// Call records
+// Call records with pagination
 app.get('/api/call-records', (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
-    const records = db.getCallRecords(limit);
-    res.json({ success: true, data: records });
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 50;
+    const offset = (page - 1) * pageSize;
+    const extension = req.query.extension;
+    
+    let countQuery, dataQuery, params;
+    
+    if (extension) {
+      // Filter by extension
+      countQuery = `
+        SELECT COUNT(*) as total FROM call_records
+        WHERE extension = ? OR caller_number = ? OR callee_number = ?
+      `;
+      dataQuery = `
+        SELECT * FROM call_records
+        WHERE extension = ? OR caller_number = ? OR callee_number = ?
+        ORDER BY start_time DESC
+        LIMIT ? OFFSET ?
+      `;
+      params = [extension, extension, extension, pageSize, offset];
+    } else {
+      // Get all calls
+      countQuery = `SELECT COUNT(*) as total FROM call_records`;
+      dataQuery = `
+        SELECT * FROM call_records
+        ORDER BY start_time DESC
+        LIMIT ? OFFSET ?
+      `;
+      params = [pageSize, offset];
+    }
+    
+    const { total } = db.db.prepare(countQuery).get(...params.slice(0, extension ? 3 : 0));
+    const records = db.db.prepare(dataQuery).all(...params);
+    
+    res.json({ 
+      success: true, 
+      data: records,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -3551,7 +3770,7 @@ app.post('/api/debug/inject-sms', (req, res) => {
 // Manually trigger a call sync (when tg400Agent is running separately)
 app.post('/api/sync/calls', (req, res) => {
   try {
-    logger.info('📞 Manual call sync request - Agent polls every 60 seconds automatically');
+    logger.info(' Manual call sync request - Agent polls every 60 seconds automatically');
     
     // Get latest call to show when last one was synced
     const lastCall = db.db.prepare(`
@@ -3706,14 +3925,14 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
     const telegramApiUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
     let messageText = '📞 *MISSED CALL ALERT (TEST)*\n\n';
-    messageText += `🔴 *Status:* Missed Call\n`;
-    messageText += `📱 *From:* \`${testCallRecord.caller_number}\`\n`;
-    messageText += `👤 *Name:* ${testCallRecord.caller_name}\n`;
-    messageText += `📲 *To Extension:* \`${testCallRecord.extension}\`\n`;
-    messageText += `⏰ *Time:* ${new Date(testCallRecord.start_time).toLocaleTimeString()}\n`;
-    messageText += `⏱️ *Ring Duration:* ${testCallRecord.ring_duration}s\n`;
-    messageText += `📅 *Date:* ${new Date(testCallRecord.start_time).toLocaleDateString()}\n`;
-    messageText += `\n✅ This is a test message to verify Telegram integration is working correctly.`;
+    messageText += `*Status:* Missed Call\n`;
+    messageText += `*From:* \`${testCallRecord.caller_number}\`\n`;
+    messageText += `*Name:* ${testCallRecord.caller_name}\n`;
+    messageText += `*To Extension:* \`${testCallRecord.extension}\`\n`;
+    messageText += `*Time:* ${new Date(testCallRecord.start_time).toLocaleTimeString()}\n`;
+    messageText += ` *Ring Duration:* ${testCallRecord.ring_duration}s\n`;
+    messageText += ` *Date:* ${new Date(testCallRecord.start_time).toLocaleDateString()}\n`;
+    messageText += `\nThis is a test message to verify Telegram integration is working correctly.`;
 
     const payload = {
       chat_id: chatId,
@@ -3721,7 +3940,7 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
       parse_mode: 'Markdown'
     };
 
-    logger.info('📬 Sending test missed call alert to Telegram...');
+    logger.info(' Sending test missed call alert to Telegram...');
 
     const tgResp = await fetch(telegramApiUrl, {
       method: 'POST',
@@ -3732,7 +3951,7 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
     const tgJson = await tgResp.json();
 
     if (tgResp.ok && tgJson.ok) {
-      logger.info('✅ Test missed call alert sent successfully');
+      logger.info('Test missed call alert sent successfully');
       db.logActivity('telegram_test_missed_call_alert', 'Test missed call alert sent successfully', 'success');
       
       res.json({
@@ -3746,7 +3965,7 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
         }
       });
     } else {
-      logger.error(`❌ Failed to send test alert: ${tgJson.description || 'Unknown error'}`);
+      logger.error(` Failed to send test alert: ${tgJson.description || 'Unknown error'}`);
       db.logActivity('telegram_test_missed_call_alert_failed', `Failed to send test alert: ${tgJson.description}`, 'error');
       
       res.status(500).json({
@@ -3760,12 +3979,617 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
   }
 });
 
+// ========================================
+// SMS Gateway Automation Endpoints
+// ========================================
+
+
+
+
+
+
+// Get Business Hours for Rule
+app.get('/api/business-hours/:rule_id', (req, res) => {
+  try {
+    const { rule_id } = req.params;
+    const hours = db.db.prepare(`SELECT * FROM business_hours WHERE rule_id = ?`).all(rule_id);
+    const parsed = hours.map(h => ({
+      ...h,
+      days_enabled: JSON.parse(h.days_enabled || '[]')
+    }));
+    res.json({ success: true, data: parsed });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create Business Hours
+app.post('/api/business-hours', (req, res) => {
+  try {
+    const { rule_id, start_time, end_time, days_enabled } = req.body;
+    if (!rule_id || !start_time || !end_time || !days_enabled) {
+      return res.status(400).json({ success: false, error: 'All fields are required' });
+    }
+
+    const id = crypto.randomBytes(8).toString('hex');
+    const daysJson = JSON.stringify(days_enabled);
+    const stmt = db.db.prepare(`
+      INSERT INTO business_hours (id, rule_id, start_time, end_time, days_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `);
+    stmt.run(id, rule_id, start_time, end_time, daysJson);
+
+    const hours = db.db.prepare(`SELECT * FROM business_hours WHERE id = ?`).get(id);
+    res.status(201).json({ success: true, data: { ...hours, days_enabled: JSON.parse(hours.days_enabled) } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete Business Hours
+app.delete('/api/business-hours/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const stmt = db.db.prepare(`DELETE FROM business_hours WHERE id = ?`);
+    const info = stmt.run(id);
+
+    if (info.changes > 0) {
+      res.json({ success: true, message: 'Business hours deleted' });
+    } else {
+      res.status(404).json({ success: false, error: 'Business hours not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// DEBUG ENDPOINTS - Missed Call Alert Diagnostics
+// ========================================
+
+// DEBUG: Check Telegram configuration
+app.get('/api/debug/telegram-config', (req, res) => {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    res.json({
+      success: true,
+      config: {
+        enabled: telegramConfig?.enabled || 0,
+        bot_token: telegramConfig?.bot_token ? '***' + telegramConfig.bot_token.slice(-4) : 'NOT SET',
+        chat_id: telegramConfig?.chat_id || 'NOT SET',
+        created_at: telegramConfig?.created_at,
+        updated_at: telegramConfig?.updated_at
+      },
+      configOK: !!(telegramConfig?.enabled && telegramConfig?.bot_token && telegramConfig?.chat_id),
+      note: 'enabled flag must be 1 or true for alerts to work'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Check recent missed calls in database
+app.get('/api/debug/missed-calls', (req, res) => {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    const startTime = telegramConfig?.updated_at || telegramConfig?.created_at || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Get missed calls from multiple status values
+    const missedCalls = db.db.prepare(`
+      SELECT id, status, answer_time, created_at, start_time, caller_number, extension, total_duration
+      FROM call_records 
+      WHERE status IN ('missed', 'no-answer', 'noanswer', 'failed')
+      ORDER BY created_at DESC 
+      LIMIT 50
+    `).all();
+
+    // Get calls from when Telegram was enabled (this is what checkAndAlertMissedCalls uses NOW)
+    const alertableeMissed = db.db.prepare(`
+      SELECT id, status, answer_time, created_at, start_time, caller_number, extension, total_duration
+      FROM call_records 
+      WHERE status IN ('missed', 'no-answer', 'noanswer', 'failed')
+        AND start_time >= ?
+        AND (answer_time IS NULL OR answer_time = '')
+      ORDER BY created_at DESC
+    `).all(startTime);
+
+    res.json({
+      success: true,
+      telegram_enabled_since: startTime,
+      all_missed_calls_count: missedCalls.length,
+      alertable_missed_calls_count: alertableeMissed.length,
+      alertable_missed_calls: alertableeMissed,
+      all_missed_calls_sample: missedCalls.slice(0, 10),
+      diagnostic_info: {
+        missed_call_statuses: ['missed', 'no-answer', 'noanswer', 'failed'],
+        query_logic: [
+          'Check calls with status IN (missed, no-answer, noanswer, failed)',
+          'Filter by start_time >= Telegram enabled time (UTC)',
+          'Confirm answer_time IS NULL OR empty',
+          'Send Telegram alert for each unique call'
+        ],
+        timezone_info: 'Database stores in UTC, frontend displays in Nairobi time (UTC+3)'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Check notification tracking
+app.get('/api/debug/notification-tracking', (req, res) => {
+  try {
+    const recentAlerts = db.db.prepare(`
+      SELECT id, event_type, message, severity, created_at 
+      FROM activity_logs 
+      WHERE event_type IN ('telegram_missed_call_alert', 'telegram_missed_call_alert_failed')
+      ORDER BY created_at DESC
+      LIMIT 20
+    `).all();
+
+    res.json({
+      success: true,
+      notified_calls_in_memory: notifiedMissedCalls.size,
+      recent_telegram_alerts: recentAlerts,
+      note: 'In-memory Set tracks notified calls; clearing app resets it'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Check call record statuses
+app.get('/api/debug/call-statuses', (req, res) => {
+  try {
+    const statusDistribution = db.db.prepare(`
+      SELECT status, COUNT(*) as count
+      FROM call_records 
+      GROUP BY status
+      ORDER BY count DESC
+    `).all();
+
+    const recentCalls = db.db.prepare(`
+      SELECT id, status, answer_time, caller_number, callee_number, created_at, start_time
+      FROM call_records 
+      ORDER BY created_at DESC
+      LIMIT 20
+    `).all();
+
+    res.json({
+      success: true,
+      status_distribution: statusDistribution,
+      recent_calls: recentCalls,
+      total_calls: recentCalls.length
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Force check missed calls manually
+app.post('/api/debug/force-check-missed-calls', async (req, res) => {
+  try {
+    logger.info('[DEBUG] Manually triggering checkAndAlertMissedCalls...');
+    const resultMsg = await checkAndAlertMissedCalls();
+    
+    res.json({
+      success: true,
+      message: 'Triggered missed call check',
+      result: resultMsg || 'Check completed',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Check recent error alerts
+app.get('/api/debug/error-alerts', (req, res) => {
+  try {
+    const recentErrors = db.db.prepare(`
+      SELECT id, event_type, message, severity, created_at 
+      FROM activity_logs 
+      WHERE event_type IN ('error', 'error_alert_sent', 'telegram_error_alert', 'sms_handler_error', 'call_sync_error')
+      ORDER BY created_at DESC
+      LIMIT 30
+    `).all();
+
+    const telegramConfig = db.getTelegramConfig();
+
+    res.json({
+      success: true,
+      telegram_enabled: !!telegramConfig?.enabled,
+      telegram_configured: !!(telegramConfig?.bot_token && telegramConfig?.chat_id),
+      recent_errors_count: recentErrors.length,
+      recent_errors: recentErrors,
+      note: 'Errors are sent to Telegram instantly when they occur (if enabled)',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Inject test error
+app.post('/api/debug/inject-error', async (req, res) => {
+  try {
+    const testError = 'Test system error - this should trigger Telegram alert immediately';
+    logger.info('🔍 [DEBUG] Injecting test error...');
+    
+    // Log the error
+    db.logActivity('test_error_injected', testError, 'error');
+    
+    // Send alert immediately
+    await alertErrorImmediately('Test Error (Debug)', testError);
+    
+    res.json({
+      success: true,
+      message: 'Test error injected and alert sent',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Inject test missed call
+app.post('/api/debug/inject-missed-call', (req, res) => {
+  try {
+    const testCallId = `test-missed-${Date.now()}`;
+    const testCall = {
+      external_id: testCallId,
+      caller_number: '1234567890',
+      callee_number: '200',
+      direction: 'inbound',
+      status: 'missed',
+      extension: '200',
+      start_time: new Date().toISOString(),
+      answer_time: null,
+      end_time: new Date().toISOString(),
+      ring_duration: 30,
+      talk_duration: 0,
+      total_duration: 30,
+      metadata: { test: true }
+    };
+
+    const success = db.saveCallRecord(testCall);
+    
+    res.json({
+      success: success,
+      message: success ? `Injected test missed call: ${testCallId}` : 'Failed to inject',
+      call_id: testCallId,
+      call: testCall
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Manually trigger missed call alert check
+app.post('/api/debug/trigger-missed-call-alerts', async (req, res) => {
+  try {
+    logger.info('🔔 MANUAL TRIGGER: Running missed call alert check...');
+    const result = await checkAndAlertMissedCalls();
+    res.json({
+      success: true,
+      message: 'Missed call alert check triggered',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error(`Manual trigger error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Reset notification tracking and force re-send all missed call alerts
+app.post('/api/debug/reset-notifications', async (req, res) => {
+  try {
+    const previousCount = notifiedMissedCalls.size;
+    notifiedMissedCalls.clear();
+    
+    logger.info(`Reset notification tracking: Cleared ${previousCount} tracked calls`);
+    
+    // Force check for missed calls (will send alerts for all)
+    logger.info('Forcing immediate check for all missed calls...');
+    await checkAndAlertMissedCalls();
+    
+    res.json({
+      success: true,
+      message: `Notification tracking reset. Cleared ${previousCount} tracked calls and sent fresh alerts.`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DEBUG: Check which missed calls have already been notified
+app.get('/api/debug/notified-calls', (req, res) => {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    const startTime = telegramConfig?.updated_at || telegramConfig?.created_at || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Get all missed calls
+    const allMissedCalls = db.db.prepare(`
+      SELECT id, external_id, caller_number, extension, start_time, ring_duration
+      FROM call_records 
+      WHERE status IN ('missed', 'no-answer', 'noanswer', 'failed')
+        AND start_time >= ?
+        AND (answer_time IS NULL OR answer_time = '')
+      ORDER BY start_time DESC
+    `).all(startTime);
+
+    // Check which ones have been notified
+    const notifiedList = [];
+    const pendingList = [];
+
+    for (const call of allMissedCalls) {
+      const callKey = call.id || call.external_id;
+      if (notifiedMissedCalls.has(callKey)) {
+        notifiedList.push({
+          ...call,
+          status: 'NOTIFIED'
+        });
+      } else {
+        pendingList.push({
+          ...call,
+          status: 'PENDING'
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      telegram_enabled_since: startTime,
+      total_missed_calls: allMissedCalls.length,
+      notified_count: notifiedList.length,
+      pending_count: pendingList.length,
+      notified_calls: notifiedList.slice(0, 20),
+      pending_calls: pendingList.slice(0, 20),
+      internal_tracking_size: notifiedMissedCalls.size,
+      note: 'Use POST /api/debug/reset-notifications to clear tracking and re-send all alerts'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,
     error: 'Endpoint not found',
     path: req.path
   });
+});
+
+// ========================================
+// CONTACTS API ENDPOINTS
+// ========================================
+
+app.get('/api/contacts', (req, res) => {
+  try {
+    const contacts = db.getContacts();
+    res.json({ success: true, data: contacts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/contacts/:id', (req, res) => {
+  try {
+    const contact = db.getContact(req.params.id);
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+    res.json({ success: true, data: contact });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/contacts/:id', (req, res) => {
+  try {
+    const { name, notes } = req.body;
+    const success = db.updateContact(req.params.id, { name, notes });
+    
+    if (success) {
+      const updated = db.getContact(req.params.id);
+      res.json({ success: true, data: updated });
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to update contact' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/contacts/import', (req, res) => {
+  try {
+    const { contacts } = req.body;
+    if (!Array.isArray(contacts)) {
+      return res.status(400).json({ success: false, error: 'Contacts must be an array' });
+    }
+    
+    const imported = db.importContacts(contacts);
+    res.json({ success: true, data: { imported } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/contacts/merge', (req, res) => {
+  try {
+    const merged = db.mergeDuplicateContacts();
+    res.json({ success: true, data: { merged } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Google Contacts Integration (Placeholder)
+// ========================================
+// Note: Full Google Contacts API integration requires:
+// 1. Google OAuth 2.0 credentials (Client ID, Client Secret)
+// 2. Google People API enabled in Google Cloud Console
+// 3. Backend token refresh handling
+// 4. Contact sync/merge logic with Google
+
+app.post('/api/contacts/import-from-google', (req, res) => {
+  try {
+    const { googleToken } = req.body;
+    
+    if (!googleToken) {
+      return res.status(400).json({ success: false, error: 'Google token required' });
+    }
+
+    // Validate token format (basic check)
+    if (typeof googleToken !== 'string' || googleToken.length < 10) {
+      return res.status(401).json({ success: false, error: 'Invalid Google token' });
+    }
+
+    // TODO: Implement actual Google People API integration
+    // For now, return placeholder response
+    logger.info('Google Contacts import requested with token');
+    
+    // In production, this would:
+    // 1. Verify token with Google API
+    // 2. Fetch contacts from Google People API
+    // 3. Map to local contact format
+    // 4. Save to database
+    // 5. Return imported count
+
+    res.json({ 
+      success: true, 
+      data: { 
+        imported: 0,
+        total_found: 0,
+        message: 'Google Contacts import requires full OAuth setup. See documentation for setup instructions.'
+      } 
+    });
+  } catch (error) {
+    logger.error(`Google import error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/contacts/push-to-google', (req, res) => {
+  try {
+    const { googleToken } = req.body;
+    
+    if (!googleToken) {
+      return res.status(400).json({ success: false, error: 'Google token required' });
+    }
+
+    // Validate token format (basic check)
+    if (typeof googleToken !== 'string' || googleToken.length < 10) {
+      return res.status(401).json({ success: false, error: 'Invalid Google token' });
+    }
+
+    // TODO: Implement actual Google People API integration
+    // For now, return placeholder response
+    logger.info('Google Contacts push requested with token');
+    
+    // In production, this would:
+    // 1. Verify token with Google API
+    // 2. Fetch all local contacts
+    // 3. Check existing Google contacts
+    // 4. Create/update contacts in Google
+    // 5. Return created/updated/skipped counts
+
+    res.json({ 
+      success: true, 
+      data: { 
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        message: 'Google Contacts push requires full OAuth setup. See documentation for setup instructions.'
+      } 
+    });
+  } catch (error) {
+    logger.error(`Google push error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Debug: Extension Call Statistics
+// ========================================
+app.get('/api/debug/extension/:extnumber', (req, res) => {
+  try {
+    const { extnumber } = req.params;
+    
+    // Check extension in pbx_extensions
+    const ext = db.db.prepare('SELECT extnumber, username, callerid FROM pbx_extensions WHERE extnumber = ?').get(extnumber);
+    
+    // Direct raw query to see what's in database
+    const raw = db.db.prepare(`
+      SELECT 
+        id, caller_number, callee_number, extension, direction, status, start_time
+      FROM call_records 
+      WHERE extension = ? OR caller_number = ? OR callee_number = ?
+      ORDER BY start_time DESC
+      LIMIT 100
+    `).all(extnumber, extnumber, extnumber);
+    
+    const byMethod = db.getCallRecordsByExtension(extnumber, 100);
+    
+    // Check if callerid can match calls
+    const byCallerId = ext ? db.db.prepare(`
+      SELECT id, caller_number, callee_number, extension FROM call_records
+      WHERE caller_number LIKE ? OR callee_number LIKE ?
+      LIMIT 20
+    `).all(`%${ext.callerid.slice(-9)}`, `%${ext.callerid.slice(-9)}`) : [];
+    
+    res.json({
+      success: true,
+      extnumber,
+      extension_info: ext,
+      raw_query_count: raw.length,
+      raw_query_sample: raw.slice(0, 3),
+      method_count: byMethod.length,
+      method_sample: byMethod.slice(0, 3),
+      by_callerid_count: byCallerId.length,
+      by_callerid_sample: byCallerId.slice(0, 3)
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/debug/extension-call-stats', (req, res) => {
+  try {
+    // Get overall call count
+    const allCalls = db.getCallRecords(null);
+    const totalCalls = allCalls.length;
+    
+    // Get stats by extension
+    const extensionStats = {};
+    for (const call of allCalls) {
+      // Track calls by extension, caller, and callee
+      if (call.extension) {
+        extensionStats[call.extension] = (extensionStats[call.extension] || 0) + 1;
+      }
+      if (call.caller_number && /^\d{1,4}$/.test(call.caller_number)) {
+        extensionStats[call.caller_number] = (extensionStats[call.caller_number] || 0) + 1;
+      }
+      if (call.callee_number && /^\d{1,4}$/.test(call.callee_number)) {
+        extensionStats[call.callee_number] = (extensionStats[call.callee_number] || 0) + 1;
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        totalCalls,
+        extensionStats,
+        extensionCount: Object.keys(extensionStats).length,
+      }
+    });
+  } catch (error) {
+    logger.error(`Extension stats error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // ========================================

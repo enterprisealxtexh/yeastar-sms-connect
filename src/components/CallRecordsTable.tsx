@@ -43,13 +43,23 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
       call.caller_number.toLowerCase().includes(search.toLowerCase()) ||
       call.callee_number.toLowerCase().includes(search.toLowerCase()) ||
       call.caller_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
-      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
-      calleeDisplay.toLowerCase().includes(search.toLowerCase()) ||
-      callerDisplay.toLowerCase().includes(search.toLowerCase());
+      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase());
 
     const matchesStatus = statusFilter === "all" || call.status === statusFilter;
     const matchesDirection = directionFilter === "all" || call.direction === directionFilter;
-    const matchesExtension = extensionFilter === "all" || call.extension === extensionFilter;
+    
+    // Extension filtering: check if call involves this extension
+    // A call involves an extension if:
+    // 1. The extension field matches (for internal/PBX calls)
+    // 2. The caller_number matches (outbound from extension)
+    // 3. The callee_number matches (inbound to extension)
+    let matchesExtension = extensionFilter === "all";
+    if (extensionFilter !== "all") {
+      matchesExtension = 
+        call.extension === extensionFilter ||
+        call.caller_number === extensionFilter ||
+        call.callee_number === extensionFilter;
+    }
 
     return matchesSearch && matchesStatus && matchesDirection && matchesExtension;
   });

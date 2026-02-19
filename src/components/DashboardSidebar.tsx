@@ -31,7 +31,8 @@ export type DashboardTab =
   | "users"
   | "profile"
   | "messages"
-  | "extensions";
+  | "extensions"
+  | "contacts";
 
 interface NavItem {
   id: DashboardTab;
@@ -44,6 +45,7 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "messages", label: "Messages", icon: FileText },
   { id: "calls", label: "Calls", icon: PhoneCall },
+  { id: "contacts", label: "Contacts", icon: User },
   { id: "extensions", label: "Extensions", icon: Phone, adminOnly: true },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "logs", label: "Logs", icon: FileText },

@@ -16,6 +16,7 @@ import { CallStatsCards } from "@/components/CallStatsCards";
 import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
+import { ContactsPanel } from "@/components/ContactsPanel";
 import ExtensionsPanel from "@/components/ExtensionsPanel";
 import { AllSmsPanel } from "@/components/AllSmsPanel";
 
@@ -55,7 +56,8 @@ const Index = () => {
   const { data: messages = [], isLoading: messagesLoading } = useSmsMessages();
   const { data: logs = [], isLoading: logsLoading } = useActivityLogs();
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
-  const { data: calls = [], isLoading: callsLoading } = useCallRecords();
+  const { data: callsResponse, isLoading: callsLoading } = useCallRecords(1, 100);
+  const calls = callsResponse?.data || [];
   const { data: callStats, isLoading: callStatsLoading } = useCallStats();
   const { data: allTimeCallStats, isLoading: allTimeCallStatsLoading } = useAllTimeCallStats();
   const { config: pbxConfig } = usePbxConfig();
@@ -96,7 +98,8 @@ const Index = () => {
       <div className="flex flex-1 overflow-hidden">
         <DashboardSidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex flex-col flex-1">
+          <main className="flex-1 overflow-y-auto p-6 space-y-6">
           {activeTab === "dashboard" && (
             <>
               {/* System Status Row */}
@@ -213,11 +216,13 @@ const Index = () => {
           )}
 
           {activeTab === "messages" && <AllSmsPanel />}
+          {activeTab === "contacts" && <ContactsPanel />}
           {activeTab === "extensions" && <ExtensionsPanel />}
-        </main>
-      </div>
+          </main>
 
-      <SystemFooter lastSync={lastSync} onRefresh={handleRefresh} />
+          <SystemFooter lastSync={lastSync} onRefresh={handleRefresh} />
+        </div>
+      </div>
     </div>
   );
 };

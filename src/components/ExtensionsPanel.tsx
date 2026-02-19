@@ -136,7 +136,7 @@ const ExtensionsPanel: React.FC = () => {
   const fetchExtensionCallLogs = async (extnumber: string) => {
     setLoadingCallLogs(true);
     try {
-      const response = await fetch(`http://localhost:2003/api/extensions/${extnumber}/call-logs`);
+      const response = await fetch(`http://localhost:2003/api/extensions/${extnumber}/call-logs?page=1&pageSize=100`);
       const data = await response.json();
       
       if (data.success) {

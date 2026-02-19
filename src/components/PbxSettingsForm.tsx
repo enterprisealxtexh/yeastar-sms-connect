@@ -265,6 +265,7 @@ export const PbxSettingsForm = () => {
           </Label>
           <Input
             id="pbx-username"
+            autoComplete="off"
             value={localConfig.api_username}
             onChange={(e) => {
               setLocalConfig((prev) => ({ ...prev, api_username: e.target.value }));
@@ -282,6 +283,7 @@ export const PbxSettingsForm = () => {
           <div className="relative max-w-xs">
             <Input
               id="pbx-password"
+              autoComplete="off"
               type={showPassword ? "text" : "password"}
               value={localConfig.api_password}
               onChange={(e) => {

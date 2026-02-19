@@ -143,6 +143,7 @@ export const GatewaySettingsForm = () => {
           </Label>
           <Input
             id="api-username"
+            autoComplete="off"
             value={localConfig.api_username}
             onChange={(e) => {
               setLocalConfig((prev) => ({ ...prev, api_username: e.target.value }));
@@ -160,6 +161,7 @@ export const GatewaySettingsForm = () => {
           <div className="relative">
             <Input
               id="api-password"
+              autoComplete="off"
               type={showPassword ? "text" : "password"}
               value={localConfig.api_password}
               onChange={(e) => {

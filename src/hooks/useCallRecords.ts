@@ -27,16 +27,15 @@ export interface CallRecord {
   created_at: string;
 }
 
-export const useCallRecords = () => {
+export const useCallRecords = (page = 1, pageSize = 100) => {
   return useQuery({
-    queryKey: ["call-records"],
+    queryKey: ["call-records", page, pageSize],
     queryFn: async () => {
-      const response = await fetch(`${apiUrl}/api/call-records`);
+      const response = await fetch(`${apiUrl}/api/call-records?page=${page}&pageSize=${pageSize}`);
       if (!response.ok) {
         throw new Error('Failed to fetch call records');
       }
-      const result = await response.json();
-      return result.data as CallRecord[];
+      return await response.json();
     },
     refetchInterval: 5000, // 5 seconds for near real-time updates
   });

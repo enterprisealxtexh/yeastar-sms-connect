@@ -2,6 +2,9 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "../Downloads/yeastar-sms-connectbackup"
 		}
 	],
 	"settings": {}

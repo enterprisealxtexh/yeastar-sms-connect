@@ -35,6 +35,9 @@ class SMSDatabase {
       // Create tables if they don't exist
       this.createTables();
       
+      // Create indices for faster querying
+      this.createIndices();
+      
       const logger = require('./logger.cjs');
       logger.info(`SQLite database initialized: ${this.dbPath}`);
       return true;
@@ -205,6 +208,17 @@ class SMSDatabase {
       );
     `);
 
+    // Alert check checkpoint - tracks from which time we should start checking for missed calls
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS alert_checkpoints (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        alert_type TEXT UNIQUE NOT NULL,
+        last_checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // PBX Extensions table for real extension data
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS pbx_extensions (
@@ -234,6 +248,82 @@ class SMSDatabase {
       
       CREATE INDEX IF NOT EXISTS idx_pbx_ext_number ON pbx_extensions(extnumber);
       CREATE INDEX IF NOT EXISTS idx_pbx_ext_status ON pbx_extensions(status);
+    `);
+
+    // SMS Gateway URLs table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sms_gateways (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        url TEXT NOT NULL UNIQUE,
+        active BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // SMS Templates table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sms_templates (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        name TEXT NOT NULL,
+        message TEXT NOT NULL,
+        active BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Missed Call Rules table (many-to-many with extensions)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS missed_call_rules (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        extensions TEXT NOT NULL,
+        threshold INTEGER NOT NULL DEFAULT 3,
+        template_id TEXT NOT NULL,
+        gateway_id TEXT NOT NULL,
+        active BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (template_id) REFERENCES sms_templates(id) ON DELETE CASCADE,
+        FOREIGN KEY (gateway_id) REFERENCES sms_gateways(id) ON DELETE CASCADE
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_missed_call_active ON missed_call_rules(active);
+    `);
+
+    // Business Hours table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS business_hours (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        rule_id TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        days_enabled TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (rule_id) REFERENCES missed_call_rules(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Contacts table - auto-saved from SMS and call records
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        phone_number TEXT UNIQUE NOT NULL,
+        name TEXT,
+        source TEXT DEFAULT 'sms' CHECK (source IN ('sms', 'call', 'import', 'manual', 'google')),
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sms_count INTEGER DEFAULT 0,
+        call_count INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
+      CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
     `);
 
     // Insert default gateway config if empty
@@ -275,6 +365,74 @@ class SMSDatabase {
         INSERT INTO telegram_config (bot_token, chat_id, enabled, is_active)
         VALUES ('', '', 0, 1)
       `).run();
+    }
+  }
+
+  createIndices() {
+    try {
+      // Indices already created in CREATE TABLE statements, but ensure critical ones exist
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_call_records_extension ON call_records(extension);
+        CREATE INDEX IF NOT EXISTS idx_call_records_caller ON call_records(caller_number);
+        CREATE INDEX IF NOT EXISTS idx_call_records_callee ON call_records(callee_number);
+        CREATE INDEX IF NOT EXISTS idx_call_records_start_time ON call_records(start_time DESC);
+        CREATE INDEX IF NOT EXISTS idx_pbx_extensions_extnumber ON pbx_extensions(extnumber);
+        CREATE INDEX IF NOT EXISTS idx_pbx_extensions_callerid ON pbx_extensions(callerid);
+      `);
+      
+      // Migrate existing calls to populate extension field from callerid lookup
+      this.migrateCallExtensions();
+    } catch (error) {
+      console.error('Error creating indices:', error.message);
+    }
+  }
+
+  migrateCallExtensions() {
+    try {
+      // Find calls without extensions and try to populate from callerid lookup
+      const callsWithoutExt = this.db.prepare(`
+        SELECT id, caller_number, callee_number FROM call_records
+        WHERE extension IS NULL OR extension = ''
+        LIMIT 100
+      `).all();
+      
+      if (callsWithoutExt.length === 0) return;
+      
+      console.log(`🔄 Migrating ${callsWithoutExt.length} calls to populate extensions...`);
+      
+      const findExtensionByCallerId = (phoneNumber) => {
+        if (!phoneNumber) return null;
+        try {
+          const record = this.db.prepare(`
+            SELECT extnumber FROM pbx_extensions 
+            WHERE callerid = ? OR callerid LIKE ?
+            LIMIT 1
+          `).get(phoneNumber, `%${phoneNumber.slice(-9)}`);
+          return record ? record.extnumber : null;
+        } catch (e) {
+          return null;
+        }
+      };
+      
+      let updated = 0;
+      const updateStmt = this.db.prepare('UPDATE call_records SET extension = ? WHERE id = ?');
+      
+      for (const call of callsWithoutExt) {
+        let ext = findExtensionByCallerId(call.caller_number);
+        if (!ext) {
+          ext = findExtensionByCallerId(call.callee_number);
+        }
+        if (ext) {
+          updateStmt.run(ext, call.id);
+          updated++;
+        }
+      }
+      
+      if (updated > 0) {
+        console.log(`✅ Successfully migrated ${updated} calls with extension lookup`);
+      }
+    } catch (error) {
+      console.error('Error migrating call extensions:', error.message);
     }
   }
 
@@ -330,11 +488,54 @@ class SMSDatabase {
         WHERE id = (SELECT id FROM telegram_config LIMIT 1)
       `);
       stmt.run(bot_token || '', chat_id || '', enabled ? 1 : 0);
+      
+      // If enabling Telegram, reset the missed call alert checkpoint to NOW
+      // This ensures we only send alerts for calls AFTER enabling, not historical calls
+      if (enabled === true || enabled === 1) {
+        try {
+          const checkpointStmt = this.db.prepare(`
+            INSERT INTO alert_checkpoints (alert_type, last_checked_at)
+            VALUES ('missed_call', CURRENT_TIMESTAMP)
+            ON CONFLICT(alert_type) DO UPDATE SET last_checked_at = CURRENT_TIMESTAMP
+          `);
+          checkpointStmt.run();
+        } catch (err) {
+          console.warn('Could not update alert checkpoint:', err.message);
+        }
+      }
+      
       this.logActivity('telegram_config_updated', `Telegram config saved`, 'success');
       return true;
     } catch (error) {
       console.error('Error saving Telegram config:', error.message);
       this.logActivity('telegram_config_error', `Failed to save Telegram config: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
+  // Alert checkpoint methods - track when to start checking for new alerts
+  getAlertCheckpoint(alertType) {
+    try {
+      const stmt = this.db.prepare('SELECT last_checked_at FROM alert_checkpoints WHERE alert_type = ?');
+      const result = stmt.get(alertType);
+      return result ? result.last_checked_at : null;
+    } catch (error) {
+      console.error(`Error getting alert checkpoint for ${alertType}:`, error.message);
+      return null;
+    }
+  }
+
+  updateAlertCheckpoint(alertType, timestamp) {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO alert_checkpoints (alert_type, last_checked_at)
+        VALUES (?, ?)
+        ON CONFLICT(alert_type) DO UPDATE SET last_checked_at = ?
+      `);
+      stmt.run(alertType, timestamp, timestamp);
+      return true;
+    } catch (error) {
+      console.error(`Error updating alert checkpoint for ${alertType}:`, error.message);
       return false;
     }
   }
@@ -373,6 +574,14 @@ class SMSDatabase {
         end_time, ring_duration || 0, talk_duration || 0, hold_duration || 0, total_duration || 0,
         recording_url, transfer_to, notes, JSON.stringify(metadata || {})
       );
+
+      // ✅ Auto-save contacts from call record
+      if (caller_number) {
+        this.saveOrUpdateContact(caller_number, caller_name, 'call');
+      }
+      if (callee_number && direction === 'outbound') {
+        this.saveOrUpdateContact(callee_number, callee_name, 'call');
+      }
 
       return true;
     } catch (error) {
@@ -472,9 +681,11 @@ class SMSDatabase {
     }
   }
 
-  getCallRecords(limit = 100) {
+  getCallRecords(limit = null) {
     try {
       // JOIN with pbx_extensions for both caller and callee lookups
+      // If limit is null, fetch ALL records; otherwise use specified limit
+      const limitClause = limit ? `LIMIT ${limit}` : '';
       const stmt = this.db.prepare(`
         SELECT 
           cr.id,
@@ -503,10 +714,10 @@ class SMSDatabase {
         LEFT JOIN pbx_extensions ce ON cr.caller_number = ce.extnumber
         LEFT JOIN pbx_extensions ca ON cr.callee_number = ca.extnumber
         ORDER BY cr.start_time DESC 
-        LIMIT ?
+        ${limitClause}
       `);
       
-      const records = stmt.all(limit);
+      const records = stmt.all();
       
       return records.map(r => ({
         id: r.id,
@@ -538,6 +749,77 @@ class SMSDatabase {
     }
   }
 
+  getCallRecordsByExtension(extnumber, limit = null) {
+    try {
+      // Get call records for a specific extension (caller, callee, or extension field)
+      // This queries directly by extension without arbitrary limits
+      const limitClause = limit ? `LIMIT ${limit}` : '';
+      const stmt = this.db.prepare(`
+        SELECT 
+          cr.id,
+          cr.external_id,
+          cr.caller_number,
+          cr.callee_number,
+          cr.direction,
+          cr.status,
+          cr.sim_port,
+          cr.extension,
+          cr.start_time,
+          cr.answer_time,
+          cr.end_time,
+          cr.ring_duration,
+          cr.talk_duration,
+          cr.hold_duration,
+          cr.total_duration,
+          cr.recording_url,
+          cr.transfer_to,
+          cr.notes,
+          cr.metadata,
+          cr.created_at,
+          ce.username as caller_extension_username,
+          ca.username as callee_extension_username
+        FROM call_records cr
+        LEFT JOIN pbx_extensions ce ON cr.caller_number = ce.extnumber
+        LEFT JOIN pbx_extensions ca ON cr.callee_number = ca.extnumber
+        WHERE 
+          cr.extension = ? 
+          OR cr.caller_number = ?
+          OR cr.callee_number = ?
+        ORDER BY cr.start_time DESC 
+        ${limitClause}
+      `);
+      
+      const records = stmt.all(extnumber, extnumber, extnumber);
+      
+      return records.map(r => ({
+        id: r.id,
+        external_id: r.external_id,
+        caller_number: r.caller_number,
+        callee_number: r.callee_number,
+        caller_extension_username: r.caller_extension_username,
+        callee_extension_username: r.callee_extension_username,
+        direction: r.direction,
+        status: r.status,
+        sim_port: r.sim_port,
+        extension: r.extension,
+        start_time: r.start_time,
+        answer_time: r.answer_time,
+        end_time: r.end_time,
+        ring_duration: r.ring_duration,
+        talk_duration: r.talk_duration,
+        hold_duration: r.hold_duration,
+        total_duration: r.total_duration,
+        recording_url: r.recording_url,
+        transfer_to: r.transfer_to,
+        notes: r.notes,
+        metadata: r.metadata ? JSON.parse(r.metadata) : {},
+        created_at: r.created_at
+      }));
+    } catch (error) {
+      console.error('Error getting call records by extension:', error.message);
+      return [];
+    }
+  }
   getCallStats(filterDate = null) {
     try {
       // If filterDate is not provided, use today's date
@@ -652,10 +934,37 @@ class SMSDatabase {
     }
   }
 
+  saveSmsGatewayUrl(url) {
+    try {
+      const logger = require('./logger.cjs');
+      
+      // Check if URL already exists
+      const existing = this.db.prepare('SELECT id FROM sms_gateways WHERE url = ?').get(url);
+      
+      if (existing) {
+        logger.info(`SMS gateway URL already exists: ${url}`);
+        return true;
+      }
+      
+      // Insert new SMS gateway URL
+      const stmt = this.db.prepare(`
+        INSERT INTO sms_gateways (url, active, created_at, updated_at)
+        VALUES (?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `);
+      stmt.run(url);
+      
+      logger.info(`SMS gateway URL saved: ${url}`);
+      return true;
+    } catch (error) {
+      console.error('Error saving SMS gateway URL:', error.message);
+      return false;
+    }
+  }
+
   // SMS message methods
   insertSMS(smsData) {
     const logger = require('./logger.cjs');
-    const maxRetries = 3;
+    const maxRetries = 5; // Increased from 3 to 5
     let lastError = null;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -712,7 +1021,7 @@ class SMSDatabase {
         // Check if it's a database locked error
         if (error.code === 'SQLITE_BUSY' || error.message?.includes('database is locked')) {
           if (attempt < maxRetries) {
-            const waitMs = 100 * Math.pow(2, attempt - 1); // Exponential backoff: 100ms, 200ms, 400ms
+            const waitMs = 200 * Math.pow(2, attempt - 1); // Exponential backoff: 200ms, 400ms, 800ms, 1600ms, 3200ms
             logger.warn(`⚠️  Database locked (attempt ${attempt}/${maxRetries}), retrying in ${waitMs}ms...`);
             const startWait = Date.now();
             while (Date.now() - startWait < waitMs) {} // Busy wait
@@ -840,6 +1149,12 @@ class SMSDatabase {
         smsData.external_id || null,
         smsData.received_at || new Date().toISOString()
       );
+      
+      // ✅ Auto-save contact from SMS sender
+      if (result.changes > 0 && smsData.sender_number) {
+        this.saveOrUpdateContact(smsData.sender_number, null, 'sms');
+      }
+      
       return result.changes > 0;
     } catch (error) {
       console.error('Error saving SMS message:', error.message);
@@ -1146,6 +1461,202 @@ class SMSDatabase {
     } catch (error) {
       console.error('Error getting users:', error.message);
       return [];
+    }
+  }
+
+  // ========================================
+  // CONTACTS MANAGEMENT
+  // ========================================
+
+  saveOrUpdateContact(phoneNumber, name = null, source = 'sms') {
+    try {
+      const existingContact = this.db.prepare('SELECT id FROM contacts WHERE phone_number = ?').get(phoneNumber);
+      
+      if (existingContact) {
+        // Update existing contact
+        this.db.prepare(`
+          UPDATE contacts 
+          SET name = COALESCE(?, name), 
+              last_seen_at = CURRENT_TIMESTAMP,
+              ${source === 'sms' ? 'sms_count = sms_count + 1' : source === 'call' ? 'call_count = call_count + 1' : ''},
+              updated_at = CURRENT_TIMESTAMP
+          WHERE phone_number = ?
+        `).run(name, phoneNumber);
+        return existingContact.id;
+      } else {
+        // Insert new contact
+        const result = this.db.prepare(`
+          INSERT INTO contacts (phone_number, name, source, first_seen_at, last_seen_at, sms_count, call_count)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+        `).run(
+          phoneNumber,
+          name,
+          source,
+          source === 'sms' ? 1 : 0,
+          source === 'call' ? 1 : 0
+        );
+        return result.lastInsertRowid;
+      }
+    } catch (error) {
+      console.error('Error saving contact:', error.message);
+      return null;
+    }
+  }
+
+  getContacts() {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT id, phone_number, name, source, first_seen_at, last_seen_at, sms_count, call_count, notes, created_at, updated_at
+        FROM contacts
+        ORDER BY last_seen_at DESC
+      `);
+      return stmt.all() || [];
+    } catch (error) {
+      console.error('Error getting contacts:', error.message);
+      return [];
+    }
+  }
+
+  getContact(id) {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT id, phone_number, name, source, first_seen_at, last_seen_at, sms_count, call_count, notes, created_at, updated_at
+        FROM contacts
+        WHERE id = ?
+      `);
+      return stmt.get(id) || null;
+    } catch (error) {
+      console.error('Error getting contact:', error.message);
+      return null;
+    }
+  }
+
+  updateContact(id, updates = {}) {
+    try {
+      const { name, notes } = updates;
+      const fields = [];
+      const values = [];
+
+      if (name !== undefined) {
+        fields.push('name = ?');
+        values.push(name);
+      }
+      if (notes !== undefined) {
+        fields.push('notes = ?');
+        values.push(notes);
+      }
+
+      if (fields.length === 0) return false;
+
+      fields.push('updated_at = CURRENT_TIMESTAMP');
+      values.push(id);
+
+      const sql = `UPDATE contacts SET ${fields.join(', ')} WHERE id = ?`;
+      this.db.prepare(sql).run(...values);
+      this.logActivity('contact_updated', `Contact updated: ${id}`, 'success');
+      return true;
+    } catch (error) {
+      console.error('Error updating contact:', error.message);
+      return false;
+    }
+  }
+
+  mergeDuplicateContacts() {
+    try {
+      // Find duplicate phone patterns and merge
+      const duplicates = this.db.prepare(`
+        SELECT phone_number, COUNT(*) as cnt
+        FROM contacts
+        GROUP BY phone_number
+        HAVING cnt > 1
+      `).all();
+
+      let mergedCount = 0;
+
+      for (const dup of duplicates) {
+        const contacts = this.db.prepare(`
+          SELECT id, sms_count, call_count, notes
+          FROM contacts
+          WHERE phone_number = ?
+          ORDER BY last_seen_at DESC
+        `).all(dup.phone_number);
+
+        if (contacts.length > 1) {
+          const primary = contacts[0];
+          const toMerge = contacts.slice(1);
+
+          // Sum SMS and call counts
+          let totalSms = primary.sms_count;
+          let totalCalls = primary.call_count;
+          let mergedNotes = primary.notes || '';
+
+          for (const contact of toMerge) {
+            totalSms += contact.sms_count;
+            totalCalls += contact.call_count;
+            if (contact.notes && !mergedNotes.includes(contact.notes)) {
+              mergedNotes += (mergedNotes ? '\n' : '') + contact.notes;
+            }
+          }
+
+          // Update primary contact
+          this.db.prepare(`
+            UPDATE contacts
+            SET sms_count = ?, call_count = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(totalSms, totalCalls, mergedNotes, primary.id);
+
+          // Delete duplicates
+          const deleteIds = toMerge.map(c => c.id);
+          for (const id of deleteIds) {
+            this.db.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+          }
+
+          mergedCount++;
+        }
+      }
+
+      if (mergedCount > 0) {
+        this.logActivity('contacts_merged', `Merged ${mergedCount} duplicate contacts`, 'success');
+      }
+      return mergedCount;
+    } catch (error) {
+      console.error('Error merging duplicates:', error.message);
+      return 0;
+    }
+  }
+
+  importContacts(contactsList = []) {
+    try {
+      let importedCount = 0;
+
+      for (const contact of contactsList) {
+        if (!contact.phone_number) continue;
+        
+        const existing = this.db.prepare('SELECT id FROM contacts WHERE phone_number = ?').get(contact.phone_number);
+        
+        if (existing) {
+          // Update if it already exists
+          if (contact.name) {
+            this.db.prepare('UPDATE contacts SET name = COALESCE(?, name), source = ?, updated_at = CURRENT_TIMESTAMP WHERE phone_number = ?')
+              .run(contact.name, contact.source || 'import', contact.phone_number);
+          }
+        } else {
+          // Insert new
+          this.db.prepare(`
+            INSERT INTO contacts (phone_number, name, source, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `).run(contact.phone_number, contact.name || null, contact.source || 'import');
+        }
+        importedCount++;
+      }
+
+      if (importedCount > 0) {
+        this.logActivity('contacts_imported', `Imported ${importedCount} contacts`, 'success');
+      }
+      return importedCount;
+    } catch (error) {
+      console.error('Error importing contacts:', error.message);
+      return 0;
     }
   }
 

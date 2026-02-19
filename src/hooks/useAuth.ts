@@ -79,7 +79,7 @@ export const login = async (credentials: LoginCredentials) => {
     
     // Log login activity
     try {
-      await fetch(`${apiUrl}/api/activity-log`, {
+      await fetch(`${apiUrl}/api/activity-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
