@@ -47,6 +47,9 @@ const Index = () => {
   useEffect(() => {
     localStorage.setItem("activeTab", activeTab);
   }, [activeTab]);
+
+  // Mobile menu state
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   const [lastSync, setLastSync] = useState(() => formatDateNairobi());
 
@@ -93,10 +96,21 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Header onProfileClick={() => setActiveTab("profile")} />
+      <Header 
+        onProfileClick={() => setActiveTab("profile")} 
+        onMenuClick={() => setMobileMenuOpen(true)}
+      />
 
       <div className="flex flex-1 overflow-hidden">
-        <DashboardSidebar activeTab={activeTab} onTabChange={setActiveTab} />
+        <DashboardSidebar 
+          activeTab={activeTab} 
+          onTabChange={(tab) => {
+            setActiveTab(tab);
+            setMobileMenuOpen(false);
+          }}
+          mobileMenuOpen={mobileMenuOpen}
+          onMobileMenuOpenChange={setMobileMenuOpen}
+        />
 
         <div className="flex flex-col flex-1">
           <main className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -207,7 +221,6 @@ const Index = () => {
 
           {activeTab === "config" && (
             <ConfigurationPanel
-              simPorts={simConfigs}
               isLoading={simLoading}
               onConfigSaved={() => {
                 queryClient.invalidateQueries({ queryKey: ["sim-ports"] });

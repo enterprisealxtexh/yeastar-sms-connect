@@ -1,4 +1,4 @@
-import { Radio, LogOut, User } from "lucide-react";
+import { Radio, LogOut, User, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { useAuth, signOut } from "@/hooks/useAuth";
@@ -12,13 +12,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface HeaderProps {
   onProfileClick?: () => void;
+  onMenuClick?: () => void;
 }
 
-export const Header = ({ onProfileClick }: HeaderProps) => {
+export const Header = ({ onProfileClick, onMenuClick }: HeaderProps) => {
   const { user, role, isAdmin } = useAuth();
+  const isMobile = useIsMobile();
 
   const handleSignOut = async () => {
     await signOut();
@@ -33,24 +36,37 @@ export const Header = ({ onProfileClick }: HeaderProps) => {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container flex h-16 items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="container flex h-16 items-center justify-between px-4">
+        <div className="flex items-center gap-3">
+          {isMobile && onMenuClick && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onMenuClick}
+              className="h-10 w-10"
+            >
+              <Menu className="w-5 h-5" />
+            </Button>
+          )}
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 shrink-0">
               <Radio className="w-5 h-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold tracking-tight hidden sm:block truncate">
                 SMS Gateway Manager
               </h1>
-              <p className="text-xs text-muted-foreground font-mono">
-                Yeastar TG400 + S100
+              <h1 className="text-base font-semibold tracking-tight sm:hidden truncate">
+                Yeastar
+              </h1>
+              <p className="text-xs text-muted-foreground font-mono truncate">
+                TG400 + S100
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           <AgentStatusIndicator showLabel={false} />
           
           <DropdownMenu>

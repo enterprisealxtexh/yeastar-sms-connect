@@ -10,8 +10,6 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
-  Menu,
-  X,
   Phone,
   User,
 } from "lucide-react";
@@ -19,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useAuth } from "@/hooks/useAuth";
 
 export type DashboardTab =
@@ -56,6 +54,8 @@ const navItems: NavItem[] = [
 interface DashboardSidebarProps {
   activeTab: DashboardTab;
   onTabChange: (tab: DashboardTab) => void;
+  mobileMenuOpen?: boolean;
+  onMobileMenuOpenChange?: (open: boolean) => void;
 }
 
 const NavItems = ({
@@ -112,30 +112,27 @@ const NavItems = ({
   </nav>
 );
 
-export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarProps) => {
+export const DashboardSidebar = ({ 
+  activeTab, 
+  onTabChange, 
+  mobileMenuOpen = false,
+  onMobileMenuOpenChange 
+}: DashboardSidebarProps) => {
   const isMobile = useIsMobile();
   const { isAdmin } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Close mobile drawer on resize to desktop
   useEffect(() => {
-    if (!isMobile) setMobileOpen(false);
-  }, [isMobile]);
+    if (!isMobile && mobileMenuOpen) {
+      onMobileMenuOpenChange?.(false);
+    }
+  }, [isMobile, mobileMenuOpen, onMobileMenuOpenChange]);
 
-  // Mobile: floating trigger + sheet drawer
+  // Mobile: sheet drawer
   if (isMobile) {
     return (
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon"
-            className="fixed bottom-4 left-4 z-50 h-12 w-12 rounded-full shadow-lg border-border/50 bg-card"
-          >
-            <Menu className="w-5 h-5" />
-          </Button>
-        </SheetTrigger>
+      <Sheet open={mobileMenuOpen} onOpenChange={onMobileMenuOpenChange}>
         <SheetContent side="left" className="w-[240px] p-0 bg-sidebar border-border/50">
           <div className="flex items-center justify-between p-4 border-b border-border/50">
             <span className="text-sm font-semibold text-foreground">Navigation</span>
@@ -146,7 +143,7 @@ export const DashboardSidebar = ({ activeTab, onTabChange }: DashboardSidebarPro
               onTabChange={onTabChange}
               collapsed={false}
               isAdmin={isAdmin}
-              onItemClick={() => setMobileOpen(false)}
+              onItemClick={() => onMobileMenuOpenChange?.(false)}
             />
           </div>
         </SheetContent>

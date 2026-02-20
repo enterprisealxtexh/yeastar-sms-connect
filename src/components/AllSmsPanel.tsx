@@ -128,30 +128,31 @@ export const AllSmsPanel: React.FC = () => {
       </Card>
 
       {/* Messages Card */}
-      <Card className="card-glow border-border/50 bg-card h-full">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
+      <Card className="card-glow border-border/50 bg-card flex flex-col min-h-0">
+        <CardHeader className="pb-3 shrink-0">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
               <CardTitle className="text-base font-semibold">All SMS Messages</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1 truncate">
                 {filteredMessages.length}
                 {filteredMessages.length !== messages.length && ` / ${messages.length}`} messages
               </p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["sms-messages"] })}>
+            <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ["sms-messages"] })} className="shrink-0">
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
         </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-[600px]">
+      <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
+        <ScrollArea className="flex-1">
           {isLoading ? (
             <div className="p-4">Loading...</div>
           ) : filteredMessages.length === 0 ? (
             <div className="p-4 text-muted-foreground">No messages found</div>
           ) : (
-            <div className="overflow-x-auto w-full">
-              <table className="w-full min-w-[800px] table-auto">
+            <div className="w-full min-h-0">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max table-auto md:min-w-full">
                 <thead>
                   <tr className="text-left text-sm text-muted-foreground">
                     <th className="p-3">Received</th>
@@ -188,6 +189,7 @@ export const AllSmsPanel: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </ScrollArea>
