@@ -4892,7 +4892,7 @@ function ensureSmsPortsExist() {
 // Start server
 // ========================================
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('\n');
   logger.info('╔════════════════════════════════════════════════════╗');
   logger.info('║   TG400 SMS Gateway - Local API Server Started     ║');
