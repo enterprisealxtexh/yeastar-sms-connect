@@ -31,11 +31,11 @@ stop_service() {
 
 # Function to check if port is available
 check_port_available() {
-    if netstat -tuln 2>/dev/null | grep -q ":2003 "; then
+    if netstat -tuln 2>/dev/null | grep -q ":2004 "; then
         return 1  # Port in use
     fi
     # Fallback for systems without netstat
-    if lsof -iTCP:2003 -sTCP:LISTEN 2>/dev/null | grep -q node; then
+    if lsof -iTCP:2004 -sTCP:LISTEN 2>/dev/null | grep -q node; then
         return 1  # Port in use
     fi
     return 0  # Port available
@@ -45,7 +45,7 @@ check_port_available() {
 wait_for_service() {
     local max_attempts=30
     local attempt=0
-    local port=2003
+    local port=2004
     
     echo "⏳ Waiting for SMS service to be ready..."
     
@@ -83,7 +83,7 @@ start_service() {
     
     # Check if port is already in use
     if ! check_port_available; then
-        echo "⚠️  Port 2003 is already in use. Cleaning up..."
+        echo "⚠️  Port 2004 is already in use. Cleaning up..."
         pkill -f "api-server.cjs" 2>/dev/null || true
         sleep 1
     fi
