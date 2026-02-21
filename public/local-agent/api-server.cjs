@@ -16,7 +16,7 @@ const logger = require('./logger.cjs');
 logger.info('[API Server] Using shared database singleton to prevent concurrent access issues');
 
 const app = express();
-const PORT = process.env.API_PORT || 2003;
+const PORT = process.env.API_PORT || 2004;
 
 // Middleware
 app.use(cors());

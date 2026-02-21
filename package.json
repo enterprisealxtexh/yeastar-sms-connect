@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:full": "npm run sms:start && concurrently \"vite\" \"npm run sms:follow\"",
-    "sms:ensure": "bash -c 'for i in {1..30}; do if curl -s http://localhost:2003/api/health >/dev/null 2>&1; then exit 0; fi; sleep 1; done; exit 1'",
+    "sms:ensure": "bash -c 'for i in {1..30}; do if curl -s http://localhost:2004/api/health >/dev/null 2>&1; then exit 0; fi; sleep 1; done; exit 1'",
     "sms:start": "public/local-agent/start-sms-service.sh start",
     "sms:stop": "public/local-agent/start-sms-service.sh stop",
     "sms:restart": "public/local-agent/start-sms-service.sh restart",

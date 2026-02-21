@@ -74,3 +74,17 @@ npm run sms:stop     # Stop SMS service
 
 ---
 **Developer**: Alxtexh | **Version**: 4.1.0 | **License**: Private
+
+
+
+RDP (/opt/yeastar-sms-connect):
+  ├── npm run dev:full
+  │   ├── API Server (2004) ✅
+  │   ├── SMS Service ✅
+  │   └── SQLite DB ✅
+  └── SSH Tunnel → VPS
+
+VPS (calls.nosteq.co.ke):
+  ├── Nginx (443/80)
+  └── Static React Build
+      └── API calls proxy to RDP through tunnel
