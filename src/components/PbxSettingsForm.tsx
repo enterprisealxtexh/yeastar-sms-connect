@@ -6,7 +6,7 @@ import { Loader2, Save, Eye, EyeOff, Phone, Wifi, WifiOff, CheckCircle2, Trash2 
 import { usePbxConfig } from "@/hooks/usePbxConfig";
 import { useToast } from "@/hooks/use-toast";
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export const PbxSettingsForm = () => {
   const { config, isLoading, updateConfig } = usePbxConfig();

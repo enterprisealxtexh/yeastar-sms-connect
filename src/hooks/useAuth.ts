@@ -17,7 +17,7 @@ interface LoginCredentials {
   password: string;
 }
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export const useAuth = (): AuthState => {
   const [isLoading, setIsLoading] = useState(true);

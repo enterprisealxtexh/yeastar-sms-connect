@@ -156,7 +156,7 @@ export const DashboardSidebar = ({
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          "sticky top-0 h-screen flex flex-col border-r border-border/50 bg-sidebar transition-all duration-200 shrink-0",
+          "h-full flex flex-col border-r border-border/50 bg-sidebar transition-all duration-200 shrink-0",
           collapsed ? "w-[60px]" : "w-[200px]"
         )}
       >

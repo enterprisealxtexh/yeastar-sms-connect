@@ -15,7 +15,7 @@ export interface Contact {
   updated_at: string;
 }
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export const useContacts = () => {
   const queryClient = useQueryClient();

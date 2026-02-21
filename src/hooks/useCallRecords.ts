@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export interface CallRecord {
   id: string;
@@ -10,7 +10,7 @@ export interface CallRecord {
   caller_extension_username: string | null;
   callee_extension_username: string | null;
   direction: "inbound" | "outbound" | "internal";
-  status: "answered" | "missed" | "busy" | "failed" | "voicemail";
+  status: "answered" | "missed" | "busy" | "failed";
   sim_port: number | null;
   extension: string | null;
   start_time: string;
@@ -27,11 +27,21 @@ export interface CallRecord {
   created_at: string;
 }
 
-export const useCallRecords = (page = 1, pageSize = 100) => {
+export const useCallRecords = (page = 1, pageSize = 100, extension?: string, direction?: string, status?: string) => {
   return useQuery({
-    queryKey: ["call-records", page, pageSize],
+    queryKey: ["call-records", page, pageSize, extension, direction, status],
     queryFn: async () => {
-      const response = await fetch(`${apiUrl}/api/call-records?page=${page}&pageSize=${pageSize}`);
+      let url = `${apiUrl}/api/call-records?page=${page}&pageSize=${pageSize}`;
+      if (extension && extension !== "all") {
+        url += `&extension=${extension}`;
+      }
+      if (direction && direction !== "all") {
+        url += `&direction=${direction}`;
+      }
+      if (status && status !== "all") {
+        url += `&status=${status}`;
+      }
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Failed to fetch call records');
       }

@@ -14,7 +14,7 @@ export const useTelegramNotify = () => {
   const { toast } = useToast();
   const [isConfigured, setIsConfigured] = useState(false);
   const [isVerifying, setIsVerifying] = useState(true);
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+  const apiUrl = import.meta.env.VITE_API_URL;
 
   const checkConfig = async () => {
     try {

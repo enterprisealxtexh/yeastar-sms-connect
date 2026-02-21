@@ -173,7 +173,6 @@ export function CallLogsStoredPanel() {
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="missed">Missed</SelectItem>
-                  <SelectItem value="voicemail">Voicemail</SelectItem>
                   <SelectItem value="failed">Failed</SelectItem>
                 </SelectContent>
               </Select>

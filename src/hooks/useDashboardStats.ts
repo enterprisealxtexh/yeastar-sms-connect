@@ -12,25 +12,30 @@ export const useDashboardStats = () => {
   return useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: async (): Promise<DashboardStats> => {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       
-      const response = await fetch(`${apiUrl}/api/statistics`);
-      if (!response.ok) throw new Error("Failed to fetch statistics");
+      // Fetch ALL stats for total messages and unread count
+      const statsResponse = await fetch(`${apiUrl}/api/statistics`);
+      if (!statsResponse.ok) throw new Error("Failed to fetch statistics");
+      const statsData = await statsResponse.json();
+      const stats = statsData.data || statsData;
+
+      // Fetch TG400 ports with merged hardware + database status
+      const portsResponse = await fetch(`${apiUrl}/api/tg400-ports`);
+      if (!portsResponse.ok) throw new Error("Failed to fetch port configs");
+      const portsData = await portsResponse.json();
+      const portConfigs = portsData.data || [];
+
+      // Calculate total and active SIMs based on TG400 hardware status
+      const totalSims = portConfigs.length;
       
-      const data = await response.json();
-      const stats = data.data || data;
+      // Count active SIMs based on TG400 hardware status (isUp)
+      const activeSims = portConfigs.filter((port: any) => port.isUp === true).length;
       
-      // Calculate total and active SIMs
-      const portStatus = stats.portStatus || [];
-      const totalSims = portStatus.length;
-      
-      // Count active SIMs (enabled ports)
-      const activeSims = portStatus.filter((port: any) => port.enabled === true || port.enabled === 1).length;
-      
-      // Get available ports (enabled ports)
-      const availablePorts = portStatus
-        .filter((port: any) => port.enabled === true || port.enabled === 1)
-        .map((port: any) => port.port_number)
+      // Get available ports (ports that are active on hardware)
+      const availablePorts = portConfigs
+        .filter((port: any) => port.isUp === true)
+        .map((port: any) => port.portNumber)
         .sort((a: number, b: number) => a - b);
 
       return {
@@ -41,6 +46,6 @@ export const useDashboardStats = () => {
         unreadMessages: stats.unreadMessages || 0,
       };
     },
-    refetchInterval: 5000, // 5 seconds for near real-time updates
+    refetchInterval: false, // Manual refresh only via button click
   });
 };

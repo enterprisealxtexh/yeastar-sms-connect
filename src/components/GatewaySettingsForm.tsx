@@ -37,7 +37,7 @@ export const GatewaySettingsForm = () => {
       console.log('[GatewaySettingsForm] ✓ mutateAsync completed, result:', result);
 
       // Log to local API instead of Supabase
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+      const apiUrl = import.meta.env.VITE_API_URL;
       await fetch(`${apiUrl}/api/activity-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,7 +80,7 @@ export const GatewaySettingsForm = () => {
       const gateway_ip = localConfig.gateway_ip || '192.168.5.3';
       const api_port = localConfig.api_port || 5038;
       
-      const response = await fetch(`http://localhost:2003/api/gateway-test`);
+      const response = await fetch(`${apiUrl}/api/gateway-test`);
       const result = await response.json();
       
       if (response.ok && result.success) {

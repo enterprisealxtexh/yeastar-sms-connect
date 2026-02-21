@@ -11,9 +11,10 @@ interface LogEntry {
 
 interface ActivityLogProps {
   logs: LogEntry[];
+  isFullPage?: boolean;
 }
 
-export const ActivityLog = ({ logs }: ActivityLogProps) => {
+export const ActivityLog = ({ logs, isFullPage = false }: ActivityLogProps) => {
   const getLogIcon = (level: LogEntry["level"]) => {
     switch (level) {
       case "success":
@@ -38,7 +39,7 @@ export const ActivityLog = ({ logs }: ActivityLogProps) => {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-[300px]">
+        <ScrollArea className={isFullPage ? "h-[calc(100vh-300px)]" : "h-[300px]"}>
           <div className="divide-y divide-border/30">
             {logs.map((log) => (
               <div

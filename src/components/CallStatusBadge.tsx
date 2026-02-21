@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
-import { Phone, PhoneMissed, PhoneOff, Voicemail, PhoneForwarded } from "lucide-react";
+import { Phone, PhoneMissed, PhoneOff, PhoneForwarded } from "lucide-react";
 
-type CallStatus = "answered" | "missed" | "busy" | "failed" | "voicemail";
+type CallStatus = "answered" | "missed" | "busy" | "failed";
 
 interface CallStatusBadgeProps {
   status: CallStatus;
@@ -12,7 +12,6 @@ const statusConfig: Record<CallStatus, { label: string; variant: "default" | "de
   missed: { label: "Missed", variant: "destructive", icon: PhoneMissed },
   busy: { label: "Busy", variant: "secondary", icon: PhoneOff },
   failed: { label: "Failed", variant: "destructive", icon: PhoneOff },
-  voicemail: { label: "Voicemail", variant: "outline", icon: Voicemail },
 };
 
 export const CallStatusBadge = ({ status }: CallStatusBadgeProps) => {

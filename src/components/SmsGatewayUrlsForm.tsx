@@ -23,7 +23,7 @@ export const SmsGatewayUrlsForm = () => {
   useEffect(() => {
     const loadGateways = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+        const apiUrl = import.meta.env.VITE_API_URL;
         const response = await fetch(`${apiUrl}/api/gateway-status`);
         if (response.ok) {
           const result = await response.json();
@@ -78,7 +78,7 @@ export const SmsGatewayUrlsForm = () => {
     setTestingId(testId);
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       const response = await fetch(`${apiUrl}/api/test-sms-gateway`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -121,7 +121,7 @@ export const SmsGatewayUrlsForm = () => {
 
     setIsSaving(true);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       
       // Save each gateway URL
       for (const gateway of gateways) {

@@ -1,4 +1,5 @@
 
+
 const net = require('net');
 const EventEmitter = require('events');
 
@@ -314,7 +315,8 @@ class TG400TcpApi extends EventEmitter {
    * Parse all ports info from gsm show spans
    */
   parseAllPortsInfo(message) {
-    const lines = message.split('\r\n').filter(l => l.trim());
+    // Split by newlines (handle both \r\n and \n)
+    const lines = message.split(/[\r\n]+/).filter(l => l.trim());
     const ports = [];
 
     for (const line of lines) {

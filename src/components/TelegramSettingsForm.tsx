@@ -29,7 +29,7 @@ export const TelegramSettingsForm = () => {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+        const apiUrl = import.meta.env.VITE_API_URL;
         const response = await fetch(`${apiUrl}/api/telegram-config`);
         if (response.ok) {
           const result = await response.json();
@@ -63,7 +63,7 @@ export const TelegramSettingsForm = () => {
 
     setIsSaving(true);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       const response = await fetch(`${apiUrl}/api/telegram-config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,7 +103,7 @@ export const TelegramSettingsForm = () => {
     setTestResult(null);
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       const response = await fetch(`${apiUrl}/api/telegram-send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -18,6 +18,7 @@ import { Search, Filter, CalendarIcon, X, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import type { SmsCategory } from "@/components/SmsCategoryBadge";
+import { getPortLabel, type PortLabel } from "@/hooks/usePortLabels";
 
 export interface SmsFiltersState {
   search: string;
@@ -32,9 +33,10 @@ interface SmsFiltersProps {
   filters: SmsFiltersState;
   onFiltersChange: (filters: SmsFiltersState) => void;
   simPorts: number[];
+  portLabels?: Record<number, PortLabel>;
 }
 
-export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersProps) => {
+export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: SmsFiltersProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const updateFilter = <K extends keyof SmsFiltersState>(
@@ -114,11 +116,14 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts }: SmsFiltersPro
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Ports</SelectItem>
-                {simPorts.map((port) => (
-                  <SelectItem key={port} value={port.toString()}>
-                    SIM Port {port}
-                  </SelectItem>
-                ))}
+                {simPorts.map((port) => {
+                  const label = getPortLabel(port, portLabels);
+                  return (
+                    <SelectItem key={port} value={port.toString()}>
+                      {label || `Port ${port}`}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>

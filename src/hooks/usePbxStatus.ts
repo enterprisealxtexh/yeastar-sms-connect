@@ -11,7 +11,7 @@ export const usePbxStatus = () => {
   return useQuery({
     queryKey: ["pbx-status"],
     queryFn: async () => {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       try {
         const response = await fetch(`${apiUrl}/api/pbx-status`);
         if (!response.ok) throw new Error("Failed to fetch PBX status");

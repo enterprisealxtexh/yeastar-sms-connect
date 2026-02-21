@@ -10,7 +10,7 @@ export interface PbxConfig {
   web_port: number;
 }
 
-const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export const usePbxConfig = () => {
   const queryClient = useQueryClient();

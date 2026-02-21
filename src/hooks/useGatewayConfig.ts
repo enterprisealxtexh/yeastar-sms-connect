@@ -14,7 +14,7 @@ export const useGatewayConfig = () => {
     queryKey: ["gateway-config"],
     queryFn: async () => {
       // Fetch from local API
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       const response = await fetch(`${apiUrl}/api/gateway-config`);
       if (!response.ok) throw new Error("Failed to fetch gateway config");
       const result = await response.json();
@@ -24,7 +24,7 @@ export const useGatewayConfig = () => {
 
   const updateConfig = useMutation({
     mutationFn: async (updates: Partial<Omit<GatewayConfig, "id">>) => {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       console.log('[useGatewayConfig] mutationFn called with updates:', updates);
       console.log('[useGatewayConfig] API URL:', apiUrl);
       

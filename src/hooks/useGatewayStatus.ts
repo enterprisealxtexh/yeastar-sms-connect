@@ -12,7 +12,7 @@ export const useGatewayStatus = () => {
   return useQuery({
     queryKey: ["gateway-status"],
     queryFn: async () => {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       try {
         const response = await fetch(`${apiUrl}/api/gateway-status`);
         if (!response.ok) throw new Error("Failed to fetch gateway status");

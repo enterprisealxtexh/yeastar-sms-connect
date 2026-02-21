@@ -70,6 +70,7 @@ interface ApiEndpoint {
 const ExtensionsPanel: React.FC = () => {
   const [extensionsData, setExtensionsData] = useState<ExtensionsData | null>(null);
   const [selectedExtension, setSelectedExtension] = useState<Extension | null>(null);
+  const [selectedExtensionId, setSelectedExtensionId] = useState<string | null>(null);
   const [filteredExtensions, setFilteredExtensions] = useState<Extension[]>([]);
   const [extensionFilter, setExtensionFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -86,7 +87,8 @@ const ExtensionsPanel: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:2003/api/extensions');
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/extensions`);
       const data = await response.json();
       
       if (data.success) {
@@ -105,7 +107,8 @@ const ExtensionsPanel: React.FC = () => {
   const syncExtensions = async () => {
     setSyncing(true);
     try {
-      const response = await fetch('http://localhost:2003/api/pbx-sync-extensions', {
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/pbx-sync-extensions`, {
         method: 'POST'
       });
       const data = await response.json();
@@ -136,7 +139,8 @@ const ExtensionsPanel: React.FC = () => {
   const fetchExtensionCallLogs = async (extnumber: string) => {
     setLoadingCallLogs(true);
     try {
-      const response = await fetch(`http://localhost:2003/api/extensions/${extnumber}/call-logs?page=1&pageSize=100`);
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/extensions/${extnumber}/call-logs?page=1&pageSize=100`);
       const data = await response.json();
       
       if (data.success) {
@@ -155,18 +159,21 @@ const ExtensionsPanel: React.FC = () => {
 
   const selectExtension = (extension: Extension) => {
     setSelectedExtension(extension);
+    setSelectedExtensionId(extension.id);
     fetchExtensionCallLogs(extension.extnumber);
   };
 
   const goBackToList = () => {
     setSelectedExtension(null);
+    setSelectedExtensionId(null);
     setExtensionCallLogs([]);
   };
 
   const fetchApiEndpoints = async () => {
     setLoadingEndpoints(true);
     try {
-      const response = await fetch('http://localhost:2003/api/pbx-endpoints');
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/pbx-endpoints`);
       const data = await response.json();
       
       if (data.success) {
@@ -208,6 +215,13 @@ const ExtensionsPanel: React.FC = () => {
   useEffect(() => {
     fetchExtensions();
     fetchApiEndpoints();
+    
+    // Auto-sync extensions every 12 hours (43200000 ms)
+    const syncInterval = setInterval(() => {
+      syncExtensions();
+    }, 12 * 60 * 60 * 1000);
+    
+    return () => clearInterval(syncInterval);
   }, []);
 
   const getStatusBadgeVariant = (status: string) => {
@@ -559,7 +573,11 @@ const ExtensionsPanel: React.FC = () => {
                 filteredExtensions.map((extension) => (
                   <div 
                     key={extension.id} 
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                    className={`flex items-center justify-between p-4 border rounded-lg cursor-pointer transition-colors ${
+                      selectedExtensionId === extension.id
+                        ? 'bg-cyan-50 border-cyan-300 hover:bg-cyan-100'
+                        : 'hover:bg-muted/50'
+                    }`}
                     onClick={() => selectExtension(extension)}
                   >
                     <div className="flex items-center space-x-4">

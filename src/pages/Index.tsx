@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { SystemFooter } from "@/components/SystemFooter";
-import { SimPortCard } from "@/components/SimPortCard";
 import { SystemStatusCard } from "@/components/SystemStatusCard";
 import { SmsInbox } from "@/components/SmsInbox";
 import { ActivityLog } from "@/components/ActivityLog";
@@ -24,7 +23,6 @@ import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Server, Phone, Database } from "lucide-react";
 import { toast } from "sonner";
-import { useSimPorts } from "@/hooks/useSimPorts";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useActivityLogs } from "@/hooks/useActivityLogs";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
@@ -52,16 +50,21 @@ const Index = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   const [lastSync, setLastSync] = useState(() => formatDateNairobi());
+  const [callRecordsPage, setCallRecordsPage] = useState(1);
+  const [callRecordsExtensionFilter, setCallRecordsExtensionFilter] = useState<string>("all");
+  const [callRecordsDirectionFilter, setCallRecordsDirectionFilter] = useState<string>("all");
+  const [callRecordsStatusFilter, setCallRecordsStatusFilter] = useState<string>("all");
 
-  const { data: simData, isLoading: simLoading } = useSimPorts();
-  const simPorts = simData?.ports || [];
-  const simConfigs = simData?.configs || [];
   const { data: messages = [], isLoading: messagesLoading } = useSmsMessages();
   const { data: logs = [], isLoading: logsLoading } = useActivityLogs();
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
-  const { data: callsResponse, isLoading: callsLoading } = useCallRecords(1, 100);
+  const { data: callsResponse, isLoading: callsLoading } = useCallRecords(callRecordsPage, 50, callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter);
   const calls = callsResponse?.data || [];
-  const { data: callStats, isLoading: callStatsLoading } = useCallStats();
+  const callsPagination = callsResponse?.pagination || { page: 1, pageSize: 50, total: 0, totalPages: 1 };
+  // Reset to page 1 when any filter changes
+  useEffect(() => {
+    setCallRecordsPage(1);
+  }, [callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter]);  const { data: callStats, isLoading: callStatsLoading } = useCallStats();
   const { data: allTimeCallStats, isLoading: allTimeCallStatsLoading } = useAllTimeCallStats();
   const { config: pbxConfig } = usePbxConfig();
   const { data: pbxStatus } = usePbxStatus();
@@ -95,7 +98,7 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col">
       <Header 
         onProfileClick={() => setActiveTab("profile")} 
         onMenuClick={() => setMobileMenuOpen(true)}
@@ -153,20 +156,6 @@ const Index = () => {
                 />
               </div>
 
-              {/* SIM Ports Row */}
-              <div>
-                <h2 className="text-sm font-medium text-muted-foreground mb-4">SIM Port Status</h2>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {simLoading ? (
-                    Array.from({ length: 4 }).map((_, i) => (
-                      <Skeleton key={i} className="h-[180px] rounded-lg" />
-                    ))
-                  ) : (
-                    simPorts.map((sim) => <SimPortCard key={sim.port} {...sim} />)
-                  )}
-                </div>
-              </div>
-
               {/* Messages and Logs Row */}
               <div className="grid gap-6 lg:grid-cols-2">
                 {messagesLoading ? (
@@ -197,7 +186,20 @@ const Index = () => {
                 todayStats={callStats}
                 isLoading={allTimeCallStatsLoading || callStatsLoading} 
               />
-              <CallRecordsTable calls={calls} isLoading={callsLoading} />
+              <CallRecordsTable 
+                calls={calls} 
+                isLoading={callsLoading}
+                currentPage={callRecordsPage}
+                totalPages={callsPagination.totalPages}
+                totalCount={callsPagination.total}
+                onPageChange={setCallRecordsPage}
+                extensionFilter={callRecordsExtensionFilter}
+                onExtensionFilterChange={setCallRecordsExtensionFilter}
+                directionFilter={callRecordsDirectionFilter}
+                onDirectionFilterChange={setCallRecordsDirectionFilter}
+                statusFilter={callRecordsStatusFilter}
+                onStatusFilterChange={setCallRecordsStatusFilter}
+              />
             </>
           )}
 
@@ -207,7 +209,7 @@ const Index = () => {
             logsLoading ? (
               <Skeleton className="h-[400px] rounded-lg" />
             ) : (
-              <ActivityLog logs={logs} />
+              <ActivityLog logs={logs} isFullPage={true} />
             )
           )}
 
@@ -221,7 +223,6 @@ const Index = () => {
 
           {activeTab === "config" && (
             <ConfigurationPanel
-              isLoading={simLoading}
               onConfigSaved={() => {
                 queryClient.invalidateQueries({ queryKey: ["sim-ports"] });
               }}

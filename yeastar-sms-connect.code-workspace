@@ -4,10 +4,7 @@
 			"path": "."
 		},
 		{
-			"path": "../Downloads/yeastar-sms-connectbackup"
-		},
-		{
-			"path": "../Downloads/wg/Wirgaurd_Admin"
+			"path": "../backup yeastar"
 		}
 	],
 	"settings": {}

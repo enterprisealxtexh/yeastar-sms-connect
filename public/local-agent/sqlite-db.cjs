@@ -89,7 +89,6 @@ class SMSDatabase {
         port_number INTEGER UNIQUE NOT NULL CHECK (port_number >= 1 AND port_number <= 4),
         label TEXT,
         phone_number TEXT,
-        enabled BOOLEAN DEFAULT 1,
         signal_strength INTEGER DEFAULT 0,
         carrier TEXT,
         status TEXT DEFAULT 'unknown',
@@ -380,8 +379,9 @@ class SMSDatabase {
         CREATE INDEX IF NOT EXISTS idx_pbx_extensions_callerid ON pbx_extensions(callerid);
       `);
       
-      // Migrate existing calls to populate extension field from callerid lookup
-      this.migrateCallExtensions();
+      // NOTE: Migration disabled - all calls already have extensions attached (caller or callee)
+      // Extensions are pre-populated from PBX sync, no need to re-lookup
+      // this.migrateCallExtensions();
     } catch (error) {
       console.error('Error creating indices:', error.message);
     }
@@ -979,7 +979,7 @@ class SMSDatabase {
           return false;
         }
 
-        // Check if duplicate already exists
+        // Check if duplicate already exists by external_id
         const existingStmt = this.db.prepare(`
           SELECT id FROM sms_messages WHERE external_id = ?
         `);
@@ -987,6 +987,26 @@ class SMSDatabase {
         
         if (existing) {
           logger.debug(`ℹ️  SMS already exists (duplicate): external_id=${external_id}`);
+          return false;
+        }
+
+        // ADDITIONAL: Check for duplicates within last 5 seconds by content+sender+port
+        // This catches cases where external_id is null or non-unique
+        const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
+        const contentAbstract = message_content ? message_content.substring(0, 100) : '';
+        
+        const recentDupStmt = this.db.prepare(`
+          SELECT id FROM sms_messages 
+          WHERE sender_number = ? 
+          AND sim_port = ? 
+          AND message_content LIKE ? 
+          AND received_at > ?
+          LIMIT 1
+        `);
+        const recentDup = recentDupStmt.get(sender_number, sim_port, contentAbstract + '%', fiveSecondsAgo);
+        
+        if (recentDup) {
+          logger.debug(`ℹ️  SMS likely duplicate (received within 5s): sender=${sender_number}, port=${sim_port}`);
           return false;
         }
         
@@ -1658,6 +1678,22 @@ class SMSDatabase {
       console.error('Error importing contacts:', error.message);
       return 0;
     }
+  }
+
+  // Expose database prepare method for direct SQL queries
+  prepare(sql) {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+    return this.db.prepare(sql);
+  }
+
+  // Expose database exec method for direct SQL execution
+  exec(sql) {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+    return this.db.exec(sql);
   }
 
   close() {

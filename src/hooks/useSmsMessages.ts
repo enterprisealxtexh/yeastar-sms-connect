@@ -19,7 +19,7 @@ export interface SmsMessage {
 
 export const useSmsMessages = (limit = 50) => {
   const queryClient = useQueryClient();
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+  const apiUrl = import.meta.env.VITE_API_URL;
 
   // Poll for changes (realtime not available with local SQLite)
   useEffect(() => {
@@ -73,7 +73,7 @@ export const useCategorizeMessages = () => {
   return useMutation({
     mutationFn: async (options?: { messageId?: string; batch?: boolean }) => {
       // For now, just update the status locally
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+      const apiUrl = import.meta.env.VITE_API_URL;
       
       if (options?.messageId) {
         const response = await fetch(
@@ -102,7 +102,7 @@ export const useCategorizeMessages = () => {
 
 export const useMarkAllSmsAsRead = () => {
   const queryClient = useQueryClient();
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+  const apiUrl = import.meta.env.VITE_API_URL;
 
   return useMutation({
     mutationFn: async () => {

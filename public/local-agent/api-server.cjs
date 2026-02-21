@@ -1203,7 +1203,7 @@ startMissedCallAlerts();
 // ========================================
 
 let dailyReportInterval = null;
-let lastReportDate = null;
+let lastReportTimes = {}; // Track last send times for morning and evening reports
 
 async function sendDailyReport() {
   try {
@@ -1217,93 +1217,57 @@ async function sendDailyReport() {
     // Get today's date
     const today = new Date().toISOString().split('T')[0];
 
-    // === CALL STATISTICS ===
+    // === CALL STATISTICS (AGGREGATED) ===
     const callStats = db.db.prepare(`
       SELECT 
-        cr.extension,
-        pe.username,
         COUNT(*) as total_calls,
-        SUM(CASE WHEN cr.status = 'answered' THEN 1 ELSE 0 END) as received,
-        SUM(CASE WHEN cr.status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as missed,
-        SUM(CASE WHEN cr.status = 'busy' THEN 1 ELSE 0 END) as busy,
-        SUM(CASE WHEN cr.status = 'failed' THEN 1 ELSE 0 END) as failed
-      FROM call_records cr
-      LEFT JOIN pbx_extensions pe ON cr.extension = pe.extnumber
-      WHERE SUBSTR(cr.start_time, 1, 10) = ?
-      GROUP BY cr.extension
-      HAVING COUNT(*) > 0
-      ORDER BY total_calls DESC
-    `).all(today);
+        SUM(CASE WHEN status = 'answered' THEN 1 ELSE 0 END) as answered,
+        SUM(CASE WHEN status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as missed,
+        SUM(CASE WHEN status = 'busy' THEN 1 ELSE 0 END) as busy,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        COUNT(DISTINCT extension) as total_extensions
+      FROM call_records
+      WHERE SUBSTR(start_time, 1, 10) = ?
+    `).get(today);
 
-    // === SMS STATISTICS ===
+    // === SMS STATISTICS (AGGREGATED) ===
     const smsStats = db.db.prepare(`
-      SELECT 
-        sender_number,
-        sim_port,
-        COUNT(*) as total_sms,
-        GROUP_CONCAT(message_content, ' | ') as messages
-      FROM sms_messages
+      SELECT COUNT(*) as total_sms FROM sms_messages 
       WHERE SUBSTR(received_at, 1, 10) = ?
-      GROUP BY sender_number, sim_port
-      ORDER BY total_sms DESC
-      LIMIT 20
-    `).all(today);
-
-    const totalSmsToday = db.db.prepare(`
-      SELECT COUNT(*) as count FROM sms_messages 
-      WHERE SUBSTR(received_at, 1, 10) = ?
-    `).get(today).count;
+    `).get(today);
 
     // Check if there's any data to report
-    const hasCallData = callStats && callStats.length > 0;
-    const hasSmsData = smsStats && smsStats.length > 0;
+    const hasCallData = callStats && callStats.total_calls > 0;
+    const hasSmsData = smsStats && smsStats.total_sms > 0;
 
     if (!hasCallData && !hasSmsData) {
       logger.info('No calls or SMS today, skipping daily report');
       return;
     }
 
-    let messageText = 'DAILY SYSTEM REPORT\n\n';
+    let messageText = '📊 DAILY SYSTEM REPORT\n\n';
     messageText += `Date: ${today}\n`;
-    messageText += `Report Time: 23:59:59 Nairobi Time\n`;
+    messageText += `Report Time: Nairobi Time\n`;
     messageText += `\n========== CALLS ==========\n\n`;
 
     if (hasCallData) {
-      const totalCalls = callStats.reduce((sum, stat) => sum + stat.total_calls, 0);
-      messageText += `Extensions with Calls: ${callStats.length}\n`;
-      messageText += `Total Calls: ${totalCalls}\n\n`;
-
-      // Format each extension's stats
-      callStats.forEach((stat, idx) => {
-        const username = stat.username || 'N/A';
-        messageText += `${idx + 1}. Ext ${stat.extension} (${username})\n`;
-        messageText += `   Total: ${stat.total_calls} | Received: ${stat.received || 0} | Missed: ${stat.missed || 0} | Busy: ${stat.busy || 0} | Failed: ${stat.failed || 0}\n\n`;
-      });
+      messageText += `Total Calls: ${callStats.total_calls}\n`;
+      messageText += `Extensions with Calls: ${callStats.total_extensions}\n\n`;
+      messageText += `Call Status Breakdown:\n`;
+      messageText += `✓ Answered: ${callStats.answered || 0}\n`;
+      messageText += `✗ Missed: ${callStats.missed || 0}\n`;
+      messageText += `⊘ Busy: ${callStats.busy || 0}\n`;
+      messageText += `⚠ Failed: ${callStats.failed || 0}\n`;
     } else {
-      messageText += `No calls today.\n\n`;
+      messageText += `No calls today.\n`;
     }
 
     messageText += `\n========== SMS ==========\n\n`;
 
     if (hasSmsData) {
-      messageText += `Total SMS Received: ${totalSmsToday}\n`;
-      messageText += `Unique Senders: ${smsStats.length}\n\n`;
-
-      // Format SMS logs
-      smsStats.forEach((sms, idx) => {
-        const msgCount = sms.total_sms;
-        messageText += `${idx + 1}. From: ${sms.sender_number} (Port ${sms.sim_port})\n`;
-        messageText += `   Messages: ${msgCount}\n`;
-        // Show first message preview
-        const messages = sms.messages ? sms.messages.split(' | ') : [];
-        if (messages.length > 0) {
-          const preview = messages[0].substring(0, 60);
-          messageText += `   Preview: "${preview}${preview.length === 60 ? '...' : ''}"\n\n`;
-        }
-      });
+      messageText += `Total Messages Received: ${smsStats.total_sms}\n`;
     } else {
-      messageText += `Total SMS Received: 0\n`;
-      messageText += `No SMS today.\n\n`;
+      messageText += `Total Messages Received: 0\n`;
     }
 
     messageText += `\n========== END REPORT ==========\n`;
@@ -1330,7 +1294,7 @@ async function sendDailyReport() {
 
     if (tgResp.ok && tgJson.ok) {
       logger.info('Daily report sent successfully');
-      db.logActivity('daily_report_sent', `Daily report with ${callStats.length} extensions and ${totalSmsToday} SMS messages sent`, 'success');
+      db.logActivity('daily_report_sent', `Daily report: ${callStats.total_calls} calls, ${smsStats.total_sms} SMS messages`, 'success');
     } else {
       logger.error(`Daily report send failed: ${tgJson.description || 'Unknown error'}`);
     }
@@ -1340,21 +1304,33 @@ async function sendDailyReport() {
 }
 
 function scheduleDailyReport() {
-  logger.info('Scheduling daily report for 23:59:59 Nairobi time (20:59:59 UTC)');
+  logger.info('Scheduling shift reports:');
+  logger.info('  Day Shift (06:00:00 - 17:59:59 Nairobi) → Report at 18:00:00 Nairobi (15:00:00 UTC)');
+  logger.info('  Night Shift (18:00:00 - 05:59:59 Nairobi) → Report at 06:00:00 Nairobi (03:00:00 UTC)');
 
-  // Check every second if it's time to send the report
+  // Check every second if it's time to send the reports
   dailyReportInterval = setInterval(() => {
     const now = new Date();
-    // Nairobi is UTC+3, so 23:59:59 Nairobi time = 20:59:59 UTC
+    // Nairobi is UTC+3
     const utcHours = now.getUTCHours();
     const utcMinutes = now.getUTCMinutes();
     const utcSeconds = now.getUTCSeconds();
     const time = `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}:${String(utcSeconds).padStart(2, '0')}`;
     const today = now.toISOString().split('T')[0];
 
-    // Send report at 20:59:59 UTC (23:59:59 Nairobi) and only once per day
-    if (time === '20:59:59' && lastReportDate !== today) {
-      lastReportDate = today;
+    // Day Shift End Report at exactly 18:00:00 Nairobi (15:00:00 UTC)
+    // Covers: 06:00:00 - 17:59:59 Nairobi
+    if (time === '15:00:00' && lastReportTimes.dayShift !== today) {
+      lastReportTimes.dayShift = today;
+      logger.info('📊 Sending Day Shift Report (18:00:00 Nairobi - covers 06:00-18:00)');
+      sendDailyReport();
+    }
+
+    // Night Shift End Report at exactly 06:00:00 Nairobi (03:00:00 UTC)
+    // Covers: 18:00:00 - 05:59:59 Nairobi
+    if (time === '03:00:00' && lastReportTimes.nightShift !== today) {
+      lastReportTimes.nightShift = today;
+      logger.info('🌙 Sending Night Shift Report (06:00:00 Nairobi - covers 18:00-06:00)');
       sendDailyReport();
     }
   }, 1000); // Check every second
@@ -1420,6 +1396,13 @@ async function startSmsListener() {
       return;
     }
 
+    // Remove old listeners to prevent duplicates
+    if (tg400Api) {
+      logger.info('🧹 Cleaning up old SMS listener...');
+      tg400Api.removeAllListeners('sms-received');
+      tg400Api.removeAllListeners('disconnected');
+    }
+
     logger.info(`\n📡 Connecting SMS listener to ${config.gateway_ip}:${config.api_port || 5038}`);
     
     tg400Api = new TG400TcpApi(
@@ -1434,7 +1417,22 @@ async function startSmsListener() {
     tg400Api.on('sms-received', (sms) => {
       try {
         logger.info(`\n📨 SMS LISTENER: Received event from TG400`);
-        logger.debug(`SMS Details: ID=${sms.id}, Port=${sms.port}, From=${sms.sender}`);
+        logger.info(`🔍 RAW SMS EVENT DATA:`, JSON.stringify({
+          id: sms.id,
+          port: sms.port,
+          portNumber: sms.portNumber,
+          port_number: sms.port_number,
+          sender: sms.sender,
+          timestamp: new Date().toISOString()
+        }, null, 2));
+        
+        // Determine which port field has the actual port number
+        const portFromEvent = sms.port !== undefined ? sms.port : 
+                             sms.portNumber !== undefined ? sms.portNumber :
+                             sms.port_number !== undefined ? sms.port_number : null;
+        
+        logger.info(`✅ RESOLVED PORT: ${portFromEvent}`);
+        const internalPort = portFromEvent;
         
         let messageContent = sms.content || '';
         
@@ -1448,26 +1446,26 @@ async function startSmsListener() {
           // If decoding fails, use original content
         }
 
-        logger.info(`💾 Saving SMS to database: From ${sms.sender}, ${messageContent.length} chars, Port ${sms.port}, ID: ${sms.id}`);
+        logger.info(`💾 Saving SMS to database: From ${sms.sender}, ${messageContent.length} chars, Port ${internalPort}, ID: ${sms.id}`);
         
         // Use high-level insert for consistency
         const inserted = db.insertSMS({
           external_id: sms.id,
           sender_number: sms.sender,
           message_content: messageContent,
-          sim_port: sms.port,
+          sim_port: internalPort,
           received_at: sms.received_at || new Date().toISOString(),
           status: 'unread'
         });
 
         if (inserted) {
-          logger.info(`✅ SMS SAVED: From ${sms.sender} on port ${sms.port}`);
-          db.logActivity('sms_received', `New SMS from ${sms.sender} on port ${sms.port}: ${messageContent.substring(0, 50)}...`, 'success', sms.port);
+          logger.info(`✅ SMS SAVED: From ${sms.sender} on internal port ${internalPort}`);
+          db.logActivity('sms_received', `New SMS from ${sms.sender} on port ${internalPort}: ${messageContent.substring(0, 50)}...`, 'success', internalPort);
         } else {
-          logger.error(`❌ SAVE FAILED: SMS from ${sms.sender} on port ${sms.port} (ID: ${sms.id})`);
+          logger.error(`❌ SAVE FAILED: SMS from ${sms.sender} on internal port ${internalPort} (ID: ${sms.id})`);
           logger.debug(`   Message: ${messageContent.substring(0, 100)}`);
-          db.logActivity('sms_received_failed', `Failed to save SMS from ${sms.sender} on port ${sms.port} (ID: ${sms.id})`, 'error', sms.port);
-          alertErrorImmediately('SMS Save Failed', `SMS from ${sms.sender} on port ${sms.port} could not be saved to database`);
+          db.logActivity('sms_received_failed', `Failed to save SMS from ${sms.sender} on internal port ${internalPort} (ID: ${sms.id})`, 'error', internalPort);
+          alertErrorImmediately('SMS Save Failed', `SMS from ${sms.sender} on internal port ${internalPort} could not be saved to database`);
         }
       } catch (err) {
         logger.error(`\n❌ SMS HANDLER ERROR: ${err && err.message ? err.message : String(err)}`);
@@ -1567,6 +1565,247 @@ app.get('/api/gateway-status', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// ========================================
+// TG400 Direct API - Get Active SIM Ports
+// ========================================
+
+app.get('/api/tg400-ports', async (req, res) => {
+  try {
+    const config = db.getGatewayConfig();
+    
+    if (!config || !config.gateway_ip || !config.api_port) {
+      return res.status(400).json({
+        success: false,
+        error: 'TG400 gateway not configured'
+      });
+    }
+
+    let tg400Ports = [];
+
+    // If already connected, use existing connection
+    if (tg400Api && tg400Api.isConnected && tg400Api.isAuthenticated) {
+      try {
+        tg400Ports = await tg400Api.getAllPortsInfo();
+      } catch (error) {
+        logger.error(`Failed to get ports from existing connection: ${error.message}`);
+      }
+    }
+
+    // If no ports from existing connection, create temporary connection
+    if (tg400Ports.length === 0) {
+      const TG400TcpApi = require('./tg400-tcp-api.cjs');
+      const tempApi = new TG400TcpApi(
+        config.gateway_ip,
+        parseInt(config.api_port) || 5038,
+        config.api_username,
+        config.api_password,
+        logger
+      );
+
+      try {
+        await tempApi.connect();
+        tg400Ports = await tempApi.getAllPortsInfo();
+        tempApi.disconnect();
+      } catch (error) {
+        logger.error(`Failed to get ports from temp connection: ${error.message}`);
+        tg400Ports = [];
+      }
+    }
+
+    // Get database configurations for ports
+    const dbConfigs = db.prepare(`
+      SELECT port_number, label, carrier, phone_number, signal_strength, status
+      FROM sim_port_config
+    `).all();
+
+    // Merge TG400 data with database configs
+    const mergedPorts = tg400Ports.map(tg400Port => {
+      // TG400 API already returns port numbers as 1-4 (internal format)
+      // No conversion needed
+      const portNumber = tg400Port.portNumber;
+      
+      // Find matching config using port number
+      const dbConfig = dbConfigs.find(cfg => cfg.port_number === portNumber);
+      
+      logger.debug(`[/api/tg400-ports] Port ${portNumber}: DB match=${dbConfig ? 'yes' : 'no'}, label="${dbConfig?.label || 'none'}"`);
+      
+      return {
+        ...tg400Port,
+        portNumber: portNumber,  // Already internal port number (1-4)
+        label: dbConfig?.label || null,
+        carrier: dbConfig?.carrier || null,
+        phone_number: dbConfig?.phone_number || null,
+        signal_strength: dbConfig?.signal_strength || tg400Port.signal_strength || 0,
+        status: dbConfig?.status || tg400Port.status || 'unknown'
+      };
+    });
+
+    res.json({
+      success: true,
+      data: mergedPorts,
+      source: 'merged',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error(`Failed to get TG400 ports: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ========================================
+// SIM Port Configuration Endpoints
+// ========================================
+
+// Test endpoint to verify routing works
+app.get('/api/sim-port-test', (req, res) => {
+  logger.info('[TEST] SIM port test endpoint reached');
+  res.json({ success: true, message: 'Routing is working' });
+});
+
+// Get all SIM port configurations
+app.get('/api/sim-ports', (req, res) => {
+  try {
+    // Get configuration from database
+    const ports = db.prepare(`
+      SELECT id, port_number, label, phone_number, signal_strength, 
+             carrier, status, last_seen_at, created_at, updated_at
+      FROM sim_port_config
+      ORDER BY port_number ASC
+    `).all();
+
+    logger.debug(`[/api/sim-ports] Raw ports from DB:`, ports.map(p => ({ port_number: p.port_number, label: p.label })));
+
+    // Database already stores port numbers as 1-4 (internal format)
+    // No normalization needed
+    const normalizedPorts = ports.map(port => ({
+      ...port
+      // port_number is already 1-4, no conversion needed
+    }));
+
+    logger.debug(`[/api/sim-ports] Ports:`, normalizedPorts.map(p => ({ port_number: p.port_number, label: p.label })));
+
+    res.json({
+      success: true,
+      data: normalizedPorts
+    });
+  } catch (error) {
+    logger.error(`Failed to get SIM ports: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get specific SIM port configuration
+app.get('/api/sim-port/:port', (req, res) => {
+  try {
+    const { port } = req.params;
+    const internalPort = parseInt(port);
+    
+    logger.debug(`[/api/sim-port/:port] Looking for port ${internalPort}`);
+    
+    // Database stores port numbers as 1-4 (internal format)
+    let portData = db.prepare(`
+      SELECT id, port_number, label, phone_number, signal_strength,
+             carrier, status, last_seen_at, created_at, updated_at
+      FROM sim_port_config
+      WHERE port_number = ?
+      LIMIT 1
+    `).get(internalPort);
+
+    if (!portData) {
+      logger.debug(`[/api/sim-port/:port] Port not found for ${internalPort}`);
+      return res.status(404).json({
+        success: false,
+        error: 'Port not found'
+      });
+    }
+
+    logger.debug(`[/api/sim-port/:port] Found port with port_number=${portData.port_number}, label=${portData.label}`);
+
+    // Database stores internal port numbers, return as-is
+    const normalizedPort = {
+      ...portData
+    };
+
+    res.json({
+      success: true,
+      data: normalizedPort
+    });
+  } catch (error) {
+    logger.error(`Failed to get SIM port: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Update SIM port label
+app.put('/api/sim-port/:port/label', (req, res) => {
+  try {
+    const { port } = req.params;
+    const portNumber = parseInt(port);  // Port number (1-4) sent by config page
+    const { label } = req.body;
+
+    logger.info(`[/api/sim-port/:port/label] Saving label for port ${portNumber}: "${label}"`);
+
+    if (!label || typeof label !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Label must be a non-empty string'
+      });
+    }
+
+    // Check if record exists for this port
+    let existing = db.prepare(`
+      SELECT id, port_number FROM sim_port_config WHERE port_number = ?
+    `).get(portNumber);
+
+    logger.debug(`[/api/sim-port/:port/label] Existing record:`, existing);
+
+    if (!existing) {
+      // Create new port config
+      logger.info(`[/api/sim-port/:port/label] Creating new port config for port ${portNumber}`);
+      db.prepare(`
+        INSERT INTO sim_port_config (port_number, label)
+        VALUES (?, ?)
+      `).run(portNumber, label);
+    } else {
+      // Update existing port config
+      logger.info(`[/api/sim-port/:port/label] Updating port config for port ${portNumber}`);
+      db.prepare(`
+        UPDATE sim_port_config
+        SET label = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE port_number = ?
+      `).run(label, portNumber);
+    }
+
+    logger.info(`[/api/sim-port/:port/label] Port ${portNumber} label saved: "${label}"`);
+
+    res.json({
+      success: true,
+      message: `Port ${portNumber} label updated successfully`,
+      data: {
+        port_number: portNumber,
+        label: label
+      }
+    });
+  } catch (error) {
+    logger.error(`Failed to update SIM port label: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
 
 // ========================================
 // Authentication Endpoints
@@ -3100,7 +3339,7 @@ app.post('/api/telegram-send', async (req, res) => {
       const gatewayConfig = db.getGatewayConfig();
       const pbxConfig = db.getPbxConfig();
       const totalPorts = db.db.prepare('SELECT COUNT(*) as cnt FROM sim_port_config').get();
-      const portDetails = db.db.prepare('SELECT port_number, enabled, status FROM sim_port_config ORDER BY port_number').all();
+      const portDetails = db.db.prepare('SELECT port_number, status FROM sim_port_config ORDER BY port_number').all();
       
       messageText = 'GATEWAY & PBX STATUS\n\n';
       messageText += `Gateway IP: ${gatewayConfig?.gateway_ip || 'Not configured'}\n`;
@@ -3393,37 +3632,56 @@ app.post('/api/pbx-call-history/sync', async (req, res) => {
 app.get('/api/call-records', (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const pageSize = parseInt(req.query.pageSize) || 50;
+    // Support both 'limit' and 'pageSize' parameters
+    const limit = parseInt(req.query.limit) || parseInt(req.query.pageSize) || 50;
+    const pageSize = Math.min(limit, 10000); // Cap at 10000 max
     const offset = (page - 1) * pageSize;
     const extension = req.query.extension;
+    const direction = req.query.direction;
+    const status = req.query.status;
     
-    let countQuery, dataQuery, params;
+    let countQuery, dataQuery, params = [];
+    let whereConditions = [];
     
+    // Build where conditions based on filters
     if (extension) {
-      // Filter by extension
-      countQuery = `
-        SELECT COUNT(*) as total FROM call_records
-        WHERE extension = ? OR caller_number = ? OR callee_number = ?
-      `;
-      dataQuery = `
-        SELECT * FROM call_records
-        WHERE extension = ? OR caller_number = ? OR callee_number = ?
-        ORDER BY start_time DESC
-        LIMIT ? OFFSET ?
-      `;
-      params = [extension, extension, extension, pageSize, offset];
-    } else {
-      // Get all calls
-      countQuery = `SELECT COUNT(*) as total FROM call_records`;
-      dataQuery = `
-        SELECT * FROM call_records
-        ORDER BY start_time DESC
-        LIMIT ? OFFSET ?
-      `;
-      params = [pageSize, offset];
+      whereConditions.push('(cr.extension = ? OR cr.caller_number = ? OR cr.callee_number = ?)');
+      params.push(extension, extension, extension);
     }
     
-    const { total } = db.db.prepare(countQuery).get(...params.slice(0, extension ? 3 : 0));
+    if (direction) {
+      whereConditions.push('cr.direction = ?');
+      params.push(direction);
+    }
+    
+    if (status) {
+      whereConditions.push('cr.status = ?');
+      params.push(status);
+    }
+    
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    
+    // Count query
+    countQuery = `SELECT COUNT(*) as total FROM call_records cr ${whereClause}`;
+    
+    // Data query
+    dataQuery = `
+      SELECT 
+        cr.*,
+        ce_caller.username as caller_extension_username,
+        ce_callee.username as callee_extension_username
+      FROM call_records cr
+      LEFT JOIN pbx_extensions ce_caller ON cr.caller_number = ce_caller.extnumber
+      LEFT JOIN pbx_extensions ce_callee ON cr.callee_number = ce_callee.extnumber
+      ${whereClause}
+      ORDER BY cr.start_time DESC
+      LIMIT ? OFFSET ?
+    `;
+    
+    // Add pagination params
+    params.push(pageSize, offset);
+    
+    const { total } = db.db.prepare(countQuery).get(...params.slice(0, params.length - 2));
     const records = db.db.prepare(dataQuery).all(...params);
     
     res.json({ 
@@ -4355,10 +4613,12 @@ app.get('/api/debug/notified-calls', (req, res) => {
 });
 
 app.use((req, res) => {
+  logger.warn(`[404-HANDLER] Unmatched request: ${req.method} ${req.path}`);
   res.status(404).json({
     success: false,
     error: 'Endpoint not found',
-    path: req.path
+    path: req.path,
+    method: req.method
   });
 });
 
@@ -4593,6 +4853,42 @@ app.get('/api/debug/extension-call-stats', (req, res) => {
 });
 
 // ========================================
+// Initialize SIM Ports
+// ========================================
+function ensureSmsPortsExist() {
+  try {
+    logger.info('[PORT INIT] Ensuring all 4 internal ports (1-4) exist in database...');
+    
+    for (let port = 1; port <= 4; port++) {
+      const existing = db.prepare(`
+        SELECT id FROM sim_port_config WHERE port_number = ?
+      `).get(port);
+      
+      if (!existing) {
+        logger.info(`[PORT INIT] Creating port ${port}`);
+        db.prepare(`
+          INSERT INTO sim_port_config (port_number)
+          VALUES (?)
+        `).run(port);
+      } else {
+        logger.debug(`[PORT INIT] Port ${port} already exists`);
+      }
+    }
+    
+    // Log current ports
+    const allPorts = db.prepare(`
+      SELECT port_number, label FROM sim_port_config ORDER BY port_number
+    `).all();
+    
+    logger.info(`[PORT INIT] Current ports in database:`, 
+      allPorts.map(p => ({ port: p.port_number, label: p.label }))
+    );
+  } catch (error) {
+    logger.error(`[PORT INIT] Error ensuring ports exist: ${error.message}`);
+  }
+}
+
+// ========================================
 // Start server
 // ========================================
 
@@ -4605,10 +4901,13 @@ const server = app.listen(PORT, () => {
   logger.info('Database: %s', dbPath);
   logger.info('Starting SMS listener service...\n');
 
+  // Ensure all ports exist
+  ensureSmsPortsExist();
+
   // Start SMS Listener automatically
   startSmsListener();
 
-  logger.debug('Available endpoints: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/health, GET /api/gateway-config, POST /api/gateway-config, GET /api/pbx-config, POST /api/pbx-config, GET /api/sms-messages, PUT /api/sms-messages/:id/status, GET /api/port-status, PUT /api/port-status/:port_number, GET /api/activity-logs, POST /api/activity-logs, GET /api/statistics, GET /api/available-ports, POST /api/agent-heartbeat, GET /api/agent-heartbeat, GET /api/users/profile/me, PUT /api/users/profile/me');
+  logger.debug('Available endpoints: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/health, GET /api/gateway-config, POST /api/gateway-config, GET /api/pbx-config, POST /api/pbx-config, GET /api/sms-messages, PUT /api/sms-messages/:id/status, GET /api/port-status, PUT /api/port-status/:port_number, GET /api/activity-logs, POST /api/activity-logs, GET /api/statistics, GET /api/available-ports, POST /api/agent-heartbeat, GET /api/agent-heartbeat, GET /api/users/profile/me, PUT /api/users/profile/me, GET /api/tg400-ports, GET /api/sim-ports, GET /api/sim-port/:port, PUT /api/sim-port/:port/label');
 });
 
 // Graceful shutdown

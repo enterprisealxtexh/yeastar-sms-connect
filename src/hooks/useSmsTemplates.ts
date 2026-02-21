@@ -9,7 +9,7 @@ export interface SmsTemplate {
   updated_at: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:2003";
+const API_URL = import.meta.env.VITE_API_URL;
 
 export const useSmsTemplates = () => {
   const queryClient = useQueryClient();

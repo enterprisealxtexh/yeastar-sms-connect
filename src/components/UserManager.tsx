@@ -34,7 +34,7 @@ interface User {
   last_login?: string | null;
 }
 
-const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export const UserManager = () => {
   const { user: currentUser } = useAuth();

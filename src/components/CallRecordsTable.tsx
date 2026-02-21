@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Phone, Search, Clock, Timer } from "lucide-react";
+import { Phone, Search, Clock, Timer, ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { CallStatusBadge, CallDirectionBadge } from "./CallStatusBadge";
 import { CallBackButton } from "./CallBackButton";
 import { CallRecord } from "@/hooks/useCallRecords";
@@ -15,6 +16,16 @@ import { formatDateNairobi } from "@/lib/dateUtils";
 interface CallRecordsTableProps {
   calls: CallRecord[];
   isLoading: boolean;
+  currentPage?: number;
+  totalPages?: number;
+  totalCount?: number;
+  onPageChange?: (page: number) => void;
+  extensionFilter?: string;
+  onExtensionFilterChange?: (extension: string) => void;
+  directionFilter?: string;
+  onDirectionFilterChange?: (direction: string) => void;
+  statusFilter?: string;
+  onStatusFilterChange?: (status: string) => void;
 }
 
 const formatDuration = (seconds: number): string => {
@@ -24,11 +35,21 @@ const formatDuration = (seconds: number): string => {
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 };
 
-export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) => {
+export const CallRecordsTable = ({ 
+  calls, 
+  isLoading,
+  currentPage = 1,
+  totalPages = 1,
+  totalCount = 0,
+  onPageChange,
+  extensionFilter = "all",
+  onExtensionFilterChange,
+  directionFilter = "all",
+  onDirectionFilterChange,
+  statusFilter = "all",
+  onStatusFilterChange
+}: CallRecordsTableProps) => {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [directionFilter, setDirectionFilter] = useState<string>("all");
-  const [extensionFilter, setExtensionFilter] = useState<string>("all");
   const { extensions } = useExtensions();
 
   const filteredCalls = calls.filter((call) => {
@@ -43,25 +64,13 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
       call.caller_number.toLowerCase().includes(search.toLowerCase()) ||
       call.callee_number.toLowerCase().includes(search.toLowerCase()) ||
       call.caller_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
-      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase());
+      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
+      calleeDisplay.toLowerCase().includes(search.toLowerCase()) ||
+      callerDisplay.toLowerCase().includes(search.toLowerCase());
 
-    const matchesStatus = statusFilter === "all" || call.status === statusFilter;
-    const matchesDirection = directionFilter === "all" || call.direction === directionFilter;
-    
-    // Extension filtering: check if call involves this extension
-    // A call involves an extension if:
-    // 1. The extension field matches (for internal/PBX calls)
-    // 2. The caller_number matches (outbound from extension)
-    // 3. The callee_number matches (inbound to extension)
-    let matchesExtension = extensionFilter === "all";
-    if (extensionFilter !== "all") {
-      matchesExtension = 
-        call.extension === extensionFilter ||
-        call.caller_number === extensionFilter ||
-        call.callee_number === extensionFilter;
-    }
-
-    return matchesSearch && matchesStatus && matchesDirection && matchesExtension;
+    // All filtering is now done server-side via the API (extension, direction, status)
+    // Client-side search is the only local filtering
+    return matchesSearch;
   });
 
   return (
@@ -84,7 +93,7 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                 className="pl-8 w-48"
               />
             </div>
-            <Select value={extensionFilter} onValueChange={setExtensionFilter}>
+            <Select value={extensionFilter} onValueChange={(value) => onExtensionFilterChange?.(value)}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Extension" />
               </SelectTrigger>
@@ -97,7 +106,7 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                 ))}
               </SelectContent>
             </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={(value) => onStatusFilterChange?.(value)}>
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -107,10 +116,9 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
                 <SelectItem value="missed">Missed</SelectItem>
                 <SelectItem value="busy">Busy</SelectItem>
                 <SelectItem value="failed">Failed</SelectItem>
-                <SelectItem value="voicemail">Voicemail</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={directionFilter} onValueChange={setDirectionFilter}>
+            <Select value={directionFilter} onValueChange={(value) => onDirectionFilterChange?.(value)}>
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Direction" />
               </SelectTrigger>
@@ -220,7 +228,39 @@ export const CallRecordsTable = ({ calls, isLoading }: CallRecordsTableProps) =>
             </Table>
           </ScrollArea>
         )}
+        {!isLoading && (
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 bg-muted/20">
+            <div className="text-sm text-muted-foreground">
+              Page {currentPage} of {totalPages} ({totalCount} total calls)
+            </div>
+            {totalPages > 1 && (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="gap-1"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Back
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPageChange?.(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="gap-1"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 };
+

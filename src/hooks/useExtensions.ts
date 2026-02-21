@@ -44,7 +44,8 @@ export const useExtensions = () => {
       setIsLoading(true);
       setError(null);
       
-      const response = await fetch("http://localhost:2003/api/extensions");
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/extensions`);
       const data: ExtensionsResponse = await response.json();
       
       if (data.success && data.data?.extensions) {

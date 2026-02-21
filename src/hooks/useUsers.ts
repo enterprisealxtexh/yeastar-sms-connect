@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+const apiUrl = import.meta.env.VITE_API_URL;
 
 export interface User {
   id: string;

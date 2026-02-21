@@ -20,7 +20,7 @@ interface HourlyDistribution {
 }
 
 interface CallStatusDistribution {
-  status: "answered" | "missed" | "busy" | "failed" | "voicemail";
+  status: "answered" | "missed" | "busy" | "failed";
   count: number;
 }
 
@@ -53,7 +53,7 @@ export const useAnalytics = (days: number = 7) => {
   return useQuery({
     queryKey: ["analytics", days],
     queryFn: async (): Promise<AnalyticsData> => {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:2003';
+      const apiUrl = import.meta.env.VITE_API_URL;
       const timeZone = 'Africa/Nairobi';
 
       // Helper to parse database timestamps (format: "YYYY-MM-DD HH:MM:SS" stored as UTC)
@@ -71,12 +71,15 @@ export const useAnalytics = (days: number = 7) => {
       // If it's Feb 18, 2026 00:00:00 in Nairobi (UTC+3), that's Feb 17, 2026 21:00:00 UTC
       const startUTC = new Date(startDateInNairobi.getTime() - (3 * 60 * 60 * 1000));
       
-      // Format as "YYYY-MM-DD HH:MM:SS" for database query
+      // Format as ISO string for SMS query - stored as "YYYY-MM-DDTHH:MM:SS.000Z" in database
+      const startDateISO = startUTC.toISOString();
+      
+      // Format as "YYYY-MM-DD HH:MM:SS" for call records database query
       const startDateStr = startUTC.toISOString().replace('T', ' ').substring(0, 19);
       
-      // Fetch SMS messages using the UTC-converted start date
+      // Fetch SMS messages using ISO format (SMS dates are stored as ISO format in DB)
       const { data: messages, error: msgError } = await apiClient.getSmsMessages({
-        since: startDateStr,
+        since: startDateISO,
         limit: 10000,
       });
 
@@ -141,7 +144,7 @@ export const useAnalytics = (days: number = 7) => {
 
       // Process call status distribution
       const callStatusMap = new Map<string, number>();
-      ['answered', 'missed', 'busy', 'failed', 'voicemail'].forEach((status) => callStatusMap.set(status, 0));
+      ['answered', 'missed', 'busy', 'failed'].forEach((status) => callStatusMap.set(status, 0));
 
       // Count SMS messages (using Nairobi local time for grouping)
       (messages || []).forEach((msg) => {

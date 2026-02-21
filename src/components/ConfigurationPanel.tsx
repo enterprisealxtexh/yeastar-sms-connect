@@ -3,12 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Save, Loader2, Zap, Bell, MessageSquare } from "lucide-react";
+import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { GatewaySettingsForm } from "./GatewaySettingsForm";
 import { PbxSettingsForm } from "./PbxSettingsForm";
 import { TelegramSettingsForm } from "./TelegramSettingsForm";
 import { SmsGatewayUrlsForm } from "./SmsGatewayUrlsForm";
+import { SimPortSettingsForm } from "./SimPortSettingsForm";
 
 interface ConfigurationPanelProps {
   isLoading?: boolean;
@@ -25,7 +26,8 @@ export const ConfigurationPanel = ({
     setIsSaving(true);
     try {
       // Log the configuration change locally
-      await fetch('http://localhost:2003/api/activity-logs', {
+      const apiUrl = import.meta.env.VITE_API_URL;
+      await fetch(`${apiUrl}/api/activity-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,6 +101,10 @@ export const ConfigurationPanel = ({
               <Zap className="w-4 h-4" />
               Connectivity
             </TabsTrigger>
+            <TabsTrigger value="sim-ports" className="gap-2">
+              <Database className="w-4 h-4" />
+              SIM Ports
+            </TabsTrigger>
             <TabsTrigger value="alerts" className="gap-2">
               <Bell className="w-4 h-4" />
               Alerts & SMS
@@ -133,6 +139,22 @@ export const ConfigurationPanel = ({
                 </div>
                 <PbxSettingsForm />
               </div>
+            </div>
+          </TabsContent>
+
+          {/* SIM Ports Tab */}
+          <TabsContent value="sim-ports" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  Active SIM Ports
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Name your SIM ports for easier identification of which card serves which group
+                </p>
+              </div>
+              <SimPortSettingsForm />
             </div>
           </TabsContent>
 

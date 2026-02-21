@@ -9,7 +9,7 @@ export interface SmsGateway {
   updated_at: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:2003";
+const API_URL = import.meta.env.VITE_API_URL;
 
 export const useSmsGateways = () => {
   const queryClient = useQueryClient();

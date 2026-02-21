@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SmsCategoryBadge, SmsCategory } from "./SmsCategoryBadge";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 
 interface SmsMessage {
   id: string;
@@ -27,8 +28,9 @@ interface SmsInboxProps {
 
 export const SmsInbox = ({ messages }: SmsInboxProps) => {
   const queryClient = useQueryClient();
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+  const apiUrl = import.meta.env.VITE_API_URL;
   const token = localStorage.getItem('authToken');
+  const { data: portLabels } = usePortLabels();
 
   // Count messages received today
   const todaySmsCount = useMemo(() => {
@@ -107,7 +109,7 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                         variant="outline"
                         className="text-xs font-mono border-primary/30 text-primary"
                       >
-                        SIM {message.simPort}
+                        {getPortLabel(message.simPort, portLabels)}
                       </Badge>
                       <SmsCategoryBadge 
                         category={message.category} 

@@ -30,7 +30,8 @@ export const CallBackButton = ({ phoneNumber, variant = "ghost", size = "icon" }
   const initiateCall = async (fromExtension: string, toNumber: string) => {
     setIsPending(true);
     try {
-      const response = await fetch("http://localhost:2003/api/pbx-call/dial", {
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const response = await fetch(`${apiUrl}/api/pbx-call/dial`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

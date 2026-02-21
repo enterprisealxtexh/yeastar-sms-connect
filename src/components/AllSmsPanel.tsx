@@ -8,6 +8,7 @@ import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useAuth } from "@/hooks/useAuth";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
 import { toast } from "sonner";
+import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 
 const initialFilters: SmsFiltersState = {
   search: "",
@@ -24,8 +25,9 @@ export const AllSmsPanel: React.FC = () => {
   const { data: messages = [], isLoading } = useSmsMessages(1000);
   const { role } = useAuth();
   const canDelete = role !== 'viewer';
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:2003";
+  const apiUrl = import.meta.env.VITE_API_URL;
   const token = localStorage.getItem('authToken');
+  const { data: portLabels } = usePortLabels();
 
   // Get unique SIM ports from messages
   const simPorts = useMemo(() => {
@@ -123,6 +125,7 @@ export const AllSmsPanel: React.FC = () => {
             filters={filters}
             onFiltersChange={setFilters}
             simPorts={simPorts}
+            portLabels={portLabels}
           />
         </CardHeader>
       </Card>
@@ -150,46 +153,51 @@ export const AllSmsPanel: React.FC = () => {
           ) : filteredMessages.length === 0 ? (
             <div className="p-4 text-muted-foreground">No messages found</div>
           ) : (
-            <div className="w-full min-h-0">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-max table-auto md:min-w-full">
-                <thead>
-                  <tr className="text-left text-sm text-muted-foreground">
-                    <th className="p-3">Received</th>
-                    <th className="p-3">Sender</th>
-                    <th className="p-3">SIM</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Message</th>
-                    <th className="p-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMessages.map((m: any) => (
-                    <tr key={m.id} className="border-t border-border/50">
-                      <td className="p-3 font-mono text-sm">{m.timestamp}</td>
-                      <td className="p-3 font-mono text-sm">{m.sender}</td>
-                      <td className="p-3">{m.simPort}</td>
-                      <td className="p-3 font-mono text-sm">{m.isNew ? 'unread' : (m.status || 'read')}</td>
-                      <td className="p-3 text-sm">{m.content}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleMarkRead(m.id)}>Mark Read</Button>
-                          {canDelete ? (
-                            <Button size="sm" variant="destructive" onClick={() => handleDelete(m.id)}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          ) : (
-                            <Button size="sm" variant="ghost" disabled title="Viewers cannot delete messages">
-                              <Trash2 className="w-4 h-4 text-muted-foreground" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
+            <div className="space-y-2 p-4">
+              {filteredMessages.map((m: any) => (
+                <div
+                  key={m.id}
+                  className="p-4 border border-border/50 rounded-lg hover:bg-muted/30 transition-colors"
+                >
+                  {/* Header Row: Time, Sender, Status */}
+                  <div className="flex items-start justify-between mb-3 gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs text-muted-foreground">{m.timestamp}</span>
+                        <span className="font-mono text-sm font-medium">{m.sender}</span>
+                        <span className={`text-xs px-2 py-1 rounded font-medium ${
+                          m.isNew ? "bg-blue-500/20 text-blue-700 dark:text-blue-300" 
+                          : "bg-muted text-muted-foreground"
+                        }`}>
+                          {m.isNew ? 'unread' : (m.status || 'read')}
+                        </span>
+                        <span className="text-xs px-2 py-1 rounded border border-primary/30 text-primary">
+                          {getPortLabel(m.simPort, portLabels)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button size="sm" variant="outline" onClick={() => handleMarkRead(m.id)} title="Mark as read">
+                        Mark Read
+                      </Button>
+                      {canDelete ? (
+                        <Button size="sm" variant="destructive" onClick={() => handleDelete(m.id)} title="Delete message">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="ghost" disabled title="Viewers cannot delete messages">
+                          <Trash2 className="w-4 h-4 text-muted-foreground" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Message Content */}
+                  <div className="text-sm text-secondary-foreground leading-relaxed break-words">
+                    {m.content}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </ScrollArea>
