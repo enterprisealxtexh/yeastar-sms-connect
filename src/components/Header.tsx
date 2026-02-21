@@ -1,6 +1,6 @@
 import { Radio, LogOut, User, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AgentStatusIndicator } from "./AgentStatusIndicator";
+
 import { useAuth, signOut } from "@/hooks/useAuth";
 import {
   DropdownMenu,
@@ -67,7 +67,7 @@ export const Header = ({ onProfileClick, onMenuClick }: HeaderProps) => {
         </div>
 
         <div className="flex items-center gap-2">
-          <AgentStatusIndicator showLabel={false} />
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Agent Status: Online" />
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

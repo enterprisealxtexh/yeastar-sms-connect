@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StatusIndicator } from "./StatusIndicator";
+import { Badge } from "@/components/ui/badge";
 import { LucideIcon } from "lucide-react";
 
 interface SystemStatusCardProps {
@@ -27,7 +27,9 @@ export const SystemStatusCard = ({
             </div>
             <CardTitle className="text-base font-semibold">{title}</CardTitle>
           </div>
-          <StatusIndicator status={status} label={statusLabel} />
+          <Badge variant={status === "online" ? "default" : status === "warning" ? "secondary" : "destructive"}>
+            {statusLabel}
+          </Badge>
         </div>
       </CardHeader>
       <CardContent>

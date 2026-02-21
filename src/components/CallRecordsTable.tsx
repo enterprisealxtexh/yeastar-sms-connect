@@ -5,10 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { Phone, Search, Clock, Timer, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CallStatusBadge, CallDirectionBadge } from "./CallStatusBadge";
-import { CallBackButton } from "./CallBackButton";
 import { CallRecord } from "@/hooks/useCallRecords";
 import { useExtensions } from "@/hooks/useExtensions";
 import { formatDateNairobi } from "@/lib/dateUtils";
@@ -182,7 +181,9 @@ export const CallRecordsTable = ({
                           {formatDateNairobi(call.start_time)}
                         </TableCell>
                         <TableCell>
-                          <CallDirectionBadge direction={call.direction} />
+                          <Badge variant={call.direction === "inbound" ? "default" : "secondary"}>
+                            {call.direction}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
@@ -209,7 +210,9 @@ export const CallRecordsTable = ({
                           </div>
                         </TableCell>
                         <TableCell>
-                          <CallStatusBadge status={call.status} />
+                          <Badge variant={call.status === "answered" ? "default" : "destructive"}>
+                            {call.status}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {formatDuration(call.ring_duration)}
@@ -218,7 +221,9 @@ export const CallRecordsTable = ({
                           {formatDuration(call.talk_duration)}
                         </TableCell>
                         <TableCell className="text-center">
-                          <CallBackButton phoneNumber={callBackNumber} />
+                          <Button size="sm" variant="ghost" title={callBackNumber}>
+                            <Phone className="w-4 h-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );

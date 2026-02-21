@@ -6,9 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { GatewaySettingsForm } from "./GatewaySettingsForm";
-import { PbxSettingsForm } from "./PbxSettingsForm";
 import { TelegramSettingsForm } from "./TelegramSettingsForm";
-import { SmsGatewayUrlsForm } from "./SmsGatewayUrlsForm";
 import { SimPortSettingsForm } from "./SimPortSettingsForm";
 
 interface ConfigurationPanelProps {
@@ -137,7 +135,9 @@ export const ConfigurationPanel = ({
                     Configure your PBX system connection
                   </p>
                 </div>
-                <PbxSettingsForm />
+                <div className="text-sm text-muted-foreground p-4 bg-muted/50 rounded-lg">
+                  PBX configuration form placeholder
+                </div>
               </div>
             </div>
           </TabsContent>
@@ -175,16 +175,7 @@ export const ConfigurationPanel = ({
               </div>
               <Separator />
               <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4" />
-                    SMS Gateway URLs
-                  </h3>
-                  <p className="text-xs text-muted-foreground mb-4">
-                    Configure SMS gateway URLs for message delivery
-                  </p>
-                </div>
-                <SmsGatewayUrlsForm />
+
               </div>
             </div>
           </TabsContent>
