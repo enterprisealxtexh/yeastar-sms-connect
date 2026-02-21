@@ -74,14 +74,14 @@ test_vps_connection() {
         -o ConnectTimeout=5 \
         -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile=~/.ssh/known_hosts \
-        "$VPS_USER@$VPS_IP" exit &>> "$LOG_FILE"; then
+        "$VPS_USER@$VPS_IP" "echo OK" &>> "$LOG_FILE"; then
         log_success "VPS connection successful"
         return 0
     else
         log_error "Cannot connect to VPS. Check:"
         log_error "  1. VPS IP is correct: $VPS_IP"
         log_error "  2. SSH key is in VPS ~/.ssh/authorized_keys"
-        log_error "  3. SSH port is 22"
+        log_error "  3. SSH port is $VPS_SSH_PORT"
         return 1
     fi
 }
