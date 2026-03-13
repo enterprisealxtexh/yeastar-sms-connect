@@ -1607,9 +1607,11 @@ function isValidPhoneNumber(number) {
 
 async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
   try {
-    // 🔇 SMS SENDING DISABLED - No SMS will be sent
-    logger.warn('🔇 SMS SENDING IS DISABLED - SMS not sent');
-    return false;
+    // Check if SMS sending is enabled globally
+    if (!db.isSmsEnabled()) {
+      logger.info('ℹ️  SMS sending is currently disabled by administrator');
+      return false;
+    }
     
     const numbers = Array.isArray(phoneNumberOrNumbers) ? phoneNumberOrNumbers : [phoneNumberOrNumbers];
     
@@ -1709,9 +1711,11 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
 
 async function sendSmsReport(phoneNumbers, messageText) {
   try {
-    // 🔇 SMS SENDING DISABLED - No SMS will be sent
-    logger.warn('🔇 SMS SENDING IS DISABLED - SMS Report not sent');
-    return false;
+    // Check if SMS sending is enabled globally
+    if (!db.isSmsEnabled()) {
+      logger.info('ℹ️  SMS sending is currently disabled by administrator');
+      return false;
+    }
     
     // Handle both single number and array of numbers
     const numbers = Array.isArray(phoneNumbers) ? phoneNumbers : [phoneNumbers];
@@ -3102,6 +3106,49 @@ app.post('/api/gateway-config', (req, res) => {
     }
     } catch (error) {
     logger.error('[API] Error: %s', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// System Settings Endpoints
+// ========================================
+
+app.get('/api/system-settings/sms-enabled', (req, res) => {
+  try {
+    const isEnabled = db.isSmsEnabled();
+    res.json({ 
+      success: true, 
+      sms_enabled: isEnabled
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/system-settings/sms-enabled', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    
+    if (enabled === undefined) {
+      return res.status(400).json({ success: false, error: 'enabled parameter required' });
+    }
+
+    const success = db.setSystemSetting('sms_enabled', enabled ? 'true' : 'false');
+    
+    if (success) {
+      logger.info(`SMS sending ${enabled ? 'ENABLED' : 'DISABLED'} by admin`);
+      db.logActivity('sms_setting_changed', `SMS sending ${enabled ? 'ENABLED' : 'DISABLED'}`, 'success');
+      
+      res.json({
+        success: true,
+        message: `SMS sending ${enabled ? 'enabled' : 'disabled'}`,
+        sms_enabled: enabled
+      });
+    } else {
+      throw new Error('Failed to update SMS setting');
+    }
+  } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });

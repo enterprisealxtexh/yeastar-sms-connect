@@ -452,6 +452,24 @@ class SMSDatabase {
       );
     `);
 
+    // System Settings table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Insert default settings if not exist
+    this.db.exec(`
+      INSERT OR IGNORE INTO system_settings (key, value, description)
+      VALUES 
+        ('sms_enabled', 'true', 'Enable or disable SMS sending globally')
+    `);
+
     // ========== STAFF MANAGEMENT TABLES ==========
 
     // Agents table - staff members
@@ -1646,6 +1664,39 @@ class SMSDatabase {
       console.error('Error saving SMS gateway URL:', error.message);
       return false;
     }
+  }
+
+  // System Settings methods
+  getSystemSetting(key) {
+    try {
+      const stmt = this.db.prepare('SELECT value FROM system_settings WHERE key = ?');
+      const result = stmt.get(key);
+      return result ? result.value : null;
+    } catch (error) {
+      console.error(`Error getting system setting ${key}:`, error.message);
+      return null;
+    }
+  }
+
+  setSystemSetting(key, value) {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO system_settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `);
+      stmt.run(key, String(value));
+      const logger = require('./logger.cjs');
+      logger.info(`System setting updated: ${key} = ${value}`);
+      return true;
+    } catch (error) {
+      console.error(`Error setting system setting ${key}:`, error.message);
+      return false;
+    }
+  }
+
+  isSmsEnabled() {
+    const setting = this.getSystemSetting('sms_enabled');
+    return setting === null || setting === 'true'; // Default to true if not set
   }
 
   // SMS message methods

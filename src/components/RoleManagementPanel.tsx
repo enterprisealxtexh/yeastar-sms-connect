@@ -147,7 +147,7 @@ export const RoleManagementPanel = () => {
                     Add User
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-md max-h-screen overflow-y-auto">
+                <DialogContent className="max-w-2xl max-h-screen overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Create New User</DialogTitle>
                     <DialogDescription>

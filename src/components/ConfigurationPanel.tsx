@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database, Phone, KeyRound, RefreshCw } from "lucide-react";
+import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database, Phone, KeyRound, RefreshCw, AlertCircle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { GatewaySettingsForm } from "./GatewaySettingsForm";
 import { PbxSettingsForm } from "./PbxSettingsForm";
@@ -15,6 +15,8 @@ import { SetupPanel } from "./SetupPanel";
 import { AlertsPanel } from "./AlertsPanel";
 import { SystemUpdatePanel } from "./SystemUpdatePanel";
 import { useAuth } from "@/hooks/useAuth";
+import { useSmsSettings } from "@/hooks/useSmsSettings";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface ConfigurationPanelProps {
   isLoading?: boolean;
@@ -201,19 +203,7 @@ export const ConfigurationPanel = ({
 
           {/* SMS Tab - Auto-Reply and Call Auto-SMS */}
           <TabsContent value="sms" className="space-y-6">
-            <div className="space-y-6">
-              <div>
-                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4" />
-                  SMS Automation
-                </h3>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Configure automatic SMS replies and post-call messages
-                </p>
-              </div>
-              <AutoReplyPanel />
-              <CallAutoSmsPanel />
-            </div>
+            <SmsTabContent isSuperAdmin={isSuperAdmin} />
           </TabsContent>
 
           {/* Alerts Tab - Reports, Logs, Errors, Notification Settings */}
@@ -257,3 +247,100 @@ export const ConfigurationPanel = ({
     </Card>
   );
 };
+
+// SMS Tab Content Component
+function SmsTabContent({ isSuperAdmin }: { isSuperAdmin: boolean }) {
+  const { smsEnabled, isLoading, isMutating, toggleSms } = useSmsSettings();
+
+  const handleToggle = async () => {
+    try {
+      await toggleSms(!smsEnabled);
+      toast({
+        title: smsEnabled ? "SMS Disabled" : "SMS Enabled",
+        description: smsEnabled 
+          ? "SMS sending has been disabled for all users" 
+          : "SMS sending has been enabled for all users",
+      });
+    } catch (error) {
+      toast({
+        title: "Error updating SMS settings",
+        description: error instanceof Error ? error.message : "An unexpected error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {isSuperAdmin && (
+        <>
+          <div className="border border-border/50 rounded-lg p-4 bg-card/50">
+            <div className="flex items-start justify-between">
+              <div className="space-y-2">
+                <h3 className="font-semibold text-sm flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  SMS Sending Status
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Enable or disable SMS sending globally for all users. When disabled, no SMS messages will be sent.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <>
+                    <span className={`text-sm font-medium px-3 py-1 rounded-full ${
+                      smsEnabled 
+                        ? 'bg-green-500/10 text-green-600' 
+                        : 'bg-red-500/10 text-red-600'
+                    }`}>
+                      {smsEnabled ? '✓ Enabled' : '✗ Disabled'}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant={smsEnabled ? "default" : "outline"}
+                      onClick={handleToggle}
+                      disabled={isMutating || isLoading}
+                      className="ml-2"
+                    >
+                      {isMutating ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : null}
+                      {!smsEnabled ? 'Enable SMS' : 'Disable SMS'}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {!smsEnabled && (
+            <Alert className="border-red-500/50 bg-red-500/5">
+              <AlertCircle className="h-4 w-4 text-red-600" />
+              <AlertDescription className="text-red-700">
+                SMS sending is currently disabled. No SMS messages will be sent until enabled.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <Separator />
+        </>
+      )}
+
+      <div className="space-y-6">
+        <div>
+          <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4" />
+            SMS Automation
+          </h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            Configure automatic SMS replies and post-call messages
+          </p>
+        </div>
+        <AutoReplyPanel />
+        <CallAutoSmsPanel />
+      </div>
+    </div>
+  );
+}
