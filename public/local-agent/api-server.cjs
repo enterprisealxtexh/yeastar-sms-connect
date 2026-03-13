@@ -165,9 +165,13 @@ app.post('/api/users', requireRole('super_admin'), (req, res) => {
     const created = db.createUser ? db.createUser({ email, password, name, role, pin, telegram_chat_id, notification_channel }) : false;
     if (!created) return res.status(500).json({ success: false, error: 'failed to create user' });
 
-    // Return full list for convenience
-    const users = db.getAllUsers ? db.getAllUsers() : [];
-    res.json({ success: true, users });
+    const newUser = db.getUserByEmail(email);
+    res.json({ 
+      success: true, 
+      user_id: newUser?.id,
+      data: { user_id: newUser?.id, id: newUser?.id, email: newUser?.email, name: newUser?.name, role: newUser?.role },
+      users: db.getAllUsers ? db.getAllUsers() : []
+    });
   } catch (error) {
     logger.error('POST /api/users error: %s', error.message);
     res.status(500).json({ success: false, error: error.message });
@@ -2721,6 +2725,7 @@ app.post('/api/users', requireRole('super_admin'), (req, res) => {
         success: true,
         message: 'User created successfully',
         data: {
+          user_id: newUser.id,
           id: newUser.id,
           email: newUser.email,
           name: newUser.name,

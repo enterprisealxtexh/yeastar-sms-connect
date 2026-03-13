@@ -2290,26 +2290,6 @@ class SMSDatabase {
     }
   }
 
-  createUser(email, password, role = 'operator', name = null) {
-    try {
-      const crypto = require('crypto');
-      const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
-      
-      const stmt = this.db.prepare(`
-        INSERT INTO users (email, password_hash, role, name)
-        VALUES (?, ?, ?, ?)
-      `);
-      
-      stmt.run(email, passwordHash, role, name || email.split('@')[0]);
-      this.logActivity('user_created', `User created: ${email} (${role})`, 'success');
-      return true;
-    } catch (error) {
-      console.error('Error creating user:', error.message);
-      this.logActivity('user_creation_error', `Failed to create user ${email}: ${error.message}`, 'error');
-      return false;
-    }
-  }
-
   getUserByEmail(email) {
     try {
       const stmt = this.db.prepare('SELECT id, email, role, name, is_active FROM users WHERE email = ? LIMIT 1');

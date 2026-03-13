@@ -141,7 +141,8 @@ export const useCreateUser = () => {
       });
       const json = await resp.json();
       if (!resp.ok || json?.error) throw new Error(json?.error || 'Failed to create user');
-      return json;
+      // Return data with user_id at top level for permission assignments
+      return json.data || json;
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["users-with-roles"] });
