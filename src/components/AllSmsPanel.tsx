@@ -246,13 +246,10 @@ export const AllSmsPanel: React.FC = () => {
               <input type="checkbox" checked={selectedIds.size === filteredMessages.length && filteredMessages.length>0} onChange={toggleSelectAll} className="rounded" />
               Select all
             </label>
-            <Button size="sm" variant="ghost" onClick={markSelectedAsRead} disabled={selectedIds.size===0}>Mark read ({selectedIds.size})</Button>
             {canDelete && (
               <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={selectedIds.size===0}>Delete ({selectedIds.size})</Button>
             )}
             <Button size="sm" variant="outline" onClick={markAllAsRead}>Mark all as read</Button>
-            <div className="flex-1" />
-            <Button size="sm" variant="outline" onClick={() => { setReadFilter('all'); setSelectedIds(new Set()); setFilters(initialFilters); }}>Reset</Button>
           </div>
         )}
 
