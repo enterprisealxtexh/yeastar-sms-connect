@@ -1607,6 +1607,10 @@ function isValidPhoneNumber(number) {
 
 async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
   try {
+    // 🔇 SMS SENDING DISABLED - No SMS will be sent
+    logger.warn('🔇 SMS SENDING IS DISABLED - SMS not sent');
+    return false;
+    
     const numbers = Array.isArray(phoneNumberOrNumbers) ? phoneNumberOrNumbers : [phoneNumberOrNumbers];
     
     if (!numbers || numbers.length === 0 || !messageText) {
@@ -1705,6 +1709,10 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
 
 async function sendSmsReport(phoneNumbers, messageText) {
   try {
+    // 🔇 SMS SENDING DISABLED - No SMS will be sent
+    logger.warn('🔇 SMS SENDING IS DISABLED - SMS Report not sent');
+    return false;
+    
     // Handle both single number and array of numbers
     const numbers = Array.isArray(phoneNumbers) ? phoneNumbers : [phoneNumbers];
     
