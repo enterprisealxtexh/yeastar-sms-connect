@@ -1211,6 +1211,13 @@ async function sendCallAutoSms(callRecord) {
       return false;
     }
 
+    // ✅ Validate phone number (must be 10+ digits: 0722832929, 254729202638, etc.)
+    if (!isValidPhoneNumber(callerNumber)) {
+      logger.warn(` Call auto-SMS: Invalid phone number format: ${callerNumber} (must be 10+ digits)`);
+      db.logActivity('call_auto_sms_invalid_number', `Invalid phone number: ${callerNumber}`, 'warning');
+      return false;
+    }
+
     // Determine message based on call status
     let messageTemplate;
     if (['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
@@ -1570,6 +1577,32 @@ function formatPhoneNumber(number) {
   
   // Otherwise, prepend 254
   return '254' + cleaned;
+}
+
+// ========================================
+// Phone Number Validation
+// ========================================
+function isValidPhoneNumber(number) {
+  if (!number) return false;
+  
+  // Remove all non-digit characters
+  const digitsOnly = String(number).replace(/\D/g, '');
+  
+  // Must be at least 10 digits (e.g., 0722832929 or minimum 254xxxxxxxx)
+  if (digitsOnly.length < 10) {
+    return false;
+  }
+  
+  // Must be at most 13 digits (e.g., 254XXXXXXXXXX)
+  if (digitsOnly.length > 13) {
+    return false;
+  }
+  
+  // Valid formats:
+  // - 0722832929 (Kenya local, 10 digits starting with 0)
+  // - 254722832929 (Kenya international, 12 digits starting with 254)
+  // - 722832929 (Kenya without 0 or 254, 9 digits - we add 254)
+  return true;
 }
 
 async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {

@@ -587,12 +587,28 @@ class SMSDatabase {
 
   runMigrations() {
     try {
-      // Migration: Add gsm_span column to sms_messages if it doesn't exist
+      const logger = require('./logger.cjs');
       const tableInfo = this.db.prepare(`PRAGMA table_info(sms_messages)`).all();
+      
+      // Migration: Add direction column to sms_messages if it doesn't exist
+      const hasDirectionColumn = tableInfo.some(col => col.name === 'direction');
+      if (!hasDirectionColumn) {
+        logger.info('🔄 Migrating: Adding direction column to sms_messages table...');
+        try {
+          this.db.exec(`ALTER TABLE sms_messages ADD COLUMN direction TEXT DEFAULT 'received' CHECK (direction IN ('received', 'sent'))`);
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sms_direction ON sms_messages(direction)`);
+          logger.info('✅ Migration complete: direction column added');
+        } catch (e) {
+          if (!e.message.includes('duplicate column name')) {
+            logger.warn(`⚠️  Could not add direction column: ${e.message}`);
+          }
+        }
+      }
+      
+      // Migration: Add gsm_span column to sms_messages if it doesn't exist
       const hasGsmSpanColumn = tableInfo.some(col => col.name === 'gsm_span');
       
       if (!hasGsmSpanColumn) {
-        const logger = require('./logger.cjs');
         logger.info('🔄 Migrating: Adding gsm_span column to sms_messages table...');
         try {
           this.db.exec(`ALTER TABLE sms_messages ADD COLUMN gsm_span INTEGER`);
