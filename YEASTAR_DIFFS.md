@@ -57,7 +57,6 @@ These new components enable large features: agent/staff management, shift schedu
 - `src/components/SystemFooter.tsx` — removed or refactored into layout in Yeastar bundle.
 - `src/components/TelegramSettingsForm.tsx` — Telegram integration moved to `TelegramPanel`.
 - `src/components/TemplateModal.tsx` — templates UI refactored (templates still present but reorganized).
-- `src/components/UserManager.tsx` — user management replaced/expanded by `RoleManagementPanel.tsx`.
 
 ## Present in both (likely updated)
 These files exist in both codebases — they are likely updated in the Yeastar package to integrate new features:
