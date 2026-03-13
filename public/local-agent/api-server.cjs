@@ -1556,14 +1556,19 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
 
     try {
       const { execSync } = require('child_process');
-      const escapedMsg = messageText.replace(/'/g, "'\\'");
+      // Properly escape for shell: escape backslashes, double quotes, backticks, and dollar signs
+      const escapedMsg = messageText
+        .replace(/\\/g, '\\\\')    // Escape backslashes first
+        .replace(/"/g, '\\"')      // Escape double quotes
+        .replace(/`/g, '\\`')      // Escape backticks
+        .replace(/\$/g, '\\$');    // Escape dollar signs
       
       const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
 -H 'Accept: application/json' \
 -H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
 -H 'Content-Type: application/x-www-form-urlencoded' \
 -H 'Cookie: SERVERID=webC1' \
--d 'userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}'`;
+-d "userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}"`;
 
       const response = execSync(curlCommand, { 
         encoding: 'utf-8',
