@@ -1614,8 +1614,29 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
       return false;
     }
 
+    // ✅ Check for duplicate SMS within 24 hours for each recipient
+    const crypto = require('crypto');
+    const messageHash = crypto.createHash('md5').update(messageText).digest('hex');
+    
+    const filteredNumbers = [];
+    for (const number of numbers) {
+      // Check if SMS was already sent to this number today
+      if (db.hasSentSmsToday(number, messageHash)) {
+        logger.warn(`⚠️  SMS already sent to ${number} today - skipping to prevent duplicate`);
+        db.logActivity('sms_duplicate_prevented', `SMS to ${number} skipped (duplicate within 24h)`, 'warning');
+        continue;
+      }
+      filteredNumbers.push(number);
+    }
+    
+    // If all numbers were filtered out due to duplicates, return early
+    if (filteredNumbers.length === 0) {
+      logger.info(`ℹ️  All SMS recipients already received this message today - no action taken`);
+      return true;
+    }
+
     // Format all phone numbers to international format
-    const formattedNumbers = numbers.map(n => formatPhoneNumber(n));
+    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n));
     const mobileParam = formattedNumbers.join(',');
     
     logger.info(`📤 Sending SMS via gateway to: ${mobileParam}`);
@@ -1645,11 +1666,11 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
       });
 
       if (response && response.trim()) {
-        logger.info(`✅ SMS sent successfully to ${numbers.length} recipient(s)`);
+        logger.info(`✅ SMS sent successfully to ${filteredNumbers.length} recipient(s)`);
         
         // Store sent SMS in database for each recipient
         try {
-          numbers.forEach(recipient => {
+          filteredNumbers.forEach(recipient => {
             db.insertSMS({
               sender_number: recipient, // For sent SMS: show who received it (the external number)
               message_content: messageText,
@@ -1659,6 +1680,9 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
               direction: 'sent',
               category: 'system' // Indicates message came from system (not inbound)
             });
+            
+            // ✅ Log to SMS sent log to prevent duplicates within 24 hours
+            db.logSmsSent(recipient, messageHash);
           });
         } catch (dbError) {
           logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
@@ -1689,8 +1713,29 @@ async function sendSmsReport(phoneNumbers, messageText) {
       return false;
     }
 
+    // ✅ Check for duplicate SMS within 24 hours for each recipient
+    const crypto = require('crypto');
+    const messageHash = crypto.createHash('md5').update(messageText).digest('hex');
+    
+    const filteredNumbers = [];
+    for (const number of numbers) {
+      // Check if SMS was already sent to this number today
+      if (db.hasSentSmsToday(number, messageHash)) {
+        logger.warn(`⚠️  SMS Report already sent to ${number} today - skipping to prevent duplicate`);
+        db.logActivity('sms_report_duplicate_prevented', `SMS Report to ${number} skipped (duplicate within 24h)`, 'warning');
+        continue;
+      }
+      filteredNumbers.push(number);
+    }
+    
+    // If all numbers were filtered out due to duplicates, return early
+    if (filteredNumbers.length === 0) {
+      logger.info(`ℹ️  All SMS Report recipients already received this message today - no action taken`);
+      return true;
+    }
+
     // Format all phone numbers to international format and join
-    const formattedNumbers = numbers.map(n => formatPhoneNumber(n));
+    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n));
     const mobileParam = formattedNumbers.join(',');
     
     logger.info(`📤 SMS sending to: ${mobileParam}`);
@@ -1727,12 +1772,12 @@ async function sendSmsReport(phoneNumbers, messageText) {
       
       // Any response from gateway is typically success - they respond with JSON
       if (response && response.trim()) {
-        logger.info(`✅ SMS sent successfully to ${numbers.length} recipient(s): ${mobileParam}`);
+        logger.info(`✅ SMS sent successfully to ${filteredNumbers.length} recipient(s): ${mobileParam}`);
         db.logActivity('sms_report_sent', `SMS sent to ${mobileParam}`, 'success');
         
         // Store sent SMS in database for each recipient
         try {
-          numbers.forEach(recipient => {
+          filteredNumbers.forEach(recipient => {
             db.insertSMS({
               sender_number: recipient, // For sent SMS: show who received it (the external number)
               message_content: messageText,
@@ -1742,6 +1787,9 @@ async function sendSmsReport(phoneNumbers, messageText) {
               direction: 'sent',
               category: 'report' // Indicates it was sent as part of a report
             });
+            
+            // ✅ Log to SMS sent log to prevent duplicates within 24 hours
+            db.logSmsSent(recipient, messageHash);
           });
         } catch (dbError) {
           logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);

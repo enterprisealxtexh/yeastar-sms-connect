@@ -104,6 +104,39 @@ class SMSDatabase {
       );
     `);
 
+    // SIM Port Configuration table - stores port labels and metadata
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sim_port_config (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        port_number INTEGER UNIQUE NOT NULL CHECK (port_number >= 1 AND port_number <= 4),
+        label TEXT,
+        phone_number TEXT,
+        carrier TEXT,
+        signal_strength INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'unknown',
+        last_seen_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_sim_port_number ON sim_port_config(port_number);
+    `);
+
+    // SMS Sent Deduplication table - track sent SMS to prevent duplicates within 24 hours
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sms_sent_log (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        phone_number TEXT NOT NULL,
+        message_hash TEXT NOT NULL,
+        last_sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_sms_sent_phone ON sms_sent_log(phone_number);
+      CREATE INDEX IF NOT EXISTS idx_sms_sent_last_time ON sms_sent_log(last_sent_at DESC);
+    `);
+
     // Call records table (CDR)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS call_records (
@@ -1923,6 +1956,60 @@ class SMSDatabase {
       return result.changes > 0;
     } catch (error) {
       console.error('Error deleting SMS:', error.message);
+      return false;
+    }
+  }
+
+  // SMS Sent Log methods - prevent duplicate SMS to same number within 24 hours
+  hasSentSmsToday(phoneNumber, messageHash = null) {
+    try {
+      // Check if SMS was sent to this number in the last 24 hours
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
+      let query = `
+        SELECT id FROM sms_sent_log 
+        WHERE phone_number = ? AND last_sent_at >= ?
+      `;
+      const params = [phoneNumber, oneDayAgo];
+      
+      // If message hash provided, check for exact duplicate
+      if (messageHash) {
+        query += ` AND message_hash = ?`;
+        params.push(messageHash);
+      }
+      
+      const result = this.db.prepare(query).get(...params);
+      return result !== undefined;
+    } catch (error) {
+      console.error('Error checking SMS sent log:', error.message);
+      return false;
+    }
+  }
+
+  logSmsSent(phoneNumber, messageHash = null) {
+    try {
+      // Check if record exists for this phone number
+      const existing = this.db.prepare(
+        `SELECT id FROM sms_sent_log WHERE phone_number = ?`
+      ).get(phoneNumber);
+      
+      if (existing) {
+        // Update existing record
+        this.db.prepare(
+          `UPDATE sms_sent_log 
+           SET message_hash = ?, last_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
+           WHERE phone_number = ?`
+        ).run(messageHash || '', phoneNumber);
+      } else {
+        // Create new record
+        this.db.prepare(
+          `INSERT INTO sms_sent_log (phone_number, message_hash) VALUES (?, ?)`
+        ).run(phoneNumber, messageHash || '');
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error logging SMS sent:', error.message);
       return false;
     }
   }
