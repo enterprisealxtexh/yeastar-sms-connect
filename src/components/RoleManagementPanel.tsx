@@ -41,6 +41,8 @@ export const RoleManagementPanel = () => {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AppRole>("operator");
   const [pin, setPin] = useState(generatePin());
+  const [selectedPorts, setSelectedPorts] = useState<number[]>([]);
+  const [selectedExtensions, setSelectedExtensions] = useState<string[]>([]);
 
   const resetForm = () => {
     setEmail("");
@@ -48,16 +50,52 @@ export const RoleManagementPanel = () => {
     setPassword("");
     setRole("operator");
     setPin(generatePin());
+    setSelectedPorts([]);
+    setSelectedExtensions([]);
   };
 
   const handleCreate = async () => {
     if (!email || !password || password.length < 6) return;
-    await createUser.mutateAsync({
+    
+    const newUserResult = await createUser.mutateAsync({
       email,
       password,
       role,
       full_name: fullName,
     });
+
+    // If viewer role and permissions are specified, send them to the API
+    if (role === "viewer" && newUserResult && (selectedPorts.length > 0 || selectedExtensions.length > 0)) {
+      const token = localStorage.getItem("authToken");
+      const apiUrl = import.meta.env.VITE_API_URL;
+
+      try {
+        if (selectedPorts.length > 0) {
+          await fetch(`${apiUrl}/api/users/${newUserResult.user_id}/port-permissions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({ ports: selectedPorts }),
+          });
+        }
+
+        if (selectedExtensions.length > 0) {
+          await fetch(`${apiUrl}/api/users/${newUserResult.user_id}/extension-permissions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({ extensions: selectedExtensions }),
+          });
+        }
+      } catch (error) {
+        console.error("Failed to set user permissions:", error);
+      }
+    }
+
     setOpen(false);
     resetForm();
   };
@@ -109,7 +147,7 @@ export const RoleManagementPanel = () => {
                     Add User
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="max-w-md max-h-screen overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>Create New User</DialogTitle>
                     <DialogDescription>
@@ -194,6 +232,56 @@ export const RoleManagementPanel = () => {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {role === "viewer" && (
+                      <>
+                        <div className="space-y-2">
+                          <Label>Allowed SIM Ports (leave empty for all)</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {[1, 2, 3, 4].map((port) => (
+                              <button
+                                key={port}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPorts((prev) =>
+                                    prev.includes(port) ? prev.filter((p) => p !== port) : [...prev, port]
+                                  );
+                                }}
+                                className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                                  selectedPorts.includes(port)
+                                    ? "bg-primary text-primary-foreground border-primary"
+                                    : "border-border bg-background text-foreground hover:bg-muted"
+                                }`}
+                              >
+                                Port {port}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedPorts.length === 0 ? "No restrictions - can view all ports" : `Restricted to: Port ${selectedPorts.join(", ")}`}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="user-extensions">Allowed Extensions (leave empty for all)</Label>
+                          <Input
+                            id="user-extensions"
+                            placeholder="e.g., 101,102,103 (comma-separated)"
+                            value={selectedExtensions.join(",")}
+                            onChange={(e) => {
+                              const extensions = e.target.value
+                                .split(",")
+                                .map((ext) => ext.trim())
+                                .filter((ext) => ext.length > 0);
+                              setSelectedExtensions(extensions);
+                            }}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {selectedExtensions.length === 0 ? "No restrictions - can view all extensions" : `Restricted to: ${selectedExtensions.join(", ")}`}
+                          </p>
+                        </div>
+                      </>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
