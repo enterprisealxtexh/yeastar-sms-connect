@@ -10,8 +10,8 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
-  Phone,
   User,
+  Crown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
@@ -24,13 +24,11 @@ export type DashboardTab =
   | "dashboard"
   | "calls"
   | "analytics"
-  | "logs"
   | "config"
-  | "users"
+  | "roles"
   | "profile"
   | "messages"
-  | "extensions"
-  | "contacts";
+  | "staff";
 
 interface NavItem {
   id: DashboardTab;
@@ -42,12 +40,10 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "messages", label: "Messages", icon: FileText },
-  { id: "calls", label: "Calls", icon: PhoneCall },
-  { id: "contacts", label: "Contacts", icon: User },
-  { id: "extensions", label: "Extensions", icon: Phone, adminOnly: true },
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
-  { id: "logs", label: "Logs", icon: FileText },
-  { id: "users", label: "Users", icon: Users, adminOnly: true },
+  { id: "calls", label: "Calls & Contacts", icon: PhoneCall },
+  { id: "analytics", label: "Insights", icon: BarChart3 },
+  { id: "staff", label: "Staff / Clock In", icon: Users, adminOnly: true },
+  { id: "roles", label: "Roles & Permissions", icon: Crown, adminOnly: true },
   { id: "config", label: "Configuration", icon: Settings, adminOnly: true },
 ];
 

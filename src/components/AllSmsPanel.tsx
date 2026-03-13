@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, RefreshCw } from "lucide-react";
+import { Trash2, RefreshCw, Eye, EyeOff, Lock } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
 import { toast } from "sonner";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
@@ -21,13 +23,27 @@ const initialFilters: SmsFiltersState = {
 
 export const AllSmsPanel: React.FC = () => {
   const [filters, setFilters] = useState<SmsFiltersState>(initialFilters);
+  const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const { data: messages = [], isLoading } = useSmsMessages(1000);
-  const { role } = useAuth();
-  const canDelete = role !== 'viewer';
+  const { role, isAdmin } = useAuth();
+  const { data: permissions } = useUserPermissions();
+  const canDelete = role === 'super_admin';
   const apiUrl = import.meta.env.VITE_API_URL;
   const token = localStorage.getItem('authToken');
   const { data: portLabels } = usePortLabels();
+
+  // Function to truncate message content for non-admin users
+  const getTruncatedContent = (content: string): string => {
+    if (isAdmin) return content;
+    const sensitiveMarker = "New Utility balance";
+    const index = content.indexOf(sensitiveMarker);
+    if (index !== -1) {
+      return content.substring(0, index).trim();
+    }
+    return content;
+  };
 
   // Get unique SIM ports from messages (Port number 1-4)
   const simPorts = useMemo(() => {
@@ -35,9 +51,24 @@ export const AllSmsPanel: React.FC = () => {
     return Array.from(ports).sort((a: number, b: number) => a - b);
   }, [messages]);
 
-  // Filter messages based on current filters
+  // Filter messages based on current filters AND user permissions
   const filteredMessages = useMemo(() => {
     return messages.filter((message: any) => {
+      // Port permission check - if user has port restrictions, filter by them
+      if (permissions?.ports && permissions.ports.length > 0) {
+        if (!permissions.ports.includes(message.simPort)) return false;
+      }
+
+      // Extension permission check - if user has extension restrictions, filter by them
+      if (permissions?.extensions && permissions.extensions.length > 0) {
+        // Note: SMS messages may not have extensions directly; extensions are for calls
+        // For now, we skip extension filtering for SMS
+      }
+
+      // Read/Unread filter
+      if (readFilter === 'unread' && !message.isNew) return false;
+      if (readFilter === 'read' && message.isNew) return false;
+
       // Search filter
       if (filters.search) {
         const searchLower = filters.search.toLowerCase();
@@ -75,32 +106,13 @@ export const AllSmsPanel: React.FC = () => {
 
       return true;
     });
-  }, [messages, filters]);
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this message? This action cannot be undone.")) return;
-    try {
-      const res = await fetch(`${apiUrl}/api/sms-messages/${id}`, { 
-        method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      const result = await res.json();
-      if (res.ok) {
-        toast.success(result.message || "Deleted");
-        queryClient.invalidateQueries({ queryKey: ["sms-messages"] });
-      } else {
-        toast.error(result.error || "Failed to delete");
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to delete");
-    }
-  };
+  }, [messages, filters, readFilter, permissions]);
 
   const handleMarkRead = async (id: string) => {
     try {
       const res = await fetch(`${apiUrl}/api/sms-messages/${id}/status`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ status: "read" }),
       });
       const result = await res.json();
@@ -112,6 +124,67 @@ export const AllSmsPanel: React.FC = () => {
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to update");
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const copy = new Set(prev);
+      if (copy.has(id)) copy.delete(id);
+      else copy.add(id);
+      return copy;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (prev.size === filteredMessages.length) return new Set<string>();
+      return new Set(filteredMessages.map((m: any) => m.id));
+    });
+  };
+
+  const markSelectedAsRead = async () => {
+    const ids = Array.from(selectedIds);
+    try {
+      await Promise.all(ids.map((id) => fetch(`${apiUrl}/api/sms-messages/${id}/status`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ status: 'read' })
+      })));
+      toast.success('Marked selected as read');
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['sms-messages'] });
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to mark selected');
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/sms-messages/mark-all-read`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const result = await res.json();
+      if (res.ok) {
+        toast.success(`Marked ${result.changed || 0} messages as read`);
+        setSelectedIds(new Set());
+        queryClient.invalidateQueries({ queryKey: ['sms-messages'] });
+      } else {
+        toast.error(result.error || 'Failed to mark all as read');
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to mark all as read');
+    }
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    try {
+      await Promise.all(ids.map((id) => fetch(`${apiUrl}/api/sms-messages/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })));
+      toast.success('Deleted selected messages');
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ['sms-messages'] });
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete');
     }
   };
 
@@ -133,10 +206,10 @@ export const AllSmsPanel: React.FC = () => {
       {/* Messages Card */}
       <Card className="card-glow border-border/50 bg-card flex flex-col min-h-0">
         <CardHeader className="pb-3 shrink-0">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
             <div className="min-w-0">
               <CardTitle className="text-base font-semibold">All SMS Messages</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1 truncate">
+              <p className="text-xs text-muted-foreground mt-1">
                 {filteredMessages.length}
                 {filteredMessages.length !== messages.length && ` / ${messages.length}`} messages
               </p>
@@ -145,7 +218,32 @@ export const AllSmsPanel: React.FC = () => {
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
+
+          {/* Read/Unread Filter Tabs */}
+          <div className="flex gap-1 bg-muted/20 p-1 rounded-lg w-fit">
+            <button onClick={() => setReadFilter('all')} className={`px-3 py-1 text-sm rounded-md ${readFilter==='all'?'bg-card text-primary shadow':'text-muted-foreground'}`}>All</button>
+            <button onClick={() => setReadFilter('unread')} className={`px-3 py-1 text-sm rounded-md ${readFilter==='unread'?'bg-card text-primary shadow':'text-muted-foreground'}`}>Unread <span className="ml-1 text-xs">{messages.filter((m: any)=>m.isNew).length}</span></button>
+            <button onClick={() => setReadFilter('read')} className={`px-3 py-1 text-sm rounded-md ${readFilter==='read'?'bg-card text-primary shadow':'text-muted-foreground'}`}>Read</button>
+          </div>
         </CardHeader>
+
+        {/* Bulk toolbar */}
+        {filteredMessages.length > 0 && (
+          <div className="px-4 py-2 bg-card/40 border-b border-border/50 flex items-center gap-2 flex-wrap shrink-0">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" checked={selectedIds.size === filteredMessages.length && filteredMessages.length>0} onChange={toggleSelectAll} className="rounded" />
+              Select all
+            </label>
+            <Button size="sm" variant="ghost" onClick={markSelectedAsRead} disabled={selectedIds.size===0}>Mark read ({selectedIds.size})</Button>
+            {canDelete && (
+              <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={selectedIds.size===0}>Delete ({selectedIds.size})</Button>
+            )}
+            <Button size="sm" variant="outline" onClick={markAllAsRead}>Mark all as read</Button>
+            <div className="flex-1" />
+            <Button size="sm" variant="outline" onClick={() => { setReadFilter('all'); setSelectedIds(new Set()); setFilters(initialFilters); }}>Reset</Button>
+          </div>
+        )}
+
       <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
         <ScrollArea className="flex-1">
           {isLoading ? (
@@ -153,48 +251,37 @@ export const AllSmsPanel: React.FC = () => {
           ) : filteredMessages.length === 0 ? (
             <div className="p-4 text-muted-foreground">No messages found</div>
           ) : (
-            <div className="space-y-2 p-4">
+            <div className="divide-y divide-border/50">
               {filteredMessages.map((m: any) => (
-                <div
-                  key={m.id}
-                  className="p-4 border border-border/50 rounded-lg hover:bg-muted/30 transition-colors"
-                >
-                  {/* Header Row: Time, Sender, Status */}
-                  <div className="flex items-start justify-between mb-3 gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs text-muted-foreground">{m.timestamp}</span>
-                        <span className="font-mono text-sm font-medium">{m.sender}</span>
-                        <span className={`text-xs px-2 py-1 rounded font-medium ${
-                          m.isNew ? "bg-blue-500/20 text-blue-700 dark:text-blue-300" 
-                          : "bg-muted text-muted-foreground"
-                        }`}>
-                          {m.isNew ? 'unread' : (m.status || 'read')}
-                        </span>
-                        <span className="text-xs px-2 py-1 rounded border border-primary/30 text-primary">
-                          {m.portName || getPortLabel(m.simPort, portLabels)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Button size="sm" variant="outline" onClick={() => handleMarkRead(m.id)} title="Mark as read">
-                        Mark Read
-                      </Button>
-                      {canDelete ? (
-                        <Button size="sm" variant="destructive" onClick={() => handleDelete(m.id)} title="Delete message">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      ) : (
-                        <Button size="sm" variant="ghost" disabled title="Viewers cannot delete messages">
-                          <Trash2 className="w-4 h-4 text-muted-foreground" />
-                        </Button>
-                      )}
-                    </div>
+                <div key={m.id} className={`flex items-start p-4 gap-3 hover:bg-muted/30 transition ${m.isNew ? 'bg-primary/5' : ''}`}>
+                  {/* Checkbox */}
+                  <div className="flex items-center h-12" onClick={(e)=>e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedIds.has(m.id)} onChange={() => toggleSelect(m.id)} className="rounded" />
                   </div>
 
-                  {/* Message Content */}
-                  <div className="text-sm text-secondary-foreground leading-relaxed break-words">
-                    {m.content}
+                  {/* Avatar */}
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium flex-shrink-0 text-sm">
+                    {(m.sender||'').split(' ').map((s: string)=>s[0]).slice(0,2).join('')}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h3 className={`font-semibold truncate ${m.isNew ? 'text-foreground' : 'text-muted-foreground'}`}>{m.sender}</h3>
+                      <div className="text-xs text-muted-foreground whitespace-nowrap flex flex-col items-end">
+                        <span className="font-mono">{m.timestamp}</span>
+                        <span className="text-xs font-medium">{m.portName || getPortLabel(m.simPort, portLabels)}</span>
+                      </div>
+                    </div>
+
+                    {m.isNew && <span className="inline-block w-2 h-2 bg-primary rounded-full" />}
+
+                    <p className={`text-sm mt-2 line-clamp-2 ${m.isNew ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>{getTruncatedContent(m.content)}</p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <Button size="sm" variant="ghost" onClick={() => handleMarkRead(m.id)} className="p-1 h-auto">{m.isNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</Button>
                   </div>
                 </div>
               ))}

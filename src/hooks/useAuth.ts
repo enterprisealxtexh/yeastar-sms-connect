@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-export type AppRole = "admin" | "operator" | "viewer";
+export type AppRole = "super_admin" | "admin" | "operator" | "viewer";
 
 interface AuthState {
   user: any | null;
@@ -45,7 +45,7 @@ export const useAuth = (): AuthState => {
   }, []);
 
   const role = user?.role || null;
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'super_admin';
   const isOperator = role === 'operator' || isAdmin;
 
   return {

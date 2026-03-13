@@ -139,28 +139,30 @@ export const CallRecordsTable = ({
             ))}
           </div>
         ) : (
-          <ScrollArea className="h-[500px]">
-            <Table>
+          <div className="w-full overflow-x-auto">
+            <ScrollArea className="h-[500px]">
+              <div className="min-w-full inline-block">
+                <Table className="w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Direction</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead>To</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="whitespace-nowrap">Time</TableHead>
+                  <TableHead className="whitespace-nowrap">Direction</TableHead>
+                  <TableHead className="whitespace-nowrap">From</TableHead>
+                  <TableHead className="whitespace-nowrap">To</TableHead>
+                  <TableHead className="whitespace-nowrap">Status</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1">
                       <Timer className="w-3 h-3" />
                       Ring
                     </div>
                   </TableHead>
-                  <TableHead className="text-right">
+                  <TableHead className="text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1">
                       <Clock className="w-3 h-3" />
                       Talk
                     </div>
                   </TableHead>
-                  <TableHead className="text-center">Action</TableHead>
+                  <TableHead className="text-center whitespace-nowrap">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -177,51 +179,51 @@ export const CallRecordsTable = ({
                     
                     return (
                       <TableRow key={call.id} className="hover:bg-muted/20">
-                        <TableCell className="font-mono text-xs">
+                        <TableCell className="font-mono text-xs whitespace-nowrap">
                           {formatDateNairobi(call.start_time)}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge variant={call.direction === "inbound" ? "default" : "secondary"}>
                             {call.direction}
                           </Badge>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="min-w-[140px]">
                           <div className="flex flex-col">
                             {call.caller_extension_username ? (
                               <>
-                                <span className="font-semibold text-primary">{call.caller_number}</span>
-                                <span className="text-xs text-muted-foreground">{call.caller_extension_username}</span>
+                                <span className="font-semibold text-primary text-xs sm:text-sm truncate">{call.caller_number}</span>
+                                <span className="text-xs text-muted-foreground truncate">{call.caller_extension_username}</span>
                               </>
                             ) : (
-                              <span className="font-medium">{call.caller_number}</span>
+                              <span className="font-medium text-xs sm:text-sm truncate">{call.caller_number}</span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="min-w-[140px]">
                           <div className="flex flex-col">
                             {call.callee_extension_username ? (
                               <>
-                                <span className="font-semibold text-primary">{call.callee_number}</span>
-                                <span className="text-xs text-muted-foreground">{call.callee_extension_username}</span>
+                                <span className="font-semibold text-primary text-xs sm:text-sm truncate">{call.callee_number}</span>
+                                <span className="text-xs text-muted-foreground truncate">{call.callee_extension_username}</span>
                               </>
                             ) : (
-                              <span className="font-medium">{call.callee_number}</span>
+                              <span className="font-medium text-xs sm:text-sm truncate">{call.callee_number}</span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge variant={call.status === "answered" ? "default" : "destructive"}>
                             {call.status}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm">
+                        <TableCell className="text-right font-mono text-xs sm:text-sm whitespace-nowrap">
                           {formatDuration(call.ring_duration)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm">
+                        <TableCell className="text-right font-mono text-xs sm:text-sm whitespace-nowrap">
                           {formatDuration(call.talk_duration)}
                         </TableCell>
-                        <TableCell className="text-center">
-                          <Button size="sm" variant="ghost" title={callBackNumber}>
+                        <TableCell className="text-center whitespace-nowrap">
+                          <Button size="sm" variant="ghost" title={callBackNumber} className="h-8 w-8 p-0">
                             <Phone className="w-4 h-4" />
                           </Button>
                         </TableCell>
@@ -230,8 +232,10 @@ export const CallRecordsTable = ({
                   })
                 )}
               </TableBody>
-            </Table>
-          </ScrollArea>
+                </Table>
+              </div>
+            </ScrollArea>
+          </div>
         )}
         {!isLoading && (
           <div className="flex items-center justify-between px-6 py-4 border-t border-border/50 bg-muted/20">

@@ -59,6 +59,8 @@ class TG400TcpApi extends EventEmitter {
     this.reconnectDelay = 5000; // ms
     this.heartbeatInterval = null;
     this.lastActivityTime = Date.now();
+    // Prevent MaxListenersExceededWarning — reconnects add new 'authenticated' listeners each time
+    this.setMaxListeners(50);
   }
 
   /**
@@ -104,18 +106,20 @@ class TG400TcpApi extends EventEmitter {
           this.logger.log('error', `TCP connection error: ${error.message}`);
           this.isConnected = false;
           this.isAuthenticated = false;
-          this.attemptReconnect();
+          // Do NOT call attemptReconnect here — the outer startSmsListener manages retries
           reject(error);
         });
 
         this.socket.on('close', () => {
-          this.logger.log('warn', 'TCP connection closed, attempting to reconnect...');
+          this.logger.log('warn', 'TCP connection closed');
           this.isConnected = false;
           this.isAuthenticated = false;
-          this.attemptReconnect();
+          // Emit disconnected so api-server can restart the listener cleanly
+          this.emit('disconnected');
         });
 
-        // Wait for authentication
+        // Wait for authentication — remove any stale listener from a previous attempt
+        this.removeAllListeners('authenticated');
         const authTimeout = setTimeout(() => {
           reject(new Error('Authentication timeout'));
         }, 10000);

@@ -3,12 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database } from "lucide-react";
+import { Settings, Save, Loader2, Zap, Bell, MessageSquare, Database, Phone, KeyRound, RefreshCw } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { GatewaySettingsForm } from "./GatewaySettingsForm";
 import { PbxSettingsForm } from "./PbxSettingsForm";
-import { TelegramSettingsForm } from "./TelegramSettingsForm";
 import GsmSpanSettingsForm from "./GsmSpanSettingsForm";
+import ExtensionsPanel from "./ExtensionsPanel";
+import { AutoReplyPanel } from "./AutoReplyPanel";
+import { CallAutoSmsPanel } from "./CallAutoSmsPanel";
+import { SetupPanel } from "./SetupPanel";
+import { AlertsPanel } from "./AlertsPanel";
+import { SystemUpdatePanel } from "./SystemUpdatePanel";
+import { useAuth } from "@/hooks/useAuth";
 
 interface ConfigurationPanelProps {
   isLoading?: boolean;
@@ -20,6 +26,8 @@ export const ConfigurationPanel = ({
   onConfigSaved,
 }: ConfigurationPanelProps) => {
   const [isSaving, setIsSaving] = useState(false);
+  const { role } = useAuth();
+  const isSuperAdmin = role === "super_admin";
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -94,8 +102,12 @@ export const ConfigurationPanel = ({
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <Tabs defaultValue="connectivity" className="space-y-6">
+        <Tabs defaultValue="setup" className="space-y-6">
           <TabsList className="bg-card border border-border/50">
+            <TabsTrigger value="setup" className="gap-2">
+              <KeyRound className="w-4 h-4" />
+              Setup
+            </TabsTrigger>
             <TabsTrigger value="connectivity" className="gap-2">
               <Zap className="w-4 h-4" />
               Connectivity
@@ -104,11 +116,41 @@ export const ConfigurationPanel = ({
               <Database className="w-4 h-4" />
               SIM Ports
             </TabsTrigger>
+            <TabsTrigger value="sms" className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              SMS
+            </TabsTrigger>
             <TabsTrigger value="alerts" className="gap-2">
               <Bell className="w-4 h-4" />
-              Alerts & SMS
+              Alerts
             </TabsTrigger>
+            <TabsTrigger value="extensions" className="gap-2">
+              <Phone className="w-4 h-4" />
+              Extensions
+            </TabsTrigger>
+            {isSuperAdmin && (
+              <TabsTrigger value="system" className="gap-2">
+                <RefreshCw className="w-4 h-4" />
+                System Update
+              </TabsTrigger>
+            )}
           </TabsList>
+
+          {/* Setup Tab - Credentials & Recipients */}
+          <TabsContent value="setup" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4" />
+                  Channel Setup
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Configure Telegram bot credentials, email SMTP settings, and SMS recipient phone numbers
+                </p>
+              </div>
+              <SetupPanel />
+            </div>
+          </TabsContent>
 
           {/* Connectivity Tab - Gateway + PBX */}
           <TabsContent value="connectivity" className="space-y-6">
@@ -157,27 +199,59 @@ export const ConfigurationPanel = ({
             </div>
           </TabsContent>
 
-          {/* Alerts & SMS Tab - Telegram Notifications */}
-          <TabsContent value="alerts" className="space-y-6">
+          {/* SMS Tab - Auto-Reply and Call Auto-SMS */}
+          <TabsContent value="sms" className="space-y-6">
             <div className="space-y-6">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  SMS Automation
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Configure automatic SMS replies and post-call messages
+                </p>
+              </div>
+              <AutoReplyPanel />
+              <CallAutoSmsPanel />
+            </div>
+          </TabsContent>
+
+          {/* Alerts Tab - Reports, Logs, Errors, Notification Settings */}
+          <TabsContent value="alerts" className="space-y-6">
+            <AlertsPanel />
+          </TabsContent>
+
+          <TabsContent value="extensions" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  PBX Extensions
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Manage synced PBX extensions and review their recent activity
+                </p>
+              </div>
+              <ExtensionsPanel />
+            </div>
+          </TabsContent>
+
+          {isSuperAdmin && (
+            <TabsContent value="system" className="space-y-6">
               <div className="space-y-4">
                 <div>
                   <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4" />
-                    Telegram Notifications
+                    <RefreshCw className="w-4 h-4" />
+                    System Update
                   </h3>
                   <p className="text-xs text-muted-foreground mb-4">
-                    Setup Telegram bot for instant alerts
+                    Pull latest backend-configured release and rebuild
                   </p>
                 </div>
-                <TelegramSettingsForm />
+                <SystemUpdatePanel />
               </div>
-              <Separator />
-              <div className="space-y-4">
-
-              </div>
-            </div>
-          </TabsContent>
+            </TabsContent>
+          )}
         </Tabs>
       </CardContent>
     </Card>

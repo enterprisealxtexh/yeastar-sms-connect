@@ -144,7 +144,7 @@ class SMSDatabase {
         event_type TEXT NOT NULL,
         message TEXT NOT NULL,
         severity TEXT DEFAULT 'info' CHECK (severity IN ('info', 'warning', 'error', 'success')),
-        sim_port INTEGER CHECK (sim_port >= 1 AND sim_port <= 4),
+        sim_port INTEGER CHECK (sim_port IS NULL OR (sim_port >= 1 AND sim_port <= 4)),
         metadata TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -190,11 +190,48 @@ class SMSDatabase {
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT DEFAULT 'operator' CHECK (role IN ('admin', 'operator', 'viewer')),
+        pin TEXT,
+        telegram_chat_id TEXT,
+        notification_channel TEXT DEFAULT 'telegram',
         name TEXT,
         is_active BOOLEAN DEFAULT 1,
         last_login DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // user_roles table - allow mapping to support super_admin and role history
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_roles (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT UNIQUE NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('super_admin','admin','operator','viewer')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // User Port Permissions - which SIM ports each user can access
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_port_permissions (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL,
+        sim_port INTEGER NOT NULL CHECK (sim_port >= 1 AND sim_port <= 4),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, sim_port),
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+
+    // User Extension Permissions - which extensions each user can access
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_extension_permissions (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL,
+        extension TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, extension),
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
       );
     `);
 
@@ -205,6 +242,20 @@ class SMSDatabase {
         bot_token TEXT,
         chat_id TEXT,
         enabled BOOLEAN DEFAULT 0,
+        email_enabled BOOLEAN DEFAULT 0,
+        email_recipients TEXT DEFAULT '[]',
+        email_smtp_host TEXT DEFAULT '',
+        email_smtp_port INTEGER DEFAULT 587,
+        email_smtp_user TEXT DEFAULT '',
+        email_smtp_pass TEXT DEFAULT '',
+        email_from TEXT DEFAULT '',
+        sms_enabled BOOLEAN DEFAULT 1,
+        notify_missed_calls BOOLEAN DEFAULT 1,
+        notify_new_sms BOOLEAN DEFAULT 0,
+        notify_system_errors BOOLEAN DEFAULT 1,
+        notify_shift_changes BOOLEAN DEFAULT 1,
+        daily_report_enabled BOOLEAN DEFAULT 0,
+        daily_report_time TEXT DEFAULT '18:00',
         is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -342,6 +393,110 @@ class SMSDatabase {
       CREATE INDEX IF NOT EXISTS idx_sms_report_active ON sms_report_recipients(is_active);
     `);;
 
+    // Auto-Reply Config table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS auto_reply_config (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        enabled BOOLEAN DEFAULT 0,
+        message TEXT DEFAULT 'Thank you for your message. We will get back to you shortly.',
+        notification_email TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Call Auto-SMS Config table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS call_auto_sms_config (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        enabled BOOLEAN DEFAULT 0,
+        answered_message TEXT DEFAULT '',
+        missed_message TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // ========== STAFF MANAGEMENT TABLES ==========
+
+    // Agents table - staff members
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agents (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        name TEXT NOT NULL UNIQUE,
+        pin TEXT NOT NULL DEFAULT '0000',
+        email TEXT UNIQUE,
+        phone TEXT,
+        extension TEXT UNIQUE,
+        telegram_chat_id TEXT,
+        notification_channel TEXT DEFAULT 'telegram',
+        is_active BOOLEAN DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Agent Shifts - clock in/out records
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_shifts (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        agent_id TEXT NOT NULL,
+        clock_in DATETIME NOT NULL,
+        clock_out DATETIME,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Shift Schedule - scheduled shifts
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS shift_schedule (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        agent_id TEXT NOT NULL,
+        shift_date DATE NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Shift Swap Requests
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS shift_swap_requests (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        requester_agent_id TEXT NOT NULL,
+        requester_shift_id TEXT NOT NULL,
+        target_agent_id TEXT NOT NULL,
+        target_shift_id TEXT NOT NULL,
+        reason TEXT,
+        status TEXT DEFAULT 'pending',
+        reviewed_by TEXT,
+        review_note TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (requester_agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+        FOREIGN KEY (target_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Agent Ratings
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_ratings (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        agent_id TEXT NOT NULL,
+        rated_by TEXT,
+        rating INTEGER CHECK(rating >= 1 AND rating <= 5),
+        comment TEXT,
+        rating_date DATE DEFAULT CURRENT_DATE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+      );
+    `);
+
     // Insert default gateway config if empty
     const count = this.db.prepare('SELECT COUNT(*) as cnt FROM gateway_config').get().cnt;
     if (count === 0) {
@@ -370,16 +525,60 @@ class SMSDatabase {
         INSERT INTO users (email, password_hash, role, name, is_active)
         VALUES ('admin@nosteq.co.ke', ?, 'admin', 'Administrator', 1)
       `).run(defaultPasswordHash);
+      // Ensure role mapping exists for default admin
+      const adminUser = this.db.prepare('SELECT id FROM users WHERE email = ?').get('admin@nosteq.co.ke');
+      if (adminUser) {
+        try {
+          this.db.prepare(`INSERT INTO user_roles (user_id, role) VALUES (?, ?)`).run(adminUser.id, 'super_admin');
+        } catch (e) {
+          // ignore duplicate
+        }
+      }
       const logger = require('./logger.cjs');
       logger.info('Default admin user created (admin@nosteq.co.ke)');
+    }
+
+    // Insert default Auto-Reply config if empty
+    const autoReplyCount = this.db.prepare('SELECT COUNT(*) as cnt FROM auto_reply_config').get().cnt;
+    if (autoReplyCount === 0) {
+      this.db.prepare(`
+        INSERT INTO auto_reply_config (enabled, message)
+        VALUES (0, 'Thank you for your message. We will get back to you shortly.')
+      `).run();
+    }
+
+    // Insert default Call Auto-SMS config if empty
+    const callAutoSmsCount = this.db.prepare('SELECT COUNT(*) as cnt FROM call_auto_sms_config').get().cnt;
+    if (callAutoSmsCount === 0) {
+      this.db.prepare(
+        'INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message) VALUES (?, ?, ?)'
+      ).run(
+        0,
+        'Thank you for calling us! We appreciate your business and are here to help anytime.',
+        "We missed your call! Sorry we couldn't answer. We'll get back to you shortly. Your call is important to us."
+      );
     }
 
     // Insert default Telegram config if empty
     const telegramCount = this.db.prepare('SELECT COUNT(*) as cnt FROM telegram_config').get().cnt;
     if (telegramCount === 0) {
       this.db.prepare(`
-        INSERT INTO telegram_config (bot_token, chat_id, enabled, is_active)
-        VALUES ('', '', 0, 1)
+        INSERT INTO telegram_config (
+          bot_token,
+          chat_id,
+          enabled,
+          email_enabled,
+          email_recipients,
+          sms_enabled,
+          notify_missed_calls,
+          notify_new_sms,
+          notify_system_errors,
+          notify_shift_changes,
+          daily_report_enabled,
+          daily_report_time,
+          is_active
+        )
+        VALUES ('', '', 0, 0, '[]', 1, 1, 0, 1, 1, 0, '18:00', 1)
       `).run();
     }
   }
@@ -419,6 +618,78 @@ class SMSDatabase {
             throw e;
           }
         }
+      }
+
+      // Migration: Add notification settings columns to telegram_config
+      const telegramTableInfo = this.db.prepare(`PRAGMA table_info(telegram_config)`).all();
+      const telegramColumns = new Set(telegramTableInfo.map(col => col.name));
+      const telegramColumnMigrations = [
+        { name: 'email_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN email_enabled BOOLEAN DEFAULT 0' },
+        { name: 'email_recipients', ddl: "ALTER TABLE telegram_config ADD COLUMN email_recipients TEXT DEFAULT '[]'" },
+        { name: 'sms_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN sms_enabled BOOLEAN DEFAULT 1' },
+        { name: 'notify_missed_calls', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_missed_calls BOOLEAN DEFAULT 1' },
+        { name: 'notify_new_sms', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_new_sms BOOLEAN DEFAULT 0' },
+        { name: 'notify_system_errors', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_system_errors BOOLEAN DEFAULT 1' },
+        { name: 'notify_shift_changes', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_shift_changes BOOLEAN DEFAULT 1' },
+        { name: 'daily_report_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN daily_report_enabled BOOLEAN DEFAULT 0' },
+        { name: 'daily_report_time', ddl: "ALTER TABLE telegram_config ADD COLUMN daily_report_time TEXT DEFAULT '18:00'" },
+        { name: 'email_smtp_host', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_host TEXT DEFAULT ''" },
+        { name: 'email_smtp_port', ddl: 'ALTER TABLE telegram_config ADD COLUMN email_smtp_port INTEGER DEFAULT 587' },
+        { name: 'email_smtp_user', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_user TEXT DEFAULT ''" },
+        { name: 'email_smtp_pass', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_pass TEXT DEFAULT ''" },
+        { name: 'email_from', ddl: "ALTER TABLE telegram_config ADD COLUMN email_from TEXT DEFAULT ''" }
+      ];
+
+      for (const migration of telegramColumnMigrations) {
+        if (!telegramColumns.has(migration.name)) {
+          try {
+            this.db.exec(migration.ddl);
+          } catch (e) {
+            if (!e.message.includes('duplicate column name')) {
+              throw e;
+            }
+          }
+        }
+      }
+
+      // Migration: Clean up activity_logs with invalid sim_port values (not 1-4 and not null)
+      try {
+        const logger = require('./logger.cjs');
+        const result = this.db.prepare(`
+          DELETE FROM activity_logs 
+          WHERE sim_port IS NOT NULL AND (sim_port < 1 OR sim_port > 4)
+        `).run();
+        if (result.changes > 0) {
+          logger.info(`🔄 Migration: Cleaned up ${result.changes} activity_logs with invalid sim_port values`);
+        }
+      } catch (e) {
+        // ignore if table doesn't exist yet
+      }
+
+      // Migration: Ensure agent_shifts uses `agent_id` column (older DBs used `user_id`)
+      try {
+        const agentShiftsInfo = this.db.prepare(`PRAGMA table_info(agent_shifts)`).all();
+        const hasAgentId = agentShiftsInfo.some(col => col.name === 'agent_id');
+        const hasUserId = agentShiftsInfo.some(col => col.name === 'user_id');
+
+        if (!hasAgentId && hasUserId) {
+          const logger = require('./logger.cjs');
+          logger.info('🔄 Migrating: Renaming agent_shifts.user_id -> agent_id');
+          try {
+            // Add new column and copy values from user_id
+            this.db.exec(`ALTER TABLE agent_shifts ADD COLUMN agent_id TEXT`);
+            this.db.prepare(`UPDATE agent_shifts SET agent_id = user_id WHERE agent_id IS NULL OR agent_id = ''`).run();
+            // Note: Cannot drop column in SQLite easily; keep `user_id` for compatibility.
+            logger.info('✅ Migration complete: agent_shifts.agent_id populated from user_id');
+          } catch (e) {
+            if (!e.message.includes('duplicate column name')) {
+              throw e;
+            }
+          }
+        }
+      } catch (e) {
+        // ignore migration failures here but log
+        try { const logger = require('./logger.cjs'); logger.warn(`⚠️  agent_shifts migration check failed: ${e.message}`); } catch (e2) {}
       }
     } catch (error) {
       const logger = require('./logger.cjs');
@@ -538,15 +809,184 @@ class SMSDatabase {
     }
   }
 
+  // User management helpers used by API server
+  getAllUsers() {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT u.id, u.email, u.name, COALESCE(ur.role, u.role) as role, u.pin, u.telegram_chat_id, u.notification_channel, u.is_active, u.last_login, u.created_at, u.updated_at
+        FROM users u
+        LEFT JOIN user_roles ur ON ur.user_id = u.id
+        ORDER BY u.email
+      `);
+      return stmt.all();
+    } catch (error) {
+      console.error('Error getting all users:', error.message);
+      return [];
+    }
+  }
+
+  createUser({ email, password, name = '', role = 'operator', pin = null, telegram_chat_id = null, notification_channel = 'telegram' }) {
+    try {
+      const crypto = require('crypto');
+      const password_hash = crypto.createHash('sha256').update(password).digest('hex');
+      const stmt = this.db.prepare(`INSERT INTO users (email, password_hash, role, pin, telegram_chat_id, notification_channel, name, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`);
+      const result = stmt.run(email, password_hash, role === 'super_admin' ? 'admin' : role, pin, telegram_chat_id, notification_channel, name);
+      if (result.changes > 0) {
+        const userId = this.db.prepare('SELECT id FROM users WHERE email = ?').get(email).id;
+        try {
+          this.db.prepare('INSERT OR REPLACE INTO user_roles (user_id, role) VALUES (?, ?)').run(userId, role === 'super_admin' ? 'super_admin' : role);
+        } catch (e) {
+          // ignore
+        }
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error creating user:', error.message);
+      return false;
+    }
+  }
+
+  setUserRole(userId, role) {
+    try {
+      // Update users.role (legacy field) and user_roles mapping
+      const allowed = ['super_admin', 'admin', 'operator', 'viewer'];
+      if (!allowed.includes(role)) return false;
+
+      // Map super_admin to admin for users.role column to maintain compatibility
+      const legacyRole = role === 'super_admin' ? 'admin' : role;
+      this.db.prepare('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(legacyRole, userId);
+
+      // Upsert into user_roles
+      this.db.prepare('INSERT INTO user_roles (user_id, role) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET role = excluded.role, created_at = CURRENT_TIMESTAMP').run(userId, role);
+      return true;
+    } catch (error) {
+      console.error('Error setting user role:', error.message);
+      return false;
+    }
+  }
+
+  // Port permisions management
+  setUserPortPermissions(userId, ports) {
+    try {
+      // Clear existing permissions
+      this.db.prepare('DELETE FROM user_port_permissions WHERE user_id = ?').run(userId);
+      
+      // Add new permissions (empty array means all ports)
+      if (ports && ports.length > 0) {
+        const stmt = this.db.prepare('INSERT INTO user_port_permissions (user_id, sim_port) VALUES (?, ?)');
+        ports.forEach(port => stmt.run(userId, port));
+      }
+      return true;
+    } catch (error) {
+      console.error('Error setting user port permissions:', error.message);
+      return false;
+    }
+  }
+
+  getUserPortPermissions(userId) {
+    try {
+      const stmt = this.db.prepare('SELECT sim_port FROM user_port_permissions WHERE user_id = ? ORDER BY sim_port');
+      const rows = stmt.all(userId);
+      return rows.map(r => r.sim_port);
+    } catch (error) {
+      console.error('Error getting user port permissions:', error.message);
+      return [];
+    }
+  }
+
+  // Extension permissions management
+  setUserExtensionPermissions(userId, extensions) {
+    try {
+      // Clear existing permissions
+      this.db.prepare('DELETE FROM user_extension_permissions WHERE user_id = ?').run(userId);
+      
+      // Add new permissions (empty array means all extensions)
+      if (extensions && extensions.length > 0) {
+        const stmt = this.db.prepare('INSERT INTO user_extension_permissions (user_id, extension) VALUES (?, ?)');
+        extensions.forEach(ext => stmt.run(userId, ext));
+      }
+      return true;
+    } catch (error) {
+      console.error('Error setting user extension permissions:', error.message);
+      return false;
+    }
+  }
+
+  getUserExtensionPermissions(userId) {
+    try {
+      const stmt = this.db.prepare('SELECT extension FROM user_extension_permissions WHERE user_id = ? ORDER BY extension');
+      const rows = stmt.all(userId);
+      return rows.map(r => r.extension);
+    } catch (error) {
+      console.error('Error getting user extension permissions:', error.message);
+      return [];
+    }
+  }
+
   saveTelegramConfig(config) {
     try {
-      const { bot_token, chat_id, enabled } = config;
+      const {
+        bot_token,
+        chat_id,
+        enabled,
+        email_enabled = false,
+        email_recipients = [],
+        email_smtp_host = '',
+        email_smtp_port = 587,
+        email_smtp_user = '',
+        email_smtp_pass = '',
+        email_from = '',
+        sms_enabled = true,
+        notify_missed_calls = true,
+        notify_new_sms = false,
+        notify_system_errors = true,
+        notify_shift_changes = true,
+        daily_report_enabled = false,
+        daily_report_time = '18:00'
+      } = config;
       const stmt = this.db.prepare(`
         UPDATE telegram_config 
-        SET bot_token = ?, chat_id = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+        SET
+          bot_token = ?,
+          chat_id = ?,
+          enabled = ?,
+          email_enabled = ?,
+          email_recipients = ?,
+          email_smtp_host = ?,
+          email_smtp_port = ?,
+          email_smtp_user = ?,
+          email_smtp_pass = ?,
+          email_from = ?,
+          sms_enabled = ?,
+          notify_missed_calls = ?,
+          notify_new_sms = ?,
+          notify_system_errors = ?,
+          notify_shift_changes = ?,
+          daily_report_enabled = ?,
+          daily_report_time = ?,
+          updated_at = CURRENT_TIMESTAMP
         WHERE id = (SELECT id FROM telegram_config LIMIT 1)
       `);
-      stmt.run(bot_token || '', chat_id || '', enabled ? 1 : 0);
+      stmt.run(
+        bot_token || '',
+        chat_id || '',
+        enabled ? 1 : 0,
+        email_enabled ? 1 : 0,
+        JSON.stringify(Array.isArray(email_recipients) ? email_recipients : []),
+        email_smtp_host || '',
+        email_smtp_port || 587,
+        email_smtp_user || '',
+        email_smtp_pass || '',
+        email_from || '',
+        sms_enabled ? 1 : 0,
+        notify_missed_calls ? 1 : 0,
+        notify_new_sms ? 1 : 0,
+        notify_system_errors ? 1 : 0,
+        notify_shift_changes ? 1 : 0,
+        daily_report_enabled ? 1 : 0,
+        daily_report_time || '18:00'
+      );
       
       // If enabling Telegram, reset the missed call alert checkpoint to NOW
       // This ensures we only send alerts for calls AFTER enabling, not historical calls
@@ -641,6 +1081,69 @@ class SMSDatabase {
       return false;
     } catch (error) {
       console.error('Error removing SMS report recipient:', error.message);
+      return false;
+    }
+  }
+
+  // SMS Template methods
+  getSmsTemplates() {
+    try {
+      const stmt = this.db.prepare('SELECT * FROM sms_templates ORDER BY created_at DESC');
+      return stmt.all() || [];
+    } catch (error) {
+      console.error('Error getting SMS templates:', error.message);
+      return [];
+    }
+  }
+
+  createSmsTemplate({ name, message, active = true }) {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO sms_templates (name, message, active)
+        VALUES (?, ?, ?)
+      `);
+      const result = stmt.run(name, message, active ? 1 : 0);
+      if (result.changes > 0) {
+        this.logActivity('sms_template_created', `SMS template created: ${name}`, 'success');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error creating SMS template:', error.message);
+      return false;
+    }
+  }
+
+  updateSmsTemplate(id, { name, message, active = true }) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE sms_templates
+        SET name = ?, message = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const result = stmt.run(name, message, active ? 1 : 0, id);
+      if (result.changes > 0) {
+        this.logActivity('sms_template_updated', `SMS template updated: ${name}`, 'success');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating SMS template:', error.message);
+      return false;
+    }
+  }
+
+  deleteSmsTemplate(id) {
+    try {
+      const stmt = this.db.prepare('DELETE FROM sms_templates WHERE id = ?');
+      const result = stmt.run(id);
+      if (result.changes > 0) {
+        this.logActivity('sms_template_deleted', `SMS template deleted: ${id}`, 'success');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error deleting SMS template:', error.message);
       return false;
     }
   }
@@ -1120,7 +1623,7 @@ class SMSDatabase {
         
         if (existing) {
           logger.debug(`ℹ️  SMS already exists (duplicate): external_id=${external_id}`);
-          return false;
+          return true; // Already stored — not an error
         }
 
         // ADDITIONAL: Check for duplicates within last 5 seconds by content+sender+gsm_span
@@ -1140,14 +1643,12 @@ class SMSDatabase {
         
         if (recentDup) {
           logger.debug(`ℹ️  SMS likely duplicate (received within 5s): sender=${sender_number}, gsm_span=${gsm_span}`);
-          return false;
+          return true; // Already stored — not an error
         }
         
-        // Convert gsm_span (2-5) to sim_port (1-4)
-        // gsm_span: 2→port 1, 3→port 2, 4→port 3, 5→port 4
-        const simPort = Math.max(1, gsm_span - 1);
+        // sim_port (1-4) derived from gsm_span (2-5): sim_port = gsm_span - 1
+        const simPort = Math.max(1, Math.min(4, gsm_span - 1));
         
-        // Use INSERT to add new message - storing BOTH sim_port (1-4) and gsm_span (2-5)
         const stmt = this.db.prepare(`
           INSERT INTO sms_messages 
           (external_id, sender_number, message_content, received_at, sim_port, gsm_span, status, category)
@@ -1303,11 +1804,31 @@ class SMSDatabase {
       return false;
     }
   }
+  
+  markAllRead() {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE sms_messages
+        SET status = 'read', updated_at = CURRENT_TIMESTAMP
+        WHERE status != 'read'
+      `);
+      const result = stmt.run();
+      return result.changes || 0;
+    } catch (error) {
+      console.error('Error marking all SMS as read:', error.message);
+      return 0;
+    }
+  }
   saveSMSMessage(smsData) {
     try {
-      // Convert sim_port to gsm_span if needed (sim_port 1-4 -> gsm_span 2-5)
+      // gsm_span (2-5), sim_port (1-4): sim_port = gsm_span - 1
       const gsm_span = smsData.gsm_span || (smsData.sim_port ? smsData.sim_port + 1 : 2);
-      const sim_port = smsData.sim_port || (smsData.gsm_span ? smsData.gsm_span - 1 : 1);
+      const sim_port = smsData.sim_port || Math.max(1, Math.min(4, gsm_span - 1));
+      
+      // Validate gsm_span is in valid range
+      if (gsm_span < 2 || gsm_span > 5) {
+        throw new Error(`Invalid gsm_span: ${gsm_span}. Must be 2-5`);
+      }
       
       const stmt = this.db.prepare(`
         INSERT INTO sms_messages (
@@ -1332,13 +1853,15 @@ class SMSDatabase {
       
       return result.changes > 0;
     } catch (error) {
-      console.error('Error saving SMS message:', error.message);
+      console.error('❌ Error saving SMS message:', error.message);
+      console.error('   Data:', { sender: smsData.sender_number, gsm_span: smsData.gsm_span });
       return false;
     }
   }
 
   saveBulkSMS(messages) {
     try {
+      // sim_port (1-4), gsm_span (2-5): sim_port = gsm_span - 1
       const insert = this.db.prepare(`
         INSERT INTO sms_messages (
           sender_number, message_content, sim_port, gsm_span, status, 
@@ -1348,9 +1871,8 @@ class SMSDatabase {
       
       const insertMany = this.db.transaction((msgs) => {
         for (const msg of msgs) {
-          // Convert sim_port to gsm_span if needed (sim_port 1-4 -> gsm_span 2-5)
           const gsm_span = msg.gsm_span || (msg.sim_port ? msg.sim_port + 1 : 2);
-          const sim_port = msg.sim_port || (msg.gsm_span ? msg.gsm_span - 1 : 1);
+          const sim_port = msg.sim_port || Math.max(1, Math.min(4, gsm_span - 1));
           
           insert.run(
             msg.sender_number,
@@ -1391,11 +1913,14 @@ class SMSDatabase {
         VALUES (?, ?, ?, ?, ?)
       `);
       
+      // Ensure sim_port is within valid range (1-4) or null
+      const validPort = (sim_port && sim_port >= 1 && sim_port <= 4) ? sim_port : null;
+      
       stmt.run(
         eventType,
         message,
         severity,
-        sim_port,
+        validPort,
         JSON.stringify(metadata)
       );
       return true;
@@ -1634,16 +2159,6 @@ class SMSDatabase {
     }
   }
 
-  getAllUsers() {
-    try {
-      const stmt = this.db.prepare('SELECT id, email, role, name, is_active, last_login, created_at FROM users ORDER BY created_at DESC');
-      return stmt.all() || [];
-    } catch (error) {
-      console.error('Error getting users:', error.message);
-      return [];
-    }
-  }
-
   // ========================================
   // CONTACTS MANAGEMENT
   // ========================================
@@ -1840,6 +2355,64 @@ class SMSDatabase {
     }
   }
 
+  // Auto-Reply Config methods
+  getAutoReplyConfig() {
+    try {
+      return this.db.prepare('SELECT * FROM auto_reply_config LIMIT 1').get() || null;
+    } catch (error) {
+      console.error('Error getting auto-reply config:', error.message);
+      return null;
+    }
+  }
+
+  saveAutoReplyConfig({ enabled, message, notification_email }) {
+    try {
+      const existing = this.db.prepare('SELECT id FROM auto_reply_config LIMIT 1').get();
+      if (existing) {
+        this.db.prepare(`
+          UPDATE auto_reply_config SET enabled = ?, message = ?, notification_email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(enabled ? 1 : 0, message, notification_email || null, existing.id);
+      } else {
+        this.db.prepare(`
+          INSERT INTO auto_reply_config (enabled, message, notification_email) VALUES (?, ?, ?)
+        `).run(enabled ? 1 : 0, message, notification_email || null);
+      }
+      return true;
+    } catch (error) {
+      console.error('Error saving auto-reply config:', error.message);
+      return false;
+    }
+  }
+
+  // Call Auto-SMS Config methods
+  getCallAutoSmsConfig() {
+    try {
+      return this.db.prepare('SELECT * FROM call_auto_sms_config LIMIT 1').get() || null;
+    } catch (error) {
+      console.error('Error getting call auto-SMS config:', error.message);
+      return null;
+    }
+  }
+
+  saveCallAutoSmsConfig({ enabled, answered_message, missed_message }) {
+    try {
+      const existing = this.db.prepare('SELECT id FROM call_auto_sms_config LIMIT 1').get();
+      if (existing) {
+        this.db.prepare(`
+          UPDATE call_auto_sms_config SET enabled = ?, answered_message = ?, missed_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(enabled ? 1 : 0, answered_message, missed_message, existing.id);
+      } else {
+        this.db.prepare(`
+          INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message) VALUES (?, ?, ?)
+        `).run(enabled ? 1 : 0, answered_message, missed_message);
+      }
+      return true;
+    } catch (error) {
+      console.error('Error saving call auto-SMS config:', error.message);
+      return false;
+    }
+  }
+
   // Expose database prepare method for direct SQL queries
   prepare(sql) {
     if (!this.db) {
@@ -1861,6 +2434,316 @@ class SMSDatabase {
       this.db.close();
       const logger = require('./logger.cjs');
       logger.info('Database connection closed');
+    }
+  }
+
+  // ========== STAFF MANAGEMENT METHODS ==========
+
+  // Agents CRUD
+  createAgent(agentData) {
+    try {
+      const { name, pin, email, phone, extension, telegram_chat_id, notification_channel } = agentData;
+      const stmt = this.db.prepare(`
+        INSERT INTO agents (name, pin, email, phone, extension, telegram_chat_id, notification_channel)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(name, pin || '0000', email, phone, extension, telegram_chat_id, notification_channel || 'telegram');
+      return this.db.prepare('SELECT * FROM agents WHERE name = ?').get(name);
+    } catch (error) {
+      console.error('Error creating agent:', error.message);
+      return null;
+    }
+  }
+
+  getAgents() {
+    try {
+      return this.db.prepare('SELECT * FROM agents WHERE is_active = 1 ORDER BY name ASC').all();
+    } catch (error) {
+      console.error('Error getting agents:', error.message);
+      return [];
+    }
+  }
+
+  getAgentById(agentId) {
+    try {
+      return this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+    } catch (error) {
+      console.error('Error getting agent:', error.message);
+      return null;
+    }
+  }
+
+  updateAgent(agentId, agentData) {
+    try {
+      const { name, email, phone, extension, telegram_chat_id, notification_channel, is_active } = agentData;
+      const stmt = this.db.prepare(`
+        UPDATE agents 
+        SET name = ?, email = ?, phone = ?, extension = ?, telegram_chat_id = ?, notification_channel = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const result = stmt.run(name, email, phone, extension, telegram_chat_id, notification_channel, is_active, agentId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error updating agent:', error.message);
+      return false;
+    }
+  }
+
+  verifyAgentPin(pin) {
+    try {
+      return this.db.prepare('SELECT id, name, email, extension FROM agents WHERE pin = ? AND is_active = 1').get(pin);
+    } catch (error) {
+      console.error('Error verifying PIN:', error.message);
+      return null;
+    }
+  }
+
+  updateAgentPin(agentId, newPin) {
+    try {
+      const stmt = this.db.prepare('UPDATE agents SET pin = ? WHERE id = ?');
+      const result = stmt.run(newPin, agentId);
+      return result.changes > 0;
+
+    } catch (error) {
+      console.error('Error updating PIN:', error.message);
+      return false;
+    }
+  }
+
+  // Agent Shifts - Clock In/Out
+  clockIn(agentId) {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO agent_shifts (agent_id, clock_in, status)
+        VALUES (?, CURRENT_TIMESTAMP, 'active')
+      `);
+      const result = stmt.run(agentId);
+      return result.changes > 0 ? this.getActiveShift(agentId) : null;
+    } catch (error) {
+      console.error('Error clocking in:', error.message);
+      return null;
+    }
+  }
+
+  clockOut(agentId) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE agent_shifts 
+        SET clock_out = CURRENT_TIMESTAMP, status = 'completed'
+        WHERE agent_id = ? AND status = 'active'
+      `);
+      const result = stmt.run(agentId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error clocking out:', error.message);
+      return false;
+    }
+  }
+
+  getActiveShift(agentId) {
+    try {
+      return this.db.prepare(`
+        SELECT s.*, a.name, a.email 
+        FROM agent_shifts s
+        JOIN agents a ON s.agent_id = a.id
+        WHERE s.agent_id = ? AND s.status = 'active'
+        ORDER BY s.clock_in DESC LIMIT 1
+      `).get(agentId);
+    } catch (error) {
+      console.error('Error getting active shift:', error.message);
+      return null;
+    }
+  }
+
+  getActiveShifts() {
+    try {
+      return this.db.prepare(`
+        SELECT s.id, s.clock_in, s.agent_id, a.name, a.email, a.extension
+        FROM agent_shifts s
+        JOIN agents a ON s.agent_id = a.id
+        WHERE s.status = 'active'
+        ORDER BY s.clock_in DESC
+      `).all();
+    } catch (error) {
+      console.error('Error getting active shifts:', error.message);
+      return [];
+    }
+  }
+
+  getShiftHistory(agentId, days = 30) {
+    try {
+      return this.db.prepare(`
+        SELECT * FROM agent_shifts 
+        WHERE agent_id = ? AND DATE(clock_in) >= DATE('now', '-' || ? || ' days')
+        ORDER BY clock_in DESC
+      `).all(agentId, days);
+    } catch (error) {
+      console.error('Error getting shift history:', error.message);
+      return [];
+    }
+  }
+
+  // Shift Schedule
+  createShiftSchedule(scheduleData) {
+    try {
+      const { agent_id, shift_date, start_time, end_time, notes } = scheduleData;
+      const stmt = this.db.prepare(`
+        INSERT INTO shift_schedule (agent_id, shift_date, start_time, end_time, notes)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      stmt.run(agent_id, shift_date, start_time, end_time, notes);
+      return true;
+    } catch (error) {
+      console.error('Error creating shift schedule:', error.message);
+      return false;
+    }
+  }
+
+  getShiftSchedule(agentId, startDate, endDate) {
+    try {
+      return this.db.prepare(`
+        SELECT s.*, a.name FROM shift_schedule s
+        JOIN agents a ON s.agent_id = a.id
+        WHERE s.agent_id = ? AND s.shift_date BETWEEN ? AND ?
+        ORDER BY s.shift_date, s.start_time
+      `).all(agentId, startDate, endDate);
+    } catch (error) {
+      console.error('Error getting shift schedule:', error.message);
+      return [];
+    }
+  }
+
+  getAllSchedules(startDate, endDate) {
+    try {
+      return this.db.prepare(`
+        SELECT s.*, a.name, a.email FROM shift_schedule s
+        JOIN agents a ON s.agent_id = a.id
+        WHERE s.shift_date BETWEEN ? AND ?
+        ORDER BY s.shift_date, s.start_time
+      `).all(startDate, endDate);
+    } catch (error) {
+      console.error('Error getting all schedules:', error.message);
+      return [];
+    }
+  }
+
+  deleteSchedule(scheduleId) {
+    try {
+      const stmt = this.db.prepare('DELETE FROM shift_schedule WHERE id = ?');
+      const result = stmt.run(scheduleId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error deleting schedule:', error.message);
+      return false;
+    }
+  }
+
+  // Shift Swap Requests
+  createSwapRequest(swapData) {
+    try {
+      const { requester_agent_id, requester_shift_id, target_agent_id, target_shift_id, reason } = swapData;
+      const stmt = this.db.prepare(`
+        INSERT INTO shift_swap_requests (requester_agent_id, requester_shift_id, target_agent_id, target_shift_id, reason)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      stmt.run(requester_agent_id, requester_shift_id, target_agent_id, target_shift_id, reason);
+      return true;
+    } catch (error) {
+      console.error('Error creating swap request:', error.message);
+      return false;
+    }
+  }
+
+  getSwapRequests(status = 'pending') {
+    try {
+      return this.db.prepare(`
+        SELECT sr.*, 
+               ra.name as requester_name, ta.name as target_name,
+               rs.shift_date as requester_date, ts.shift_date as target_date
+        FROM shift_swap_requests sr
+        JOIN agents ra ON sr.requester_agent_id = ra.id
+        JOIN agents ta ON sr.target_agent_id = ta.id
+        LEFT JOIN shift_schedule rs ON sr.requester_shift_id = rs.id
+        LEFT JOIN shift_schedule ts ON sr.target_shift_id = ts.id
+        WHERE sr.status = ?
+        ORDER BY sr.created_at DESC
+      `).all(status);
+    } catch (error) {
+      console.error('Error getting swap requests:', error.message);
+      return [];
+    }
+  }
+
+  approveSwapRequest(swapId, reviewedBy) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE shift_swap_requests 
+        SET status = 'approved', reviewed_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const result = stmt.run(reviewedBy, swapId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error approving swap request:', error.message);
+      return false;
+    }
+  }
+
+  rejectSwapRequest(swapId, reviewedBy, reason) {
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE shift_swap_requests 
+        SET status = 'rejected', reviewed_by = ?, review_note = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      const result = stmt.run(reviewedBy, reason, swapId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error rejecting swap request:', error.message);
+      return false;
+    }
+  }
+
+  // Agent Ratings
+  rateAgent(ratingData) {
+    try {
+      const { agent_id, rating, comment, rated_by } = ratingData;
+      const stmt = this.db.prepare(`
+        INSERT INTO agent_ratings (agent_id, rating, comment, rated_by, rating_date)
+        VALUES (?, ?, ?, ?, CURRENT_DATE)
+      `);
+      stmt.run(agent_id, rating, comment, rated_by);
+      return true;
+    } catch (error) {
+      console.error('Error rating agent:', error.message);
+      return false;
+    }
+  }
+
+  getAgentRatings(agentId) {
+    try {
+      return this.db.prepare(`
+        SELECT * FROM agent_ratings 
+        WHERE agent_id = ?
+        ORDER BY created_at DESC
+      `).all(agentId);
+    } catch (error) {
+      console.error('Error getting agent ratings:', error.message);
+      return [];
+    }
+  }
+
+  getAgentAverageRating(agentId) {
+    try {
+      const result = this.db.prepare(`
+        SELECT AVG(rating) as avg_rating, COUNT(*) as total_ratings
+        FROM agent_ratings 
+        WHERE agent_id = ?
+      `).get(agentId);
+      return result;
+    } catch (error) {
+      console.error('Error getting average rating:', error.message);
+      return { avg_rating: 0, total_ratings: 0 };
     }
   }
 }

@@ -41,9 +41,9 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
     return messages.filter((m) => m.receivedAt >= today).length;
   }, [messages]);
 
-  // Get the last 5 recent messages without filtering
+  // Get the last 8 recent messages without filtering
   const recentMessages = useMemo(() => {
-    return messages.slice(0, 5);
+    return messages.slice(0, 8);
   }, [messages]);
 
   const handleMarkRead = async (id: string) => {
@@ -87,7 +87,7 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-[350px]">
+        <ScrollArea className="h-[600px]">
           {recentMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground">
               <MessageSquare className="w-10 h-10 mb-2 opacity-50" />

@@ -5,41 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertCircle, CheckCircle, Brain, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
-import { formatDateNairobi } from "@/lib/dateUtils";
-import { useState } from "react";
-import { toast } from "@/hooks/use-toast";
 
 export const ErrorLogsPanel = () => {
-  const { data: errors, isLoading } = useErrorLogs();
-  const [diagnosingId, setDiagnosingId] = useState<string | null>(null);
-
-  const unresolvedCount = (errors || []).filter(e => !e.resolved).length;
-
-  const handleDiagnose = async (errorId: string) => {
-    setDiagnosingId(errorId);
-    try {
-      toast({
-        title: "Diagnosing Error",
-        description: "AI analysis in progress...",
-      });
-      // AI diagnosis logic would go here
-      setTimeout(() => setDiagnosingId(null), 2000);
-    } catch (error) {
-      toast({
-        title: "Diagnosis Failed",
-        description: error instanceof Error ? error.message : "Could not diagnose error",
-        variant: "destructive",
-      });
-      setDiagnosingId(null);
-    }
-  };
-
-  const handleResolve = (errorId: string) => {
-    toast({
-      title: "Error Resolved",
-      description: "Error marked as resolved",
-    });
-  };
+  const { data: errors, isLoading, diagnoseError, markResolved, unresolvedCount } = useErrorLogs();
 
   if (isLoading) {
     return (
@@ -92,9 +60,9 @@ export const ErrorLogsPanel = () => {
                 <ErrorLogCard
                   key={error.id}
                   error={error}
-                  onDiagnose={() => handleDiagnose(error.id)}
-                  onResolve={() => handleResolve(error.id)}
-                  isDiagnosing={diagnosingId === error.id}
+                  onDiagnose={() => diagnoseError.mutate(error.id)}
+                  onResolve={() => markResolved.mutate(error.id)}
+                  isDiagnosing={diagnoseError.isPending}
                 />
               ))}
             </div>
@@ -122,7 +90,7 @@ const ErrorLogCard = ({ error, onDiagnose, onResolve, isDiagnosing }: ErrorLogCa
               {error.error_type}
             </Badge>
             <span className="text-xs text-muted-foreground">
-              {formatDateNairobi(error.created_at)}
+              {format(new Date(error.created_at), "MMM d, HH:mm:ss")}
             </span>
             {error.agent_id && (
               <span className="text-xs text-muted-foreground">

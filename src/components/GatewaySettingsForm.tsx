@@ -79,6 +79,7 @@ export const GatewaySettingsForm = () => {
       // Test real connection to TG400 Gateway via backend endpoint
       const gateway_ip = localConfig.gateway_ip || '192.168.5.3';
       const api_port = localConfig.api_port || 5038;
+      const apiUrl = import.meta.env.VITE_API_URL;
       
       const response = await fetch(`${apiUrl}/api/gateway-test`);
       const result = await response.json();

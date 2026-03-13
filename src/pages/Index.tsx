@@ -6,22 +6,25 @@ import { SystemStatusCard } from "@/components/SystemStatusCard";
 import { SmsInbox } from "@/components/SmsInbox";
 import { ActivityLog } from "@/components/ActivityLog";
 import { CallsSummaryPanel } from "@/components/CallsSummaryPanel";
-import { UserManager } from "@/components/UserManager";
+import { RoleManagementPanel } from "@/components/RoleManagementPanel";
 import { UserProfilePanel } from "@/components/UserProfilePanel";
 import { ConfigurationPanel } from "@/components/ConfigurationPanel";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
+import { InsightsPanel } from "@/components/InsightsPanel";
 import { CallRecordsTable } from "@/components/CallRecordsTable";
 import { CallStatsCards } from "@/components/CallStatsCards";
 import { QuickDialWidget } from "@/components/QuickDialWidget";
 import { CallQueueStatus } from "@/components/CallQueueStatus";
 import { ErrorLogsPanel } from "@/components/ErrorLogsPanel";
 import { ContactsPanel } from "@/components/ContactsPanel";
-import ExtensionsPanel from "@/components/ExtensionsPanel";
+import { CallsContactsTab } from "@/components/CallsContactsTab";
 import { AllSmsPanel } from "@/components/AllSmsPanel";
+import { StaffPanel } from "@/components/StaffPanel";
 
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, Phone, Database } from "lucide-react";
+import { Server, Phone, Database, Lock } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useActivityLogs } from "@/hooks/useActivityLogs";
@@ -30,14 +33,20 @@ import { usePbxConfig } from "@/hooks/usePbxConfig";
 import { usePbxStatus } from "@/hooks/usePbxStatus";
 import { useGatewayStatus } from "@/hooks/useGatewayStatus";
 import { useCallRecords, useCallStats, useAllTimeCallStats } from "@/hooks/useCallRecords";
+import { useAuth } from "@/hooks/useAuth";
 import { formatDateNairobi } from "@/lib/dateUtils";
 
 const Index = () => {
   const queryClient = useQueryClient();
+  const { role, isAdmin } = useAuth();
   
   // Initialize activeTab from localStorage, default to "dashboard"
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
     const saved = localStorage.getItem("activeTab");
+    if (saved === "extensions") {
+      return "config";
+    }
+
     return (saved as DashboardTab) || "dashboard";
   });
   
@@ -82,12 +91,15 @@ const Index = () => {
     ? "Configured (Connecting...)"
     : "Not Configured";
   
-  // Determine PBX status - only show connected if we have actual IP configured
-  const pbxStatusValue = pbxStatus?.configured && pbxStatus?.pbx_ip ? "online" : "offline";
-  const pbxStatusLabel = pbxStatus?.configured && pbxStatus?.pbx_ip 
-    ? "Connected" 
-    : pbxStatus?.configured 
-    ? "Configured (No IP)"
+  const pbxStatusValue = pbxStatus?.connected
+    ? "online"
+    : pbxStatus?.configured
+    ? "warning"
+    : "offline";
+  const pbxStatusLabel = pbxStatus?.connected
+    ? "Connected"
+    : pbxStatus?.configured
+    ? `Configured (${pbxStatus?.error || "Connection failed"})`
     : "Not Configured";
 
   const handleRefresh = async () => {
@@ -119,42 +131,54 @@ const Index = () => {
           <main className="flex-1 overflow-y-auto p-6 space-y-6">
           {activeTab === "dashboard" && (
             <>
-              {/* System Status Row */}
-              <div className="grid gap-4 md:grid-cols-3">
-                <SystemStatusCard
-                  title="TG400 Gateway"
-                  status={gatewayStatusValue as "online" | "warning" | "offline"}
-                  statusLabel={gatewayStatusLabel}
-                  icon={Server}
-                  details={[
-                    { label: "Gateway IP", value: gatewayStatus?.gateway_ip || "Not configured" },
-                    { label: "Port", value: String(gatewayStatus?.gateway_port) || "—" },
-                    { label: "Available Ports", value: stats?.availablePorts ? `${stats.availablePorts.join(", ")}` : "—" },
-                    { label: "Active SIMs", value: statsLoading ? "..." : `${stats?.activeSims || 0}/${stats?.totalSims || 0}` },
-                  ]}
-                />
-                <SystemStatusCard
-                  title="S100 PBX"
-                  status={pbxStatusValue as "online" | "warning" | "offline"}
-                  statusLabel={pbxStatusLabel}
-                  icon={Phone}
-                  details={[
-                    { label: "PBX IP", value: pbxStatus?.pbx_ip || "Not configured" },
-                    { label: "Port", value: String(pbxStatus?.pbx_port) || "—" },
-                    { label: "SMS Queue", value: statsLoading ? "..." : `${stats?.unreadMessages || 0} pending` },
-                  ]}
-                />
-                <SystemStatusCard
-                  title="Message Store"
-                  status="online"
-                  statusLabel="Healthy"
-                  icon={Database}
-                  details={[
-                    { label: "Total Messages", value: statsLoading ? "..." : stats?.totalMessages.toLocaleString() || "0" },
-                    { label: "Unread", value: statsLoading ? "..." : stats?.unreadMessages.toLocaleString() || "0" },
-                  ]}
-                />
-              </div>
+              {/* System Status Row - Admin/SuperAdmin Only */}
+              {isAdmin && (
+                <div className="grid gap-4 md:grid-cols-3">
+                  <SystemStatusCard
+                    title="TG400 Gateway"
+                    status={gatewayStatusValue as "online" | "warning" | "offline"}
+                    statusLabel={gatewayStatusLabel}
+                    icon={Server}
+                    details={[
+                      { label: "Gateway IP", value: gatewayStatus?.gateway_ip || "Not configured" },
+                      { label: "Port", value: String(gatewayStatus?.gateway_port) || "—" },
+                      { label: "Available Ports", value: stats?.availablePorts ? `${stats.availablePorts.join(", ")}` : "—" },
+                      { label: "Active SIMs", value: statsLoading ? "..." : `${stats?.activeSims || 0}/${stats?.totalSims || 0}` },
+                    ]}
+                  />
+                  <SystemStatusCard
+                    title="S100 PBX"
+                    status={pbxStatusValue as "online" | "warning" | "offline"}
+                    statusLabel={pbxStatusLabel}
+                    icon={Phone}
+                    details={[
+                      { label: "PBX IP", value: pbxStatus?.pbx_ip || "Not configured" },
+                      { label: "Port", value: String(pbxStatus?.pbx_port) || "—" },
+                      { label: "SMS Queue", value: statsLoading ? "..." : `${stats?.unreadMessages || 0} pending` },
+                    ]}
+                  />
+                  <SystemStatusCard
+                    title="Message Store"
+                    status="online"
+                    statusLabel="Healthy"
+                    icon={Database}
+                    details={[
+                      { label: "Total Messages", value: statsLoading ? "..." : stats?.totalMessages.toLocaleString() || "0" },
+                      { label: "Unread", value: statsLoading ? "..." : stats?.unreadMessages.toLocaleString() || "0" },
+                    ]}
+                  />
+                </div>
+              )}
+              {!isAdmin && (
+                <Card className="border-border/50 bg-muted/30">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center justify-center gap-3 text-muted-foreground">
+                      <Lock className="w-5 h-5" />
+                      <p className="text-sm font-medium">System status hidden. This section is only visible to administrators.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Messages and Logs Row */}
               <div className="grid gap-6 lg:grid-cols-2">
@@ -180,41 +204,29 @@ const Index = () => {
           )}
 
           {activeTab === "calls" && (
-            <>
-              <CallStatsCards 
-                allTimeStats={allTimeCallStats} 
-                todayStats={callStats}
-                isLoading={allTimeCallStatsLoading || callStatsLoading} 
-              />
-              <CallRecordsTable 
-                calls={calls} 
-                isLoading={callsLoading}
-                currentPage={callRecordsPage}
-                totalPages={callsPagination.totalPages}
-                totalCount={callsPagination.total}
-                onPageChange={setCallRecordsPage}
-                extensionFilter={callRecordsExtensionFilter}
-                onExtensionFilterChange={setCallRecordsExtensionFilter}
-                directionFilter={callRecordsDirectionFilter}
-                onDirectionFilterChange={setCallRecordsDirectionFilter}
-                statusFilter={callRecordsStatusFilter}
-                onStatusFilterChange={setCallRecordsStatusFilter}
-              />
-            </>
+            <CallsContactsTab
+              calls={calls}
+              isLoading={callsLoading}
+              currentPage={callRecordsPage}
+              totalPages={callsPagination.totalPages}
+              totalCount={callsPagination.total}
+              onPageChange={setCallRecordsPage}
+              extensionFilter={callRecordsExtensionFilter}
+              onExtensionFilterChange={setCallRecordsExtensionFilter}
+              directionFilter={callRecordsDirectionFilter}
+              onDirectionFilterChange={setCallRecordsDirectionFilter}
+              statusFilter={callRecordsStatusFilter}
+              onStatusFilterChange={setCallRecordsStatusFilter}
+              allTimeStats={allTimeCallStats}
+              todayStats={callStats}
+              statsLoading={allTimeCallStatsLoading || callStatsLoading}
+            />
           )}
 
-          {activeTab === "analytics" && <AnalyticsDashboard />}
+          {activeTab === "analytics" && <InsightsPanel />}
 
-          {activeTab === "logs" && (
-            logsLoading ? (
-              <Skeleton className="h-[400px] rounded-lg" />
-            ) : (
-              <ActivityLog logs={logs} isFullPage={true} />
-            )
-          )}
-
-          {activeTab === "users" && (
-            <UserManager />
+          {activeTab === "roles" && (
+            <RoleManagementPanel />
           )}
 
           {activeTab === "profile" && (
@@ -230,8 +242,7 @@ const Index = () => {
           )}
 
           {activeTab === "messages" && <AllSmsPanel />}
-          {activeTab === "contacts" && <ContactsPanel />}
-          {activeTab === "extensions" && <ExtensionsPanel />}
+          {activeTab === "staff" && <StaffPanel />}
           </main>
 
           <SystemFooter lastSync={lastSync} onRefresh={handleRefresh} />

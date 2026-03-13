@@ -4,63 +4,59 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Send, Loader2, AlertCircle, CheckCircle, Trash2, Phone, FileText, Plus } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Send, Loader2, Phone, FileText, Mail } from "lucide-react";
 import { toast } from "sonner";
+import { TemplateModal } from "./TemplateModal";
 
 interface TelegramConfig {
-  bot_token: string;
-  chat_id: string;
   enabled: boolean;
-}
-
-interface SmsRecipient {
-  id: string;
-  phone_number: string;
-  is_active: boolean;
+  email_enabled: boolean;
+  sms_enabled: boolean;
+  notify_missed_calls: boolean;
+  notify_new_sms: boolean;
+  notify_system_errors: boolean;
+  notify_shift_changes: boolean;
+  daily_report_enabled: boolean;
+  daily_report_time: string;
 }
 
 export const TelegramSettingsForm = () => {
   const [config, setConfig] = useState<TelegramConfig>({
-    bot_token: "",
-    chat_id: "",
     enabled: false,
+    email_enabled: false,
+    sms_enabled: true,
+    notify_missed_calls: true,
+    notify_new_sms: false,
+    notify_system_errors: true,
+    notify_shift_changes: true,
+    daily_report_enabled: false,
+    daily_report_time: "18:00",
   });
-  const [smsRecipients, setSmsRecipients] = useState<SmsRecipient[]>([]);
-  const [newPhoneNumber, setNewPhoneNumber] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAddingPhone, setIsAddingPhone] = useState(false);
-  const [isRemovingPhone, setIsRemovingPhone] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [isTesting, setIsTesting] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  // Load Telegram config and SMS recipients on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
         const apiUrl = import.meta.env.VITE_API_URL;
-        
-        // Load Telegram config
-        const tgResponse = await fetch(`${apiUrl}/api/telegram-config`);
-        if (tgResponse.ok) {
-          const result = await tgResponse.json();
-          if (result.data) {
-            setConfig({
-              bot_token: result.data.bot_token || "",
-              chat_id: result.data.chat_id || "",
-              enabled: result.data.enabled || false,
-            });
-          }
-        }
+        const tgRes = await fetch(`${apiUrl}/api/telegram-config`);
 
-        // Load SMS recipients
-        const smsResponse = await fetch(`${apiUrl}/api/sms-report-recipients`);
-        if (smsResponse.ok) {
-          const result = await smsResponse.json();
-          if (result.data) {
-            setSmsRecipients(result.data);
+        if (tgRes.ok) {
+          const { data } = await tgRes.json();
+          if (data) {
+            setConfig({
+              enabled: !!data.enabled,
+              email_enabled: !!data.email_enabled,
+              sms_enabled: data.sms_enabled === undefined ? true : !!data.sms_enabled,
+              notify_missed_calls: data.notify_missed_calls === undefined ? true : !!data.notify_missed_calls,
+              notify_new_sms: !!data.notify_new_sms,
+              notify_system_errors: data.notify_system_errors === undefined ? true : !!data.notify_system_errors,
+              notify_shift_changes: data.notify_shift_changes === undefined ? true : !!data.notify_shift_changes,
+              daily_report_enabled: !!data.daily_report_enabled,
+              daily_report_time: data.daily_report_time || "18:00",
+            });
           }
         }
       } catch (error) {
@@ -69,20 +65,10 @@ export const TelegramSettingsForm = () => {
         setIsLoading(false);
       }
     };
-
     loadConfig();
   }, []);
 
   const handleSave = async () => {
-    if (!config.bot_token && config.enabled) {
-      toast.error("Bot token is required when Telegram is enabled");
-      return;
-    }
-    if (!config.chat_id && config.enabled) {
-      toast.error("Chat ID is required when Telegram is enabled");
-      return;
-    }
-
     setIsSaving(true);
     try {
       const apiUrl = import.meta.env.VITE_API_URL;
@@ -91,151 +77,17 @@ export const TelegramSettingsForm = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to save Telegram configuration");
-      }
-
+      if (!response.ok) throw new Error("Failed to save configuration");
       const result = await response.json();
       if (result.success) {
-        toast.success("Telegram configuration saved successfully");
-        setTestResult(null);
+        toast.success("Notification settings saved");
       } else {
         throw new Error(result.message || "Failed to save configuration");
       }
     } catch (error) {
-      console.error("Error saving Telegram config:", error);
       toast.error(error instanceof Error ? error.message : "Failed to save configuration");
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleTestConnection = async () => {
-    if (!config.bot_token) {
-      setTestResult({ success: false, message: "Bot token is required" });
-      return;
-    }
-    if (!config.chat_id) {
-      setTestResult({ success: false, message: "Chat ID is required" });
-      return;
-    }
-
-    setIsTesting(true);
-    setTestResult(null);
-
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL;
-      const response = await fetch(`${apiUrl}/api/telegram-send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "test",
-          bot_token: config.bot_token,
-          chat_id: config.chat_id,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        setTestResult({
-          success: true,
-          message: "Test message sent successfully to your Telegram chat!",
-        });
-        toast.success("Telegram connection test passed!");
-      } else {
-        setTestResult({
-          success: false,
-          message: result.error || result.message || "Failed to send test message",
-        });
-        toast.error("Telegram connection test failed");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Connection test failed";
-      setTestResult({ success: false, message });
-      toast.error(message);
-    } finally {
-      setIsTesting(false);
-    }
-  };
-
-  const handleAddPhone = async () => {
-    if (!newPhoneNumber.trim()) {
-      toast.error("Please enter a phone number");
-      return;
-    }
-
-    // Auto-format phone number: convert 0708588464 to 254708588464
-    let formattedPhone = newPhoneNumber.trim();
-    if (formattedPhone.startsWith("0")) {
-      formattedPhone = "254" + formattedPhone.substring(1);
-    } else if (!formattedPhone.startsWith("254")) {
-      // If it doesn't start with 0 or 254, add 254
-      formattedPhone = "254" + formattedPhone;
-    }
-
-    setIsAddingPhone(true);
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL;
-      const response = await fetch(`${apiUrl}/api/sms-report-recipients`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone_number: formattedPhone }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        toast.success(`Phone number ${formattedPhone} added`);
-        setNewPhoneNumber("");
-        // Reload recipients
-        const recipientsResponse = await fetch(`${apiUrl}/api/sms-report-recipients`);
-        if (recipientsResponse.ok) {
-          const data = await recipientsResponse.json();
-          setSmsRecipients(data.data || []);
-        }
-      } else {
-        toast.error(result.error || "Failed to add phone number");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to add phone number";
-      toast.error(message);
-    } finally {
-      setIsAddingPhone(false);
-    }
-  };
-
-  const handleRemovePhone = async (phoneNumber: string) => {
-    if (!confirm(`Remove ${phoneNumber} from SMS report recipients?`)) {
-      return;
-    }
-
-    setIsRemovingPhone(phoneNumber);
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL;
-      const response = await fetch(`${apiUrl}/api/sms-report-recipients/${encodeURIComponent(phoneNumber)}`, {
-        method: "DELETE",
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        toast.success(`Phone number removed`);
-        // Reload recipients
-        const recipientsResponse = await fetch(`${apiUrl}/api/sms-report-recipients`);
-        if (recipientsResponse.ok) {
-          const data = await recipientsResponse.json();
-          setSmsRecipients(data.data || []);
-        }
-      } else {
-        toast.error(result.error || "Failed to remove phone number");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to remove phone number";
-      toast.error(message);
-    } finally {
-      setIsRemovingPhone(null);
     }
   };
 
@@ -247,18 +99,16 @@ export const TelegramSettingsForm = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-
       const result = await response.json();
-
       if (response.ok && result.success) {
-        const successMsg = `✓ Report sent via SMS to ${result.sendResults?.sms?.count || 0} recipient${result.sendResults?.sms?.count !== 1 ? 's' : ''}`;
-        toast.success(successMsg);
+        toast.success(
+          `✓ Report sent via SMS to ${result.sendResults?.sms?.count || 0} recipient${result.sendResults?.sms?.count !== 1 ? "s" : ""}`
+        );
       } else {
         toast.error(result.error || "Failed to generate manual report");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to generate manual report";
-      toast.error(message);
+      toast.error(error instanceof Error ? error.message : "Failed to generate manual report");
     } finally {
       setIsGeneratingReport(false);
     }
@@ -266,205 +116,174 @@ export const TelegramSettingsForm = () => {
 
   if (isLoading) {
     return (
-      <Card className="card-glow border-border/50 bg-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-              <Send className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <CardTitle className="text-base font-semibold">Telegram</CardTitle>
-              <CardDescription className="text-xs mt-0.5">
-                Configure Telegram bot for notifications
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      {/* Telegram Configuration Card */}
-      <Card className="card-glow border-border/50 bg-card">
+    <div className="space-y-6">
+      {/* Notification Channels - Email, SMS, Telegram */}
+      <Card className="border-border/50">
         <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">Notification Channels</CardTitle>
+          <CardDescription>Enable or disable delivery channels (configured in Setup tab)</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <Tabs defaultValue="email" className="space-y-4">
+            <TabsList className="w-full bg-card border border-border/50">
+              <TabsTrigger value="email" className="flex-1 gap-2">
+                <Mail className="w-4 h-4" />
+                Email
+              </TabsTrigger>
+              <TabsTrigger value="sms" className="flex-1 gap-2">
+                <Phone className="w-4 h-4" />
+                SMS
+              </TabsTrigger>
+              <TabsTrigger value="telegram" className="flex-1 gap-2">
+                <Send className="w-4 h-4" />
+                Telegram
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Email Tab */}
+            <TabsContent value="email" className="space-y-3">
+              <div className="flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3">
+                <div>
+                  <p className="text-sm font-medium">Enable Email Notifications</p>
+                  <p className="text-xs text-muted-foreground">Deliver alerts to configured email recipients</p>
+                </div>
+                <Switch
+                  checked={config.email_enabled}
+                  onCheckedChange={(checked) => setConfig({ ...config, email_enabled: checked })}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Configure SMTP credentials and email recipients in the <strong>Setup</strong> tab.
+              </p>
+            </TabsContent>
+
+            {/* SMS Tab */}
+            <TabsContent value="sms" className="space-y-3">
+              <div className="flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3">
+                <div>
+                  <p className="text-sm font-medium">Enable SMS Notifications</p>
+                  <p className="text-xs text-muted-foreground">Send reports to configured phone numbers</p>
+                </div>
+                <Switch
+                  checked={config.sms_enabled}
+                  onCheckedChange={(checked) => setConfig({ ...config, sms_enabled: checked })}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Configure phone number recipients in the <strong>Setup</strong> tab.
+              </p>
+            </TabsContent>
+
+            {/* Telegram Tab */}
+            <TabsContent value="telegram" className="space-y-3">
+              <div className="flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3">
+                <div>
+                  <p className="text-sm font-medium">Enable Telegram Notifications</p>
+                  <p className="text-xs text-muted-foreground">Send alerts to Telegram bot</p>
+                </div>
+                <Switch
+                  checked={config.enabled}
+                  onCheckedChange={(checked) => setConfig({ ...config, enabled: checked })}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Configure Telegram bot token and chat ID in the <strong>Setup</strong> tab.
+              </p>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Notification Events */}
+      <Card className="border-border/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Notification Events</CardTitle>
+          <CardDescription className="text-xs">
+            Choose which events trigger alerts across all enabled channels
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-                <Send className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-semibold">Telegram Reports</CardTitle>
-                <CardDescription className="text-xs mt-0.5">
-                  Receive daily reports and system notifications
-                </CardDescription>
-              </div>
-            </div>
+            <Label className="text-sm">Missed Calls</Label>
             <Switch
-              checked={config.enabled}
-              onCheckedChange={(checked) => setConfig({ ...config, enabled: checked })}
+              checked={config.notify_missed_calls}
+              onCheckedChange={(checked) => setConfig({ ...config, notify_missed_calls: checked })}
             />
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-border/30">
-            <div>
-              <Label htmlFor="bot-token" className="text-sm font-medium">
-                Bot Token <span className="text-destructive">*</span>
-              </Label>
-              <p className="text-xs text-muted-foreground mb-2">
-                Get from <code className="bg-muted px-1.5 py-0.5 rounded">@BotFather</code>
-              </p>
-              <Input
-                id="bot-token"
-                type="password"
-                placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-                value={config.bot_token}
-                onChange={(e) => setConfig({ ...config, bot_token: e.target.value })}
-                className="font-mono text-sm h-9 bg-background/50 border-border/50"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="chat-id" className="text-sm font-medium">
-                Chat ID <span className="text-destructive">*</span>
-              </Label>
-              <p className="text-xs text-muted-foreground mb-2">
-                Send a message to your bot, check updates endpoint
-              </p>
-              <Input
-                id="chat-id"
-                type="text"
-                placeholder="123456789"
-                value={config.chat_id}
-                onChange={(e) => setConfig({ ...config, chat_id: e.target.value })}
-                className="font-mono text-sm h-9 bg-background/50 border-border/50"
-              />
-            </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">New SMS Messages</Label>
+            <Switch
+              checked={config.notify_new_sms}
+              onCheckedChange={(checked) => setConfig({ ...config, notify_new_sms: checked })}
+            />
           </div>
-
-          {testResult && (
-            <Alert variant={testResult.success ? "default" : "destructive"}>
-              <div className="flex items-start gap-3">
-                {testResult.success ? (
-                  <CheckCircle className="w-4 h-4 mt-0.5 text-green-500" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 mt-0.5" />
-                )}
-                <AlertDescription className="text-xs">{testResult.message}</AlertDescription>
-              </div>
-            </Alert>
-          )}
-
-          <div className="flex gap-2">
-            <Button
-              onClick={handleTestConnection}
-              disabled={isTesting || !config.bot_token || !config.chat_id}
-              variant="outline"
-              size="sm"
-              className="gap-2"
-            >
-              {isTesting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-              Test Connection
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={isSaving}
-              size="sm"
-              className="gap-2"
-            >
-              {isSaving ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                "Save"
-              )}
-            </Button>
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">System Errors</Label>
+            <Switch
+              checked={config.notify_system_errors}
+              onCheckedChange={(checked) => setConfig({ ...config, notify_system_errors: checked })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">Shift Changes</Label>
+            <Switch
+              checked={config.notify_shift_changes}
+              onCheckedChange={(checked) => setConfig({ ...config, notify_shift_changes: checked })}
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* SMS Recipients Card */}
-      <Card className="card-glow border-border/50 bg-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-amber-500/10">
-              <Phone className="w-5 h-5 text-amber-500" />
-            </div>
-            <div>
-              <CardTitle className="text-base font-semibold">SMS Reports</CardTitle>
-              <CardDescription className="text-xs mt-0.5">
-                Send reports to phone numbers
-              </CardDescription>
-            </div>
-          </div>
+      {/* Daily Report */}
+      <Card className="border-border/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">Daily Report</CardTitle>
+          <CardDescription className="text-xs">
+            Automated daily performance summary (Nairobi time)
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex gap-2">
-            <Input
-              type="tel"
-              placeholder="e.g., 0712345678"
-              value={newPhoneNumber}
-              onChange={(e) => setNewPhoneNumber(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleAddPhone()}
-              className="font-mono text-sm h-9 bg-background/50 border-border/50 flex-1"
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">Enable Daily Report</Label>
+            <Switch
+              checked={config.daily_report_enabled}
+              onCheckedChange={(checked) =>
+                setConfig({ ...config, daily_report_enabled: checked })
+              }
             />
-            <Button
-              onClick={handleAddPhone}
-              disabled={isAddingPhone || !newPhoneNumber.trim()}
-              size="sm"
-              className="gap-2"
-            >
-              {isAddingPhone ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Plus className="w-4 h-4" />
-              )}
-              Add
-            </Button>
           </div>
-
-          {smsRecipients.length > 0 && (
-            <div className="space-y-2 p-3 rounded-lg bg-muted/20 border border-border/30">
-              {smsRecipients.map((recipient) => (
-                <div
-                  key={recipient.id}
-                  className="flex items-center justify-between p-2 rounded bg-background/50 text-xs"
-                >
-                  <span className="font-mono">{recipient.phone_number}</span>
-                  <Button
-                    onClick={() => handleRemovePhone(recipient.phone_number)}
-                    disabled={isRemovingPhone === recipient.phone_number}
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                  >
-                    {isRemovingPhone === recipient.phone_number ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3 h-3 text-destructive" />
-                    )}
-                  </Button>
-                </div>
-              ))}
+          {config.daily_report_enabled && (
+            <div className="space-y-2">
+              <Label htmlFor="daily-report-time" className="text-xs text-muted-foreground">
+                Send Time (Nairobi)
+              </Label>
+              <Input
+                id="daily-report-time"
+                type="time"
+                value={config.daily_report_time}
+                onChange={(e) => setConfig({ ...config, daily_report_time: e.target.value })}
+                className="w-40"
+              />
             </div>
           )}
+        </CardContent>
+      </Card>
 
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
           <Button
             onClick={handleGenerateManualReport}
-            disabled={isGeneratingReport}
+            disabled={isGeneratingReport || !config.sms_enabled}
             variant="outline"
             size="sm"
-            className="w-full gap-2"
+            className="gap-2"
           >
             {isGeneratingReport ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -473,8 +292,13 @@ export const TelegramSettingsForm = () => {
             )}
             {isGeneratingReport ? "Generating..." : "Generate Report Now"}
           </Button>
-        </CardContent>
-      </Card>
+          <TemplateModal />
+        </div>
+        <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-2">
+          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          {isSaving ? "Saving..." : "Save Alert Settings"}
+        </Button>
+      </div>
     </div>
   );
 };

@@ -9,6 +9,7 @@ import { Radio, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { login, register } from "@/hooks/useAuth";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const authSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -89,7 +90,8 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative">
+      <ThemeToggle className="absolute top-4 right-4 h-9 w-9" />
       <Card className="w-full max-w-md border-border/50">
         <CardHeader className="text-center space-y-4">
           <div className="flex items-center justify-center gap-3">

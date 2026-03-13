@@ -165,62 +165,74 @@ export default function GsmSpanSettingsForm() {
 
   return (
     <div className="space-y-3">
-      <div className="text-sm text-muted-foreground">
-        Configure names for your active SIM ports to easily identify which port is for which SMS group.
+      <div className="text-xs text-muted-foreground">
+        Configure SIM ports in a compact layout for faster updates.
       </div>
 
-      <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
         {gsmSpans.map((span) => {
           const portNumber = span.gsm_span - 1;
           const isActive = span.is_active === 1;
           
           return (
-            <div key={span.gsm_span} className="bg-background p-4 rounded-lg border border-border/50">
-              {/* Top Row: Port Label + Status Badge | Save Button */}
-              <div className="flex items-center justify-between mb-3">
+            <div key={span.gsm_span} className="rounded-lg border border-border/50 bg-background p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-base font-bold">Port {portNumber}</span>
-                  <span className={`text-xs px-2.5 py-1 rounded font-semibold ${
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-xs font-semibold text-primary">
+                    {portNumber}
+                  </span>
+                  <span className="text-sm font-semibold">Port {portNumber}</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
                     isActive
                       ? 'bg-green-500/20 text-green-700 dark:text-green-300'
                       : 'bg-red-500/20 text-red-700 dark:text-red-300'
                   }`}>
                     {isActive ? 'Active' : 'Inactive'}
                   </span>
-                </div>
 
-                {/* Save Button */}
-                <Button
-                  size="sm"
-                  onClick={() => handleSave(span.gsm_span)}
-                  disabled={!isActive || saving}
-                  className="h-8 px-3 gap-1.5"
-                  variant={isActive ? "default" : "ghost"}
-                >
-                  {saving ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Save className="w-3.5 h-3.5" />
-                  )}
-                  <span className="text-xs font-medium">Save</span>
-                </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleSave(span.gsm_span)}
+                    disabled={!isActive || saving}
+                    className="h-7 px-2"
+                    variant={isActive ? "default" : "ghost"}
+                  >
+                    {saving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </div>
               </div>
 
-              {/* Bottom Row: Port Name Input */}
-              <Input
-                placeholder={isActive ? 'Enter port name (e.g., Vodafone Kenya, Group A)' : 'Enter port label (e.g., Vodafone Kenya, Group A)'}
-                value={editingNames[span.gsm_span]?.name || ''}
-                onChange={(e) => handleNameChange(span.gsm_span, 'name', e.target.value)}
-                className="h-9 text-sm"
-                disabled={!isActive || saving}
-              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  placeholder={isActive ? 'Extension / label' : 'Port label'}
+                  value={editingNames[span.gsm_span]?.name || ''}
+                  onChange={(e) => handleNameChange(span.gsm_span, 'name', e.target.value)}
+                  className="h-8 text-sm"
+                  disabled={!isActive || saving}
+                />
+
+                <Input
+                  placeholder={`SIM ${portNumber}`}
+                  value={editingNames[span.gsm_span]?.phone || ''}
+                  onChange={(e) => handleNameChange(span.gsm_span, 'phone', e.target.value)}
+                  className="h-8 text-sm"
+                  disabled={!isActive || saving}
+                />
+              </div>
             </div>
           );
         })}
       </div>
 
-      <Button onClick={refreshActiveSpans} variant="outline" className="w-full text-xs h-9 mt-4" disabled={loading}>
-        <Loader2 className={`w-3 h-3 mr-2 ${loading ? 'animate-spin' : 'hidden'}`} />
+      <Button onClick={refreshActiveSpans} variant="outline" className="h-8 w-full text-xs" disabled={loading}>
+        <Loader2 className={`mr-2 h-3 w-3 ${loading ? 'animate-spin' : 'hidden'}`} />
         Refresh Ports
       </Button>
     </div>

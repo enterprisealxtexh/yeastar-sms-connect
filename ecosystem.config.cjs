@@ -1,25 +1,41 @@
 module.exports = {
   apps: [
     {
-      name: 'yeastar-full',
-      script: 'npm',
-      args: 'run dev:full',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '1G',
+      name: 'api-server',
+      script: 'public/local-agent/api-server.cjs',
+      instances: 1,
+      exec_mode: 'fork',
+      node_args: '--max-old-space-size=512',
       env: {
-        NODE_ENV: 'development'
-      }
+        NODE_ENV: 'production',
+        API_PORT: 2003,
+        API_HOST: '0.0.0.0',
+        LOG_LEVEL: 'info',
+      },
+      error_file: 'logs/api-server.error.log',
+      out_file: 'logs/api-server.out.log',
+      log_file: 'logs/api-server.log',
+      time: true,
+      autorestart: true,
+      max_memory_restart: '512M',
+      watch: false,
     },
     {
-      name: 'ssh-tunnel',
-      script: './public/local-agent/start-ssh-tunnel.sh',
-      autorestart: true,
-      max_restarts: 5,
-      min_uptime: '10s',
+      name: 'tg400-agent',
+      script: 'public/local-agent/tg400-tcp-api.cjs',
+      instances: 1,
+      exec_mode: 'fork',
       env: {
-        NODE_ENV: 'production'
-      }
-    }
-  ]
+        NODE_ENV: 'production',
+        LOG_LEVEL: 'info',
+      },
+      error_file: 'logs/tg400-agent.error.log',
+      out_file: 'logs/tg400-agent.out.log',
+      log_file: 'logs/tg400-agent.log',
+      time: true,
+      autorestart: true,
+      watch: false,
+    },
+    // REMOVED frontend - Nginx serves it instead
+  ],
 };

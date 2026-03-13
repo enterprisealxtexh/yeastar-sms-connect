@@ -37,7 +37,7 @@ interface User {
 const apiUrl = import.meta.env.VITE_API_URL;
 
 export const UserManager = () => {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, role } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -46,6 +46,8 @@ export const UserManager = () => {
   const [newPassword, setNewPassword] = useState("");
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState<"operator" | "viewer">("operator");
+  const [selectedPorts, setSelectedPorts] = useState<number[]>([]);
+  const [selectedExtensions, setSelectedExtensions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const token = localStorage.getItem("authToken");
@@ -108,11 +110,40 @@ export const UserManager = () => {
       }
 
       const result = await response.json();
-      setUsers([...users, result.data]);
+      const newUser = result.data;
+      
+      // Assign port and extension permissions if role is viewer and permissions are specified
+      if (newRole === "viewer" && (selectedPorts.length > 0 || selectedExtensions.length > 0)) {
+        if (selectedPorts.length > 0) {
+          await fetch(`${apiUrl}/api/users/${newUser.id}/port-permissions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({ ports: selectedPorts }),
+          });
+        }
+        
+        if (selectedExtensions.length > 0) {
+          await fetch(`${apiUrl}/api/users/${newUser.id}/extension-permissions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({ extensions: selectedExtensions }),
+          });
+        }
+      }
+      
+      setUsers([...users, newUser]);
       setNewEmail("");
       setNewPassword("");
       setNewName("");
       setNewRole("operator");
+      setSelectedPorts([]);
+      setSelectedExtensions([]);
       toast.success("User created successfully");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create user";
@@ -123,6 +154,12 @@ export const UserManager = () => {
   };
 
   const handleDeleteUser = async (userId: string) => {
+    // Only admins and super_admins can delete users
+    if (role !== "admin" && role !== "super_admin") {
+      toast.error("Only administrators can delete users");
+      return;
+    }
+
     if (confirm("Are you sure you want to delete this user?")) {
       try {
         const response = await fetch(`${apiUrl}/api/users/${userId}`, {
@@ -229,6 +266,56 @@ export const UserManager = () => {
                   </Select>
                 </div>
 
+                {newRole === "viewer" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Allowed SIM Ports (leave empty for all)</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {[1, 2, 3, 4].map((port) => (
+                          <button
+                            key={port}
+                            type="button"
+                            onClick={() => {
+                              setSelectedPorts((prev) =>
+                                prev.includes(port) ? prev.filter((p) => p !== port) : [...prev, port]
+                              );
+                            }}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                              selectedPorts.includes(port)
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "border-border bg-background text-foreground hover:bg-muted"
+                            }`}
+                          >
+                            Port {port}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedPorts.length === 0 ? "No restrictions - can view all ports" : `Restricted to: Port ${selectedPorts.join(", ")}`}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="create-extensions">Allowed Extensions (leave empty for all)</Label>
+                      <Input
+                        id="create-extensions"
+                        placeholder="e.g., 101,102,103 (comma-separated)"
+                        value={selectedExtensions.join(",")}
+                        onChange={(e) => {
+                          const extensions = e.target.value
+                            .split(",")
+                            .map((ext) => ext.trim())
+                            .filter((ext) => ext.length > 0);
+                          setSelectedExtensions(extensions);
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {selectedExtensions.length === 0 ? "No restrictions - can view all extensions" : `Restricted to: ${selectedExtensions.join(", ")}`}
+                      </p>
+                    </div>
+                  </>
+                )}
+
                 <Button
                   onClick={handleCreateUser}
                   disabled={isCreating || !newEmail || !newPassword}
@@ -288,7 +375,7 @@ export const UserManager = () => {
                   </div>
 
                   <div className="flex items-center gap-1 ml-2">
-                    {u.id !== currentUser?.id && (
+                    {u.id !== currentUser?.id && (role === "admin" || role === "super_admin") && (
                       <Button
                         variant="ghost"
                         size="sm"

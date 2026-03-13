@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface HeaderProps {
   onProfileClick?: () => void;
@@ -67,6 +68,7 @@ export const Header = ({ onProfileClick, onMenuClick }: HeaderProps) => {
         </div>
 
         <div className="flex items-center gap-2">
+          <ThemeToggle className="h-9 w-9" />
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Agent Status: Online" />
           
           <DropdownMenu>

@@ -26,6 +26,22 @@ const requestTimings = new Map();
 const responseCache = new Map();
 const CACHE_TTL = 2000; // 2 second cache for frequently accessed endpoints
 
+// System update state (in-memory)
+let updateState = {
+  running: false,
+  logs: [],
+  exitCode: null,
+  startedAt: null,
+  lastCompletedAt: null,
+  lastCheckedAt: null,
+  updateAvailable: null,
+};
+
+// Backend-only system update config (frontend should not provide these values)
+const SYSTEM_UPDATE_REPO = process.env.SYSTEM_UPDATE_REPO || 'https://github.com/enterprisealxtexh/yeastar-sms-connect.git';
+const SYSTEM_UPDATE_BRANCH = process.env.SYSTEM_UPDATE_BRANCH || 'main';
+const SYSTEM_UPDATE_TOKEN = process.env.SYSTEM_UPDATE_TOKEN || process.env.GITHUB_TOKEN || '';
+
 // Middleware - Order matters: compression first for performance
 app.use(compression({ level: 6 })); // gzip compression with level 6
 app.use(cors({
@@ -96,6 +112,84 @@ if (!db) {
 // ========================================
 // Yeastar PBX HTTPS API Integration
 // ========================================
+
+// --- Local User / Role API Endpoints ---
+// Provide simple endpoints to manage users and roles in the local SQLite DB.
+
+// Middleware: require authenticated user with one of the allowed roles
+// Token format: "userId:role" (set at login)
+const requireRole = (...allowedRoles) => (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  const [userId, tokenRole] = token.split(':');
+  if (!userId || !tokenRole) return res.status(401).json({ success: false, error: 'Invalid token' });
+
+  // Always look up the live role from DB (tokens can't be stale this way)
+  const dbUser = db.db.prepare(
+    `SELECT COALESCE(ur.role, u.role) as role, u.is_active 
+     FROM users u LEFT JOIN user_roles ur ON ur.user_id = u.id 
+     WHERE u.id = ?`
+  ).get(userId);
+
+  if (!dbUser || !dbUser.is_active) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  if (!allowedRoles.includes(dbUser.role)) return res.status(403).json({ success: false, error: 'Forbidden: insufficient role' });
+
+  req.currentUserId = userId;
+  req.currentUserRole = dbUser.role;
+  next();
+};
+
+app.get('/api/users', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const users = db.getAllUsers ? db.getAllUsers() : [];
+    logger.info(`[GET /api/users] Returning ${users.length} users`);
+    if (users.length > 0) {
+      logger.debug(`[GET /api/users] Users: ${users.map(u => `${u.email}(${u.role})`).join(', ')}`);
+    } else {
+      logger.warn('[GET /api/users] ⚠️ No users found in database!');
+    }
+    res.json({ success: true, users });
+  } catch (error) {
+    logger.error('GET /api/users error: %s', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/users', requireRole('super_admin'), (req, res) => {
+  try {
+    const { email, password, name, role = 'operator', pin = null, telegram_chat_id = null, notification_channel = 'telegram' } = req.body;
+    if (!email || !password) return res.status(400).json({ success: false, error: 'email and password required' });
+
+    const created = db.createUser ? db.createUser({ email, password, name, role, pin, telegram_chat_id, notification_channel }) : false;
+    if (!created) return res.status(500).json({ success: false, error: 'failed to create user' });
+
+    // Return full list for convenience
+    const users = db.getAllUsers ? db.getAllUsers() : [];
+    res.json({ success: true, users });
+  } catch (error) {
+    logger.error('POST /api/users error: %s', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/users/:id/role', requireRole('super_admin'), (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { role } = req.body;
+    if (!userId || !role) return res.status(400).json({ success: false, error: 'user id and role required' });
+
+    const updated = db.setUserRole ? db.setUserRole(userId, role) : false;
+    if (!updated) return res.status(500).json({ success: false, error: 'failed to update role' });
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('PUT /api/users/:id/role error: %s', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 
 class YeastarPBXAPI {
   constructor() {
@@ -892,13 +986,23 @@ async function syncCallRecords() {
     
     logger.info(` Querying CDR from ${startDate} to ${now}`);
     
-    // Use the downloadCDRData method which returns proper S-Series v1.1.0 format
-    let cdrResult;
-    try {
-      cdrResult = await pbxAPI.downloadCDRData('all', `${startDate} 00:00:00`, `${now} 23:59:59`);
-    } catch (error) {
-      logger.warn(` CDR download failed (PBX may not have CDR module enabled or user lacks permissions): ${error.message}`);
-      cdrResult = null;
+    // Prefer the v1.1.0 CDR download flow, but fall back to the query API when PBX permissions or modules block it.
+    let cdrResult = await pbxAPI.downloadCDRData('all', `${startDate} 00:00:00`, `${now} 23:59:59`);
+
+    if (!cdrResult || cdrResult.status !== 'Success' || !Array.isArray(cdrResult.data)) {
+      logger.warn(` CDR download failed, trying query fallback: ${cdrResult?.error || 'Unknown error'}`);
+
+      try {
+        const fallbackResult = await pbxAPI.queryCDR(startDate, now, 5000);
+        if (fallbackResult && fallbackResult.status === 'Success' && Array.isArray(fallbackResult.data)) {
+          cdrResult = fallbackResult;
+          logger.info(` CDR query fallback returned ${fallbackResult.data.length} records`);
+        } else {
+          logger.warn(` CDR query fallback returned no usable data: ${fallbackResult?.error || 'Unknown error'}`);
+        }
+      } catch (error) {
+        logger.warn(` CDR query fallback failed: ${error.message}`);
+      }
     }
     
     if (cdrResult && cdrResult.status === 'Success' && cdrResult.data && Array.isArray(cdrResult.data)) {
@@ -963,9 +1067,13 @@ async function syncCallRecords() {
         if (db.saveCallRecord(callRecord)) {
           savedCount++;
           
-          // EVENT-DRIVEN: Send missed call alert immediately when saved
+          // EVENT-DRIVEN: Send missed call alert and auto-SMS immediately when saved
           if (['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
             await sendMissedCallAlert(callRecord);
+            await sendCallAutoSms(callRecord);
+          } else if (['answered', 'connected'].includes(callRecord.status)) {
+            // Send auto-SMS for answered calls
+            await sendCallAutoSms(callRecord);
           }
         }
       }
@@ -1032,6 +1140,111 @@ async function processMissedCallQueue() {
 }
 
 // ========================================
+// ========================================
+// Auto-Reply SMS
+// ========================================
+
+async function sendAutoReplySms(senderNumber) {
+  try {
+    const autoReplyConfig = db.getAutoReplyConfig ? db.getAutoReplyConfig() : null;
+    
+    // Check if auto-reply is enabled
+    if (!autoReplyConfig?.enabled) {
+      logger.debug(' Auto-reply disabled - skipping');
+      return false;
+    }
+
+    if (!senderNumber || !autoReplyConfig.message) {
+      logger.warn('Auto-reply: Missing phone number or message');
+      return false;
+    }
+
+    logger.info(`📧 Sending auto-reply to: ${senderNumber}`);
+    logger.info(`   Message: ${autoReplyConfig.message.substring(0, 80)}...`);
+    
+    const success = await sendSmsViaGateway(senderNumber, autoReplyConfig.message);
+    
+    if (success) {
+      logger.info(`✅ Auto-reply SMS sent to ${senderNumber}`);
+      db.logActivity('auto_reply_sms_sent', `Auto-reply sent to ${senderNumber}`, 'success');
+    } else {
+      logger.error(`❌ Auto-reply SMS failed for ${senderNumber}`);
+      db.logActivity('auto_reply_sms_failed', `Auto-reply failed for ${senderNumber}`, 'error');
+    }
+    
+    return success;
+  } catch (error) {
+    logger.error(`Auto-reply exception: ${error.message}`);
+    return false;
+  }
+}
+
+// ========================================
+// Call Auto-SMS
+// ========================================
+
+async function sendCallAutoSms(callRecord) {
+  try {
+    const callAutoSmsConfig = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+    
+    // Check if call auto-SMS is enabled
+    if (!callAutoSmsConfig?.enabled) {
+      logger.debug(' Call auto-SMS disabled - skipping');
+      return false;
+    }
+
+    const callerNumber = callRecord.caller_number;
+    if (!callerNumber) {
+      logger.warn('Call auto-SMS: No caller number provided');
+      return false;
+    }
+
+    // Determine message based on call status
+    let messageTemplate;
+    if (['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
+      messageTemplate = callAutoSmsConfig.missed_message;
+      logger.info(`📞 Sending missed call auto-SMS to: ${callerNumber}`);
+    } else if (['answered', 'connected'].includes(callRecord.status)) {
+      messageTemplate = callAutoSmsConfig.answered_message;
+      logger.info(`☎️ Sending answered call auto-SMS to: ${callerNumber}`);
+    } else {
+      logger.debug(` Call auto-SMS: Status '${callRecord.status}' not matched for sending`);
+      return false;
+    }
+
+    if (!messageTemplate) {
+      logger.warn('Call auto-SMS: No message template available');
+      return false;
+    }
+
+    // Replace template variables
+    let message = messageTemplate
+      .replace(/\{caller_name\}/g, callRecord.caller_name || callRecord.caller_number)
+      .replace(/\{caller_number\}/g, callerNumber)
+      .replace(/\{extension\}/g, callRecord.extension || 'N/A')
+      .replace(/\{time\}/g, new Date(callRecord.start_time).toLocaleTimeString('en-KE'))
+      .replace(/\{date\}/g, new Date(callRecord.start_time).toLocaleDateString('en-KE'))
+      .replace(/\{duration\}/g, `${callRecord.talk_duration || 0}s`);
+
+    logger.info(`   Message: ${message.substring(0, 80)}...`);
+    
+    const success = await sendSmsViaGateway(callerNumber, message);
+    
+    if (success) {
+      logger.info(`✅ Call auto-SMS sent to ${callerNumber}`);
+      db.logActivity('call_auto_sms_sent', `Call auto-SMS sent to ${callerNumber}`, 'success');
+    } else {
+      logger.error(`❌ Call auto-SMS failed for ${callerNumber}`);
+      db.logActivity('call_auto_sms_failed', `Call auto-SMS failed for ${callerNumber}`, 'error');
+    }
+    
+    return success;
+  } catch (error) {
+    logger.error(`Call auto-SMS exception: ${error.message}`);
+    return false;
+  }
+}
+
 // Event-Driven Missed Call Alert (No Polling)
 // ========================================
 
@@ -1044,6 +1257,11 @@ async function sendMissedCallAlert(callRecord) {
     // Only send if telegram is enabled and configured
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
       logger.debug(' Telegram not enabled - skipping alert');
+      return;
+    }
+
+    if (!telegramConfig?.notify_missed_calls) {
+      logger.debug(' Missed-call notifications are disabled - skipping alert');
       return;
     }
 
@@ -1144,6 +1362,9 @@ async function sendMissedCallAlert(callRecord) {
               logger.warn(`⏳ Telegram rate limited (will retry): ${tgJson.description || 'Unknown error'}`);
               db.logActivity('telegram_missed_call_alert_failed', `Failed to send alert for ${callerNumber}: ${tgJson.description || tgResp.statusText}`, 'error');
             }
+
+            // Also send via Email if enabled
+            await sendEmail(`Missed Call: ${callerNumber}`, messageText);
           } catch (error) {
             logger.error(`❌ Queue send error: ${error.message}`);
           }
@@ -1175,6 +1396,10 @@ async function alertErrorImmediately(eventType, message) {
     
     // Only send if telegram is enabled
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+      return;
+    }
+
+    if (!telegramConfig?.notify_system_errors) {
       return;
     }
 
@@ -1222,6 +1447,9 @@ async function alertErrorImmediately(eventType, message) {
     } else {
       logger.error(`Telegram error send failed: ${tgJson.description || 'Unknown error'}`);
     }
+
+    // Also send via Email if enabled
+    await sendEmail(`System Alert: ${eventType}`, messageText);
   } catch (error) {
     logger.error(`Error alert error: ${error.message}`);
   }
@@ -1238,6 +1466,69 @@ function startMissedCallAlerts() {
 startMissedCallAlerts();
 
 // ========================================
+// ========================================
+// Email Service (configurable SMTP via admin settings)
+// ========================================
+
+async function sendEmail(subject, bodyText) {
+  try {
+    const telegramConfig = db.getTelegramConfig();
+    
+    if (!telegramConfig?.email_enabled) {
+      logger.debug(' Email notifications disabled - skipping');
+      return false;
+    }
+
+    const smtpHost = telegramConfig.email_smtp_host;
+    const smtpPort = telegramConfig.email_smtp_port || 587;
+    const smtpUser = telegramConfig.email_smtp_user;
+    const smtpPass = telegramConfig.email_smtp_pass;
+    const emailFrom = telegramConfig.email_from || smtpUser;
+
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      logger.warn(' Email SMTP credentials not configured - skipping email send');
+      return false;
+    }
+
+    let recipients = [];
+    try {
+      const raw = telegramConfig.email_recipients;
+      recipients = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    } catch (e) {
+      recipients = [];
+    }
+
+    if (!recipients || recipients.length === 0) {
+      logger.warn(' No email recipients configured');
+      return false;
+    }
+
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+      tls: { rejectUnauthorized: false }
+    });
+
+    await transporter.sendMail({
+      from: emailFrom,
+      to: recipients.join(','),
+      subject,
+      text: bodyText
+    });
+
+    logger.info(`✅ Email sent: "${subject}" to ${recipients.length} recipient(s)`);
+    db.logActivity('email_sent', `Email "${subject}" sent to ${recipients.join(', ')}`, 'success');
+    return true;
+  } catch (error) {
+    logger.error(`Email send failed: ${error.message}`);
+    db.logActivity('email_send_failed', `Email send failed: ${error.message}`, 'error');
+    return false;
+  }
+}
+
 // SMS Gateway Service (Hardcoded Credentials)
 // ========================================
 
@@ -1247,6 +1538,56 @@ const SMS_GATEWAY_CONFIG = {
   senderid: 'NOSTEQLTD',
   apikey: 'd5333c2f579ef1115d5984475e6fbecfffa2cdff'
 };
+
+// Generic SMS sending function using hardcoded gateway
+async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
+  try {
+    const numbers = Array.isArray(phoneNumberOrNumbers) ? phoneNumberOrNumbers : [phoneNumberOrNumbers];
+    
+    if (!numbers || numbers.length === 0 || !messageText) {
+      logger.warn('SMS sending: No phone numbers or message provided');
+      return false;
+    }
+
+    const mobileParam = numbers.map(n => n.trim()).join(',');
+    
+    logger.info(`📤 Sending SMS via gateway to: ${mobileParam}`);
+    logger.info(`   Message: ${messageText.substring(0, 80)}...`);
+
+    try {
+      const { execSync } = require('child_process');
+      const escapedMsg = messageText.replace(/'/g, "'\\'");
+      
+      const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
+-H 'Accept: application/json' \
+-H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
+-H 'Content-Type: application/x-www-form-urlencoded' \
+-H 'Cookie: SERVERID=webC1' \
+-d 'userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}'`;
+
+      const response = execSync(curlCommand, { 
+        encoding: 'utf-8',
+        timeout: 30000,
+        maxBuffer: 10 * 1024 * 1024,
+        shell: '/bin/bash' 
+      });
+
+      if (response && response.trim()) {
+        logger.info(`✅ SMS sent successfully to ${numbers.length} recipient(s)`);
+        return true;
+      } else {
+        logger.warn(`SMS gateway empty response`);
+        return false;
+      }
+    } catch (execError) {
+      logger.error(`SMS sending failed: ${execError.message}`);
+      return false;
+    }
+  } catch (error) {
+    logger.error(`SMS sending exception: ${error.message}`);
+    return false;
+  }
+}
 
 async function sendSmsReport(phoneNumbers, messageText) {
   try {
@@ -1271,12 +1612,12 @@ async function sendSmsReport(phoneNumbers, messageText) {
       // Use single quotes to prevent shell interpretation, but escape any single quotes in the message
       const escapedMsg = messageText.replace(/'/g, "'\\''");
       
-      const curlCommand = `curl -X POST 'https://sms.techrasystems.com/SMSApi/send' \
+      const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
 -H 'Accept: application/json' \
--H 'apikey: d5333c2f579ef1115d5984475e6fbecfffa2cdff' \
+-H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
 -H 'Content-Type: application/x-www-form-urlencoded' \
 -H 'Cookie: SERVERID=webC1' \
--d 'userid=nosteqltd&senderid=NOSTEQLTD&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}'`;
+-d 'userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}'`;
 
       logger.info(`Executing SMS curl...`);
       
@@ -1325,6 +1666,12 @@ let lastReportTimes = {}; // Track last send times for morning and evening repor
 
 async function sendDailyReport() {
   try {
+    const telegramConfig = db.getTelegramConfig();
+    if (!telegramConfig?.daily_report_enabled) {
+      logger.info('Daily report disabled in notification settings');
+      return;
+    }
+
     // Get today's date
     const today = new Date().toISOString().split('T')[0];
 
@@ -1387,8 +1734,6 @@ async function sendDailyReport() {
     messageText += `\n========== END REPORT ==========\n`;
 
     // ========== SEND TO TELEGRAM (IF ENABLED) ==========
-    const telegramConfig = db.getTelegramConfig();
-    
     if (telegramConfig?.enabled && telegramConfig?.bot_token && telegramConfig?.chat_id) {
       const botToken = telegramConfig.bot_token;
       const chatId = telegramConfig.chat_id;
@@ -1420,9 +1765,12 @@ async function sendDailyReport() {
       logger.info('Telegram not enabled, skipping Telegram report');
     }
 
+    // ========== SEND VIA EMAIL (IF ENABLED) ==========
+    await sendEmail('Daily System Report', messageText);
+
     // ========== SEND SMS TO CONFIGURED PHONE NUMBERS ==========
     const smsRecipients = db.getSmsReportRecipients();
-    if (smsRecipients && smsRecipients.length > 0) {
+    if (telegramConfig?.sms_enabled && smsRecipients && smsRecipients.length > 0) {
       logger.info(`📱 Sending daily report via SMS to ${smsRecipients.length} recipient(s)...`);
       
       // Send to all recipients at once
@@ -1445,33 +1793,48 @@ async function sendDailyReport() {
 }
 
 function scheduleDailyReport() {
-  logger.info('Scheduling shift reports:');
-  logger.info('  Day Shift (06:00:00 - 17:59:59 Nairobi) → Report at 18:00:00 Nairobi (15:00:00 UTC)');
-  logger.info('  Night Shift (18:00:00 - 05:59:59 Nairobi) → Report at 06:00:00 Nairobi (03:00:00 UTC)');
+  logger.info('Scheduling daily report based on notification settings');
 
-  // Check every second if it's time to send the reports
+  // Check every second if it's time to send the report
   dailyReportInterval = setInterval(() => {
-    const now = new Date();
-    // Nairobi is UTC+3
-    const utcHours = now.getUTCHours();
-    const utcMinutes = now.getUTCMinutes();
-    const utcSeconds = now.getUTCSeconds();
-    const time = `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}:${String(utcSeconds).padStart(2, '0')}`;
-    const today = now.toISOString().split('T')[0];
-
-    // Day Shift End Report at exactly 18:00:00 Nairobi (15:00:00 UTC)
-    // Covers: 06:00:00 - 17:59:59 Nairobi
-    if (time === '15:00:00' && lastReportTimes.dayShift !== today) {
-      lastReportTimes.dayShift = today;
-      logger.info('📊 Sending Day Shift Report (18:00:00 Nairobi - covers 06:00-18:00)');
-      sendDailyReport();
+    const telegramConfig = db.getTelegramConfig() || {};
+    if (!telegramConfig.daily_report_enabled) {
+      return;
     }
 
-    // Night Shift End Report at exactly 06:00:00 Nairobi (03:00:00 UTC)
-    // Covers: 18:00:00 - 05:59:59 Nairobi
-    if (time === '03:00:00' && lastReportTimes.nightShift !== today) {
-      lastReportTimes.nightShift = today;
-      logger.info('🌙 Sending Night Shift Report (06:00:00 Nairobi - covers 18:00-06:00)');
+    const configuredTime = (telegramConfig.daily_report_time || '18:00').trim();
+    const timeMatch = configuredTime.match(/^(\d{1,2}):(\d{2})$/);
+    if (!timeMatch) {
+      return;
+    }
+
+    const targetHour = Math.max(0, Math.min(23, parseInt(timeMatch[1], 10)));
+    const targetMinute = Math.max(0, Math.min(59, parseInt(timeMatch[2], 10)));
+
+    const now = new Date();
+    const nairobiParts = new Intl.DateTimeFormat('en-KE', {
+      timeZone: 'Africa/Nairobi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+
+    const getPart = (type) => nairobiParts.find((p) => p.type === type)?.value || '00';
+    const year = getPart('year');
+    const month = getPart('month');
+    const day = getPart('day');
+    const hour = parseInt(getPart('hour'), 10);
+    const minute = parseInt(getPart('minute'), 10);
+    const second = parseInt(getPart('second'), 10);
+    const todayKey = `${year}-${month}-${day}`;
+
+    if (hour === targetHour && minute === targetMinute && second === 0 && lastReportTimes.daily !== todayKey) {
+      lastReportTimes.daily = todayKey;
+      logger.info(`📊 Sending scheduled daily report at ${configuredTime} Nairobi`);
       sendDailyReport();
     }
   }, 1000); // Check every second
@@ -1536,7 +1899,9 @@ setInterval(() => {
 let tg400Api = null;
 let pollingInterval = null;
 
-async function startSmsListener() {
+async function startSmsListener(retryCount = 0) {
+  // Exponential backoff: 30s, 60s, 120s, 240s, capped at 300s (5 min)
+  const retryDelay = Math.min(30000 * Math.pow(2, retryCount), 300000);
   try {
     const config = db.getGatewayConfig();
     
@@ -1552,12 +1917,17 @@ async function startSmsListener() {
       return;
     }
 
-    // Remove old listeners to prevent duplicates
+    // Fully destroy old instance before creating a new one
     if (tg400Api) {
-      logger.info('🧹 Cleaning up old SMS listener...');
-      tg400Api.removeAllListeners('sms-received');
-      tg400Api.removeAllListeners('disconnected');
+      logger.debug('🧹 Cleaning up old SMS listener...');
+      try {
+        tg400Api.removeAllListeners();
+        tg400Api.disconnect();
+      } catch (_) {}
+      tg400Api = null;
     }
+    // Clear any old polling interval
+    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
 
     logger.info(`\n📡 Connecting SMS listener to ${config.gateway_ip}:${config.api_port || 5038}`);
     
@@ -1570,7 +1940,7 @@ async function startSmsListener() {
     );
 
     // Event: New SMS received - Server pushes SMS when received
-    tg400Api.on('sms-received', (sms) => {
+    tg400Api.on('sms-received', async (sms) => {
       try {
         logger.info(`\n📨 SMS LISTENER: Received event from TG400`);
         logger.info(`🔍 RAW SMS EVENT DATA:`, JSON.stringify({
@@ -1627,6 +1997,10 @@ async function startSmsListener() {
         if (inserted) {
           logger.info(`✅ SMS SAVED: From ${sms.sender} on GsmSpan ${gsmSpan}`);
           db.logActivity('sms_received', `New SMS from ${sms.sender} on GsmSpan ${gsmSpan}: ${messageContent.substring(0, 50)}...`, 'success', gsmSpan);
+          
+          // EVENT-DRIVEN: Send auto-reply SMS if enabled
+          await sendAutoReplySms(sms.sender);
+          
           // Invalidate cache on new SMS
           responseCache.delete('sms-messages:*');
           responseCache.delete('statistics:all');
@@ -1647,7 +2021,7 @@ async function startSmsListener() {
     // Event: Connection closed - try reconnect
     tg400Api.on('disconnected', () => {
       logger.warn('\n⚠️  SMS listener disconnected. Retrying in 30s...\n');
-      setTimeout(startSmsListener, 30000);
+      setTimeout(() => startSmsListener(0), 30000);
     });
 
     // Cache invalidation on SMS listener connect
@@ -1709,9 +2083,13 @@ async function startSmsListener() {
       }
     }, 600000);
   } catch (error) {
-    logger.error(`\n Failed to start SMS listener: ${error.message}`);
-    logger.info('Retrying in 30 seconds...\n');
-    setTimeout(startSmsListener, 30000); // Retry later
+    const isUnreachable = error.message.includes('EHOSTUNREACH') || error.message.includes('ECONNREFUSED') || error.message.includes('Authentication timeout');
+    if (isUnreachable) {
+      logger.warn(`⚠️  TG400 unreachable (${error.message}). Retry in ${retryDelay / 1000}s (attempt ${retryCount + 1})`);
+    } else {
+      logger.error(`\n Failed to start SMS listener: ${error.message}`);
+    }
+    setTimeout(() => startSmsListener(retryCount + 1), retryDelay);
   }
 }
 
@@ -2134,7 +2512,7 @@ app.get('/api/users', (req, res) => {
 });
 
 // Create new user (admin only)
-app.post('/api/users', (req, res) => {
+app.post('/api/users', requireRole('super_admin'), (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader?.split(' ')[1];
@@ -2162,7 +2540,7 @@ app.post('/api/users', (req, res) => {
     }
 
     // Create user with specified role
-    const success = db.createUser(email, password, role, name);
+    const success = db.createUser({ email, password, role, name });
     
     if (success) {
       const newUser = db.getUserByEmail(email);
@@ -2180,6 +2558,50 @@ app.post('/api/users', (req, res) => {
     } else {
       throw new Error('Failed to create user');
     }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Change own password (authenticated user)
+app.put('/api/users/change-password', (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const [userId] = token.split(':');
+    if (!userId) return res.status(401).json({ success: false, error: 'Invalid token' });
+
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+
+    const newPasswordHash = crypto.createHash('sha256').update(newPassword).digest('hex');
+    db.db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newPasswordHash, userId);
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Change own PIN (authenticated user)
+app.put('/api/users/change-pin', (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const [userId] = token.split(':');
+    if (!userId) return res.status(401).json({ success: false, error: 'Invalid token' });
+
+    const { pin } = req.body;
+    if (!pin || String(pin).length < 4) {
+      return res.status(400).json({ success: false, error: 'PIN must be at least 4 digits' });
+    }
+
+    const user = db.db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+    if (!user) return res.status(404).json({ success: false, error: 'No user profile found. Contact your admin.' });
+
+    db.db.prepare('UPDATE users SET pin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(String(pin), userId);
+    res.json({ success: true, message: 'Clock-in PIN updated' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2244,40 +2666,99 @@ app.put('/api/users/:id', (req, res) => {
   }
 });
 
-// Delete user (admin only)
-app.delete('/api/users/:id', (req, res) => {
+// Delete user (super_admin only)
+app.delete('/api/users/:id', requireRole('super_admin'), (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.split(' ')[1];
-    
-    if (!token) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
     const { id } = req.params;
 
-    // Prevent deleting the only admin
-    const admins = db.db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ?').get('admin');
-    const userToDelete = db.db.prepare('SELECT role FROM users WHERE id = ?').get(id);
+    const userToDelete = db.db.prepare('SELECT role, id FROM users WHERE id = ?').get(id);
+    if (!userToDelete) return res.status(404).json({ success: false, error: 'User not found' });
 
-    if (userToDelete && userToDelete.role === 'admin' && admins.count <= 1) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Cannot delete the only admin user' 
-      });
+    // Prevent deleting a super_admin
+    if (userToDelete.role === 'super_admin') {
+      return res.status(400).json({ success: false, error: 'Cannot delete a super admin account' });
     }
 
-    const stmt = db.db.prepare('DELETE FROM users WHERE id = ?');
-    const result = stmt.run(id);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ success: false, error: 'User not found' });
+    // Prevent deleting the last remaining admin
+    const { count } = db.db.prepare(
+      "SELECT COUNT(*) as count FROM users u LEFT JOIN user_roles ur ON u.id = ur.user_id WHERE COALESCE(ur.role, u.role) IN ('admin','super_admin')"
+    ).get();
+    const effectiveRole = db.db.prepare(
+      "SELECT COALESCE(ur.role, u.role) as role FROM users u LEFT JOIN user_roles ur ON u.id = ur.user_id WHERE u.id = ?"
+    ).get(id);
+    if (effectiveRole && effectiveRole.role === 'admin' && count <= 1) {
+      return res.status(400).json({ success: false, error: 'Cannot delete the only admin user' });
     }
 
-    res.json({
-      success: true,
-      message: 'User deleted successfully'
-    });
+    db.db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id);
+    const result = db.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+    if (result.changes === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    res.json({ success: true, message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user port permissions (admin)
+app.get('/api/users/:id/port-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const ports = db.getUserPortPermissions(id);
+    res.json({ success: true, data: ports });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Set user port permissions (admin)
+app.post('/api/users/:id/port-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ports } = req.body; // Array of port numbers [1,2,3,4] or empty for all
+    
+    if (!Array.isArray(ports)) {
+      return res.status(400).json({ success: false, error: 'Ports must be an array' });
+    }
+
+    // Validate port numbers
+    const validPorts = ports.filter(p => p >= 1 && p <= 4);
+    
+    const success = db.setUserPortPermissions(id, validPorts);
+    if (!success) throw new Error('Failed to set port permissions');
+
+    res.json({ success: true, message: 'Port permissions updated', data: validPorts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user extension permissions (admin)
+app.get('/api/users/:id/extension-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const extensions = db.getUserExtensionPermissions(id);
+    res.json({ success: true, data: extensions });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Set user extension permissions (admin)
+app.post('/api/users/:id/extension-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    const { extensions } = req.body; // Array of extension strings or empty for all
+    
+    if (!Array.isArray(extensions)) {
+      return res.status(400).json({ success: false, error: 'Extensions must be an array' });
+    }
+
+    const success = db.setUserExtensionPermissions(id, extensions);
+    if (!success) throw new Error('Failed to set extension permissions');
+
+    res.json({ success: true, message: 'Extension permissions updated', data: extensions });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -2470,13 +2951,30 @@ app.get('/api/pbx-config', (req, res) => {
 });
 
 // PBX connection status
-app.get('/api/pbx-status', (req, res) => {
+app.get('/api/pbx-status', async (req, res) => {
   try {
     const config = db.getPbxConfig();
     const isConfigured = !!(config && config.pbx_ip && config.api_username);
-    
+
+    if (!isConfigured) {
+      return res.json({
+        configured: false,
+        connected: false,
+        status: 'Not Configured',
+        error: null,
+        pbx_ip: config?.pbx_ip || null,
+        pbx_port: config?.pbx_port || null,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const testResult = await pbxAPI.testConnection();
+
     res.json({
-      configured: isConfigured,
+      configured: true,
+      connected: !!testResult.success,
+      status: testResult.status || (testResult.success ? 'Connected' : 'Failed'),
+      error: testResult.success ? null : (testResult.error || 'Connection failed'),
       pbx_ip: config?.pbx_ip || null,
       pbx_port: config?.pbx_port || null,
       timestamp: new Date().toISOString()
@@ -3401,12 +3899,44 @@ app.get('/api/telegram-config', (req, res) => {
 
 app.post('/api/telegram-config', (req, res) => {
   try {
-    const { bot_token, chat_id, enabled } = req.body;
+    const {
+      bot_token,
+      chat_id,
+      enabled,
+      email_enabled,
+      email_recipients,
+      email_smtp_host,
+      email_smtp_port,
+      email_smtp_user,
+      email_smtp_pass,
+      email_from,
+      sms_enabled,
+      notify_missed_calls,
+      notify_new_sms,
+      notify_system_errors,
+      notify_shift_changes,
+      daily_report_enabled,
+      daily_report_time
+    } = req.body;
 
     const success = db.saveTelegramConfig({
       bot_token,
       chat_id,
-      enabled
+      enabled,
+      email_enabled,
+      email_recipients,
+      email_smtp_host,
+      email_smtp_port,
+      email_smtp_user,
+      email_smtp_pass,
+      email_from,
+      sms_enabled,
+      notify_missed_calls,
+      notify_new_sms,
+      notify_system_errors,
+      notify_shift_changes,
+      daily_report_enabled,
+      daily_report_time
     });
 
     if (success) {
@@ -3653,7 +4183,7 @@ app.post('/api/sms-report-recipients', (req, res) => {
 });
 
 // Remove a phone number from SMS report recipients
-app.delete('/api/sms-report-recipients/:phone_number', (req, res) => {
+app.delete('/api/sms-report-recipients/:phone_number', requireRole('super_admin', 'admin'), (req, res) => {
   try {
     const { phone_number } = req.params;
 
@@ -3678,6 +4208,136 @@ app.delete('/api/sms-report-recipients/:phone_number', (req, res) => {
         error: 'Phone number not found'
       });
     }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// SMS Templates API Endpoints
+// ========================================
+
+app.get('/api/sms-templates', (req, res) => {
+  try {
+    const templates = db.getSmsTemplates ? db.getSmsTemplates() : [];
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/sms-templates', (req, res) => {
+  try {
+    const { name, message } = req.body;
+    if (!name || !message) {
+      return res.status(400).json({ success: false, error: 'name and message are required' });
+    }
+
+    const success = db.createSmsTemplate ? db.createSmsTemplate({ name, message, active: true }) : false;
+    if (!success) {
+      return res.status(500).json({ success: false, error: 'Failed to create template' });
+    }
+
+    res.json({ success: true, message: 'Template created' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/sms-templates/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, message, active = true } = req.body;
+    if (!id || !name || !message) {
+      return res.status(400).json({ success: false, error: 'id, name, and message are required' });
+    }
+
+    const success = db.updateSmsTemplate ? db.updateSmsTemplate(id, { name, message, active }) : false;
+    if (!success) {
+      return res.status(404).json({ success: false, error: 'Template not found or unchanged' });
+    }
+
+    res.json({ success: true, message: 'Template updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/sms-templates/:id', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'id is required' });
+    }
+
+    const success = db.deleteSmsTemplate ? db.deleteSmsTemplate(id) : false;
+    if (!success) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+
+    res.json({ success: true, message: 'Template deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Auto-Reply Config API Endpoints
+// ========================================
+
+app.get('/api/auto-reply-config', (req, res) => {
+  try {
+    const config = db.getAutoReplyConfig ? db.getAutoReplyConfig() : null;
+    res.json({ success: true, data: config });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/auto-reply-config', (req, res) => {
+  try {
+    const { enabled, message, notification_email } = req.body;
+    if (message === undefined) {
+      return res.status(400).json({ success: false, error: 'message is required' });
+    }
+    const success = db.saveAutoReplyConfig
+      ? db.saveAutoReplyConfig({ enabled: !!enabled, message, notification_email })
+      : false;
+    if (!success) {
+      return res.status(500).json({ success: false, error: 'Failed to save auto-reply config' });
+    }
+    res.json({ success: true, message: 'Auto-reply config saved' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Call Auto-SMS Config API Endpoints
+// ========================================
+
+app.get('/api/call-auto-sms-config', (req, res) => {
+  try {
+    const config = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+    res.json({ success: true, data: config });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/call-auto-sms-config', (req, res) => {
+  try {
+    const { enabled, answered_message, missed_message } = req.body;
+    if (!answered_message || !missed_message) {
+      return res.status(400).json({ success: false, error: 'answered_message and missed_message are required' });
+    }
+    const success = db.saveCallAutoSmsConfig
+      ? db.saveCallAutoSmsConfig({ enabled: !!enabled, answered_message, missed_message })
+      : false;
+    if (!success) {
+      return res.status(500).json({ success: false, error: 'Failed to save call auto-SMS config' });
+    }
+    res.json({ success: true, message: 'Call auto-SMS config saved' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4085,6 +4745,8 @@ app.get('/api/call-records', (req, res) => {
     const extension = req.query.extension;
     const direction = req.query.direction;
     const status = req.query.status;
+    const start_time_from = req.query.start_time_from;
+    const start_time_to = req.query.start_time_to;
     
     let countQuery, dataQuery, params = [];
     let whereConditions = [];
@@ -4103,6 +4765,16 @@ app.get('/api/call-records', (req, res) => {
     if (status) {
       whereConditions.push('cr.status = ?');
       params.push(status);
+    }
+
+    if (start_time_from) {
+      whereConditions.push('cr.start_time >= ?');
+      params.push(start_time_from);
+    }
+
+    if (start_time_to) {
+      whereConditions.push('cr.start_time <= ?');
+      params.push(start_time_to);
     }
     
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -4232,6 +4904,24 @@ app.put('/api/sms-messages/:id/status', (req, res) => {
     } else {
       res.status(404).json({ success: false, error: 'SMS not found or status unchanged' });
     }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PUT /api/sms-messages/mark-all-read — mark all messages as read (requires auth)
+app.put('/api/sms-messages/mark-all-read', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+    const [userId, userRole] = token.split(':');
+    if (userRole === 'viewer') return res.status(403).json({ success: false, error: 'Viewers cannot perform this action' });
+
+    const changed = db.markAllRead();
+    db.logActivity('sms_mark_all_read', `Marked ${changed} messages as read by ${userRole}`, 'success');
+    res.json({ success: true, changed });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4817,7 +5507,7 @@ app.post('/api/business-hours', (req, res) => {
 });
 
 // Delete Business Hours
-app.delete('/api/business-hours/:id', (req, res) => {
+app.delete('/api/business-hours/:id', requireRole('super_admin', 'admin'), (req, res) => {
   try {
     const { id } = req.params;
     const stmt = db.db.prepare(`DELETE FROM business_hours WHERE id = ?`);
@@ -5144,18 +5834,73 @@ app.get('/api/debug/notified-calls', (req, res) => {
   }
 });
 
-app.use((req, res) => {
-  logger.warn(`[404-HANDLER] Unmatched request: ${req.method} ${req.path}`);
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found',
-    path: req.path,
-    method: req.method
-  });
+// ==================== CLOCK IN / OUT ====================
+
+// Ensure agent_shifts table exists
+db.db.exec(`
+  CREATE TABLE IF NOT EXISTS agent_shifts (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    user_id TEXT NOT NULL,
+    clock_in DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    clock_out DATETIME,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+
+// POST /api/clock-legacy — verify PIN, toggle clock in or out (legacy users table)
+app.post('/api/clock-legacy', (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin || String(pin).length < 4) {
+      return res.status(400).json({ success: false, error: 'Invalid PIN' });
+    }
+
+    const user = db.db.prepare('SELECT id, name, email FROM users WHERE pin = ? AND is_active = 1').get(String(pin));
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid PIN' });
+
+    // Check if already clocked in (active shift with no clock_out)
+    const existing = db.db.prepare(
+      "SELECT id FROM agent_shifts WHERE user_id = ? AND status = 'active' AND clock_out IS NULL"
+    ).get(user.id);
+
+    if (existing) {
+      // Clock out
+      db.db.prepare(
+        "UPDATE agent_shifts SET clock_out = CURRENT_TIMESTAMP, status = 'completed' WHERE id = ?"
+      ).run(existing.id);
+      return res.json({ success: true, action: 'clock_out', user: { name: user.name, email: user.email } });
+    } else {
+      // Clock in
+      db.db.prepare(
+        "INSERT INTO agent_shifts (user_id, clock_in, status) VALUES (?, CURRENT_TIMESTAMP, 'active')"
+      ).run(user.id);
+      return res.json({ success: true, action: 'clock_in', user: { name: user.name, email: user.email } });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// ========================================
-// CONTACTS API ENDPOINTS
+// GET /api/clock/active-legacy — list users currently on shift (legacy users table)
+app.get('/api/clock/active-legacy', (req, res) => {
+  try {
+    const shifts = db.db.prepare(`
+      SELECT s.id, s.clock_in, u.id as user_id, u.name, u.email
+      FROM agent_shifts s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.status = 'active' AND s.clock_out IS NULL
+      ORDER BY s.clock_in ASC
+    `).all();
+    res.json({ success: true, data: shifts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== END CLOCK IN / OUT ====================
+
 // ========================================
 
 app.get('/api/contacts', (req, res) => {
@@ -5424,6 +6169,719 @@ function ensureGsmSpansExist() {
 }
 
 // ========================================
+// STAFF MANAGEMENT API ENDPOINTS
+// ========================================
+
+// Agents
+app.post('/api/agents', (req, res) => {
+  try {
+    const { name, pin, email, phone, extension, telegram_chat_id, notification_channel } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+    
+    const agent = db.createAgent({ name, pin, email, phone, extension, telegram_chat_id, notification_channel });
+    if (agent) {
+      res.json({ success: true, data: agent });
+      db.logActivity('agent_created', `Agent ${name} created`, 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to create agent' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/agents', (req, res) => {
+  try {
+    const agents = db.getAgents();
+    res.json({ success: true, data: agents });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/agents/:id', (req, res) => {
+  try {
+    const agent = db.getAgentById(req.params.id);
+    if (agent) {
+      res.json({ success: true, data: agent });
+    } else {
+      res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/agents/:id', (req, res) => {
+  try {
+    const { name, email, phone, extension, telegram_chat_id, notification_channel, is_active } = req.body;
+    const success = db.updateAgent(req.params.id, { name, email, phone, extension, telegram_chat_id, notification_channel, is_active });
+    if (success) {
+      const agent = db.getAgentById(req.params.id);
+      res.json({ success: true, data: agent });
+      db.logActivity('agent_updated', `Agent ${name} updated`, 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to update agent' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/agents/:id/pin', (req, res) => {
+  try {
+    const { newPin } = req.body;
+    if (!newPin) return res.status(400).json({ success: false, error: 'newPin is required' });
+    
+    const success = db.updateAgentPin(req.params.id, newPin);
+    if (success) {
+      res.json({ success: true, message: 'PIN updated' });
+      db.logActivity('agent_pin_changed', `PIN updated for agent`, 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to update PIN' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const isShiftAlertAction = (action) => {
+  return [
+    'clock_in',
+    'clock_out',
+    'swap_request',
+    'swap_approved',
+    'swap_rejected',
+    'reassign',
+    'rating_notification',
+    'weekly_rating_digest',
+  ].includes(action);
+};
+
+const buildShiftAlertMessage = (payload = {}) => {
+  const now = new Date().toLocaleString('en-KE', {
+    timeZone: 'Africa/Nairobi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+
+  const action = payload.action || 'shift_update';
+
+  if (payload.message) return payload.message;
+
+  switch (action) {
+    case 'clock_in':
+      return `🕐 Clock In\nAgent: ${payload.agent_name || 'Unknown'}\nTime: ${now}`;
+    case 'clock_out':
+      return `✅ Clock Out\nAgent: ${payload.agent_name || 'Unknown'}\nTime: ${now}`;
+    case 'swap_request':
+      return `🔄 Shift Swap Request\nRequester: ${payload.requester_name || '-'}\nTarget: ${payload.target_name || '-'}\nReason: ${payload.reason || '-'}\nTime: ${now}`;
+    case 'swap_approved':
+      return `✅ Shift Swap Approved\nRequester: ${payload.requester_name || '-'}\nTarget: ${payload.target_name || '-'}\nTime: ${now}`;
+    case 'swap_rejected':
+      return `❌ Shift Swap Rejected\nRequester: ${payload.requester_name || '-'}\nTarget: ${payload.target_name || '-'}\nReason: ${payload.reason || '-'}\nTime: ${now}`;
+    case 'reassign':
+      return `🔁 Shift Reassigned\nFrom: ${payload.original_agent_name || '-'}\nTo: ${payload.new_agent_name || '-'}\nDate: ${payload.shift_date || '-'}\nTime: ${payload.shift_time || '-'}\nReason: ${payload.reason || '-'}\nLogged: ${now}`;
+    case 'rating_notification':
+      return `⭐ Agent Rating\nAgent: ${payload.agent_name || payload.agent_id || '-'}\nRating: ${payload.rating || '-'} / 5\nComment: ${payload.comment || '-'}\nTime: ${now}`;
+    case 'weekly_rating_digest':
+      return `📊 Weekly Rating Digest\nGenerated: ${now}`;
+    default:
+      return `📢 Shift Update\nAction: ${action}\nTime: ${now}`;
+  }
+};
+
+const dispatchShiftTelegramAlert = async (payload = {}) => {
+  const telegramConfig = db.getTelegramConfig();
+
+  if (!telegramConfig?.enabled || !telegramConfig?.bot_token) {
+    return { sent: false, reason: 'telegram_disabled_or_unconfigured' };
+  }
+
+  if (isShiftAlertAction(payload.action) && telegramConfig.notify_shift_changes === false) {
+    return { sent: false, reason: 'shift_notifications_disabled' };
+  }
+
+  const chatId = telegramConfig.chat_id ? String(telegramConfig.chat_id) : '';
+  if (!chatId) {
+    return { sent: false, reason: 'no_recipients' };
+  }
+
+  const text = buildShiftAlertMessage(payload);
+  const endpoint = `https://api.telegram.org/bot${telegramConfig.bot_token}/sendMessage`;
+
+  const results = await Promise.allSettled(
+    [
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      }),
+    ]
+  );
+
+  const successCount = results.filter((r) => r.status === 'fulfilled').length;
+  return {
+    sent: successCount > 0,
+    successCount,
+    totalRecipients: 1,
+  };
+};
+
+// Clock In/Out
+app.post('/api/clock', (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin) return res.status(400).json({ success: false, error: 'PIN is required' });
+    
+    const agent = db.verifyAgentPin(pin);
+    if (!agent) {
+      return res.status(401).json({ success: false, error: 'Invalid PIN' });
+    }
+    
+    const activeShift = db.getActiveShift(agent.id);
+    
+    if (activeShift) {
+      // Clock out
+      const success = db.clockOut(agent.id);
+      if (success) {
+        dispatchShiftTelegramAlert({
+          action: 'clock_out',
+          agent_id: agent.id,
+          agent_name: agent.name,
+        }).catch((e) => logger.debug('Clock out notify failed:', e.message));
+        
+        res.json({ success: true, action: 'clock_out', user: { name: agent.name, email: agent.email } });
+        db.logActivity('clock_out', `${agent.name} clocked out`, 'success');
+      }
+    } else {
+      // Clock in
+      const shift = db.clockIn(agent.id);
+      if (shift) {
+        dispatchShiftTelegramAlert({
+          action: 'clock_in',
+          agent_id: agent.id,
+          agent_name: agent.name,
+        }).catch((e) => logger.debug('Clock in notify failed:', e.message));
+        
+        res.json({ success: true, action: 'clock_in', user: { name: agent.name, email: agent.email } });
+        db.logActivity('clock_in', `${agent.name} clocked in`, 'success');
+      }
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/clock/active', (req, res) => {
+  try {
+    const activeShifts = db.getActiveShifts();
+    res.json({ success: true, data: activeShifts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/clock/history/:agentId', (req, res) => {
+  try {
+    const days = req.query.days || 30;
+    const history = db.getShiftHistory(req.params.agentId, parseInt(days));
+    res.json({ success: true, data: history });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Shift Schedule
+app.post('/api/shift-schedule', (req, res) => {
+  try {
+    const { agent_id, shift_date, start_time, end_time, notes } = req.body;
+    if (!agent_id || !shift_date || !start_time || !end_time) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+    
+    const success = db.createShiftSchedule({ agent_id, shift_date, start_time, end_time, notes });
+    if (success) {
+      res.json({ success: true, message: 'Shift scheduled' });
+      db.logActivity('shift_scheduled', `Shift scheduled for ${shift_date}`, 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to create schedule' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/shift-schedule/:agentId', (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate || new Date().toISOString().split('T')[0];
+    const end = endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    
+    const schedules = db.getShiftSchedule(req.params.agentId, start, end);
+    res.json({ success: true, data: schedules });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/shift-schedule', (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate || new Date().toISOString().split('T')[0];
+    const end = endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    
+    const schedules = db.getAllSchedules(start, end);
+    res.json({ success: true, data: schedules });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/shift-schedule/:id', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const success = db.deleteSchedule(req.params.id);
+    if (success) {
+      res.json({ success: true, message: 'Schedule deleted' });
+    } else {
+      res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Shift Swap Requests
+app.post('/api/shift-swap-requests', (req, res) => {
+  try {
+    const { requester_agent_id, requester_shift_id, target_agent_id, target_shift_id, reason } = req.body;
+    const success = db.createSwapRequest({ requester_agent_id, requester_shift_id, target_agent_id, target_shift_id, reason });
+    if (success) {
+      res.json({ success: true, message: 'Swap request created' });
+      db.logActivity('swap_request_created', 'Shift swap request created', 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to create swap request' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/shift-swap-requests', (req, res) => {
+  try {
+    const { status } = req.query;
+    const requests = db.getSwapRequests(status || 'pending');
+    res.json({ success: true, data: requests });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/shift-swap-requests/:id/approve', (req, res) => {
+  try {
+    const { reviewedBy } = req.body;
+    const success = db.approveSwapRequest(req.params.id, reviewedBy);
+    if (success) {
+      res.json({ success: true, message: 'Swap request approved' });
+      db.logActivity('swap_request_approved', 'Shift swap approved', 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to approve swap request' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/shift-swap-requests/:id/reject', (req, res) => {
+  try {
+    const { reviewedBy, reason } = req.body;
+    const success = db.rejectSwapRequest(req.params.id, reviewedBy, reason);
+    if (success) {
+      res.json({ success: true, message: 'Swap request rejected' });
+      db.logActivity('swap_request_rejected', 'Shift swap rejected', 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to reject swap request' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Agent Ratings
+app.post('/api/agent-ratings', (req, res) => {
+  try {
+    const { agent_id, rating, comment, rated_by } = req.body;
+    if (!agent_id || !rating) return res.status(400).json({ success: false, error: 'agent_id and rating are required' });
+    
+    const success = db.rateAgent({ agent_id, rating, comment, rated_by });
+    if (success) {
+      res.json({ success: true, message: 'Rating saved' });
+      db.logActivity('agent_rated', `Agent rated ${rating}/5`, 'success');
+    } else {
+      res.status(400).json({ success: false, error: 'Failed to save rating' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/agent-ratings/:agentId', (req, res) => {
+  try {
+    const ratings = db.getAgentRatings(req.params.agentId);
+    const avgRating = db.getAgentAverageRating(req.params.agentId);
+    res.json({ success: true, data: { ratings, average: avgRating } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// All agent ratings (leaderboard)
+app.get('/api/agent-ratings', (req, res) => {
+  try {
+    const rows = db.db.prepare(`
+      SELECT ar.*, a.name as agent_name
+      FROM agent_ratings ar
+      JOIN agents a ON ar.agent_id = a.id
+      ORDER BY ar.created_at DESC
+      LIMIT 200
+    `).all();
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Clock today — all shifts clocked in today
+app.get('/api/clock/today', (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const rows = db.db.prepare(`
+      SELECT ash.*, a.name, a.extension, a.role
+      FROM agent_shifts ash
+      JOIN agents a ON ash.agent_id = a.id
+      WHERE date(ash.clock_in) = ?
+      ORDER BY ash.clock_in DESC
+    `).all(today);
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Bulk create shift schedules
+app.post('/api/shift-schedule/bulk', (req, res) => {
+  try {
+    const entries = req.body;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ success: false, error: 'Expected an array of schedule entries' });
+    }
+    const insert = db.db.prepare(
+      'INSERT INTO shift_schedule (agent_id, shift_date, start_time, end_time, notes) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertMany = db.db.transaction((items) => {
+      for (const item of items) {
+        insert.run(item.agent_id, item.shift_date, item.start_time, item.end_time, item.notes || null);
+      }
+    });
+    insertMany(entries);
+    res.json({ success: true, message: `${entries.length} shifts scheduled` });
+    db.logActivity('shifts_bulk_scheduled', `Bulk scheduled ${entries.length} shifts`, 'success');
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update shift schedule (time edit)
+app.put('/api/shift-schedule/:id', (req, res) => {
+  try {
+    const { start_time, end_time, notes } = req.body;
+    const result = db.db.prepare(
+      'UPDATE shift_schedule SET start_time = COALESCE(?, start_time), end_time = COALESCE(?, end_time), notes = COALESCE(?, notes), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(start_time || null, end_time || null, notes || null, req.params.id);
+    if (result.changes > 0) {
+      res.json({ success: true, message: 'Schedule updated' });
+    } else {
+      res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Reassign shift to a different agent
+app.post('/api/shift-schedule/:id/reassign', (req, res) => {
+  try {
+    const { agent_id, newAgentId, notes, reason } = req.body;
+    const targetAgentId = agent_id || newAgentId;
+    if (!targetAgentId) return res.status(400).json({ success: false, error: 'agent_id required' });
+    const result = db.db.prepare(
+      'UPDATE shift_schedule SET agent_id = ?, notes = COALESCE(?, notes), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(targetAgentId, notes || reason || null, req.params.id);
+    if (result.changes > 0) {
+      res.json({ success: true, message: 'Shift reassigned' });
+      db.logActivity('shift_reassigned', `Shift ${req.params.id} reassigned to agent ${targetAgentId}`, 'success');
+    } else {
+      res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Agent daily stats — per agent shift + call stats for a given date
+app.get('/api/agent-daily-stats', (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const agents = db.db.prepare('SELECT id, name, extension, role FROM agents WHERE is_active = 1').all();
+    const stats = agents.map((agent) => {
+      const shifts = db.db.prepare(
+        'SELECT * FROM agent_shifts WHERE agent_id = ? AND date(clock_in) = ?'
+      ).all(agent.id, date);
+      const scheduled = db.db.prepare(
+        'SELECT * FROM shift_schedule WHERE agent_id = ? AND shift_date = ?'
+      ).all(agent.id, date);
+      const totalMinutes = shifts.reduce((sum, s) => {
+        if (!s.clock_out) return sum;
+        return sum + Math.round((new Date(s.clock_out) - new Date(s.clock_in)) / 60000);
+      }, 0);
+
+      let callStats = { total: 0, answered: 0, missed: 0 };
+      if (agent.extension) {
+        const dayStart = `${date}T00:00:00`;
+        const dayEnd = `${date}T23:59:59`;
+        const calls = db.db.prepare(
+          "SELECT status FROM call_records WHERE extension = ? AND start_time BETWEEN ? AND ?"
+        ).all(agent.extension, dayStart, dayEnd);
+        callStats.total = calls.length;
+        callStats.answered = calls.filter(c => c.status === 'answered').length;
+        callStats.missed = calls.filter(c => c.status === 'missed' || c.status === 'no_answer').length;
+      }
+
+      return {
+        agent_id: agent.id,
+        name: agent.name,
+        extension: agent.extension,
+        role: agent.role,
+        shifts_count: shifts.length,
+        scheduled_count: scheduled.length,
+        total_minutes: totalMinutes,
+        call_total: callStats.total,
+        call_answered: callStats.answered,
+        call_missed: callStats.missed,
+      };
+    });
+    res.json({ success: true, data: stats, date });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notify shift change (fire-and-forget Telegram notification)
+app.post('/api/notify/shift-change', (req, res) => {
+  try {
+    const payload = req.body || {};
+    const action = payload.action || payload.type || 'shift_update';
+
+    dispatchShiftTelegramAlert(payload)
+      .then((result) => {
+        db.logActivity(
+          'shift_notification',
+          `Shift notification: ${action} (${result.successCount || 0}/${result.totalRecipients || 0} recipients)`,
+          result.sent ? 'success' : 'warning'
+        );
+      })
+      .catch((error) => {
+        db.logActivity('shift_notification', `Shift notification failed: ${action} (${error.message})`, 'error');
+        logger.error('Shift notification failed:', error.message);
+      });
+
+    res.json({ success: true, message: 'Notification queued', action });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System Update endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+const getProjectDir = () => path.join(__dirname, '..', '..');
+
+const getAuthenticatedRepoUrl = () => {
+  if (!SYSTEM_UPDATE_TOKEN) return SYSTEM_UPDATE_REPO;
+  const repoPath = SYSTEM_UPDATE_REPO.replace(/^https?:\/\/github\.com\//, '');
+  return `https://x-access-token:${SYSTEM_UPDATE_TOKEN}@github.com/${repoPath}`;
+};
+
+const redactUpdateSecrets = (value) => {
+  let text = String(value || '');
+  if (SYSTEM_UPDATE_TOKEN) {
+    const safeToken = SYSTEM_UPDATE_TOKEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(safeToken, 'g'), '***');
+  }
+  return text;
+};
+
+// GET current git version info
+app.get('/api/system/version', (req, res) => {
+  try {
+    const projectDir = getProjectDir();
+    const hash = execSync('git rev-parse --short HEAD', { cwd: projectDir }).toString().trim();
+    const date = execSync('git log -1 --format=%cI', { cwd: projectDir }).toString().trim();
+    const message = execSync('git log -1 --format=%s', { cwd: projectDir }).toString().trim();
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectDir }).toString().trim();
+    res.json({ success: true, data: { hash, date, message, branch, lastCompletedAt: updateState.lastCompletedAt } });
+  } catch (error) {
+    res.json({ success: true, data: { hash: 'unknown', date: 'unknown', message: 'unknown', branch: 'unknown', lastCompletedAt: updateState.lastCompletedAt } });
+  }
+});
+
+// GET check if a newer update exists in remote branch
+app.get('/api/system/update/check', (req, res) => {
+  try {
+    if (!SYSTEM_UPDATE_TOKEN) {
+      return res.json({
+        success: true,
+        data: {
+          configured: false,
+          updateAvailable: false,
+          branch: SYSTEM_UPDATE_BRANCH,
+          reason: 'SYSTEM_UPDATE_TOKEN missing on backend',
+          checkedAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    const projectDir = getProjectDir();
+    const authUrl = getAuthenticatedRepoUrl();
+    const localHash = execSync('git rev-parse HEAD', { cwd: projectDir }).toString().trim();
+    const remoteRaw = execSync(`git ls-remote "${authUrl}" refs/heads/${SYSTEM_UPDATE_BRANCH}`, { cwd: projectDir }).toString().trim();
+    const remoteHash = remoteRaw.split(/\s+/)[0] || '';
+    const updateAvailable = Boolean(remoteHash && localHash && remoteHash !== localHash);
+
+    updateState.lastCheckedAt = new Date().toISOString();
+    updateState.updateAvailable = updateAvailable;
+
+    return res.json({
+      success: true,
+      data: {
+        configured: true,
+        branch: SYSTEM_UPDATE_BRANCH,
+        localHash: localHash.slice(0, 7),
+        remoteHash: remoteHash.slice(0, 7),
+        updateAvailable,
+        checkedAt: updateState.lastCheckedAt,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: redactUpdateSecrets(error.message) });
+  }
+});
+
+// GET current update job status + logs
+app.get('/api/system/update/status', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      running:   updateState.running,
+      logs:      updateState.logs,
+      exitCode:  updateState.exitCode,
+      startedAt: updateState.startedAt,
+      lastCompletedAt: updateState.lastCompletedAt,
+      lastCheckedAt: updateState.lastCheckedAt,
+      updateAvailable: updateState.updateAvailable,
+    },
+  });
+});
+
+// POST start a system update using backend-configured repo/token
+app.post('/api/system/update', (req, res) => {
+  if (updateState.running) {
+    return res.status(409).json({ success: false, error: 'Update already in progress' });
+  }
+
+  if (!SYSTEM_UPDATE_TOKEN) {
+    return res.status(400).json({ success: false, error: 'Backend update token is not configured (SYSTEM_UPDATE_TOKEN).' });
+  }
+
+  const projectDir = getProjectDir();
+  const branch = SYSTEM_UPDATE_BRANCH;
+  const authUrl = getAuthenticatedRepoUrl();
+
+  updateState = {
+    ...updateState,
+    running: true,
+    logs: [],
+    exitCode: null,
+    startedAt: new Date().toISOString(),
+  };
+  res.json({ success: true, message: 'Update started' });
+
+  const { exec } = require('child_process');
+
+  const addLog = (line) => {
+    if (!line) return;
+    updateState.logs.push(redactUpdateSecrets(line));
+  };
+
+  const runStep = (cmd, label) => new Promise((resolve, reject) => {
+    addLog(`[${new Date().toISOString()}] ▶ ${label}`);
+    exec(cmd, { cwd: projectDir, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', HOME: process.env.HOME || '/root' } }, (err, stdout, stderr) => {
+      if (stdout) stdout.trim().split('\n').filter(Boolean).forEach(addLog);
+      if (stderr) stderr.trim().split('\n').filter(Boolean).forEach(addLog);
+      if (err) {
+        addLog(`✖ ${label} failed`);
+        reject(new Error(`${label} failed`));
+      } else {
+        addLog(`✔ ${label} done`);
+        resolve();
+      }
+    });
+  });
+
+  (async () => {
+    try {
+      await runStep(`git fetch "${authUrl}" ${branch}`, `Fetching branch "${branch}"`);
+
+      // Check if package.json will change so we know whether to npm install
+      let pkgChanged = false;
+      try {
+        const diffOut = execSync('git diff HEAD FETCH_HEAD -- package.json', { cwd: projectDir }).toString();
+        pkgChanged = diffOut.trim().length > 0;
+      } catch { pkgChanged = true; }
+
+      await runStep('git reset --hard FETCH_HEAD', 'Applying update');
+
+      if (pkgChanged) {
+        addLog(`[${new Date().toISOString()}] ▶ package.json changed — installing dependencies`);
+        await runStep('npm install --legacy-peer-deps 2>&1', 'Installing dependencies');
+      } else {
+        addLog(`[${new Date().toISOString()}] ℹ package.json unchanged — skipping npm install`);
+      }
+
+      await runStep('npm run build 2>&1', 'Building application');
+
+      addLog(`[${new Date().toISOString()}] ✅ Update complete! Restart the service to apply runtime changes.`);
+      db.logActivity('system_update', `System updated to ${branch}`, 'success');
+      updateState.running = false;
+      updateState.exitCode = 0;
+      updateState.lastCompletedAt = new Date().toISOString();
+      updateState.updateAvailable = false;
+    } catch (err) {
+      addLog(`[${new Date().toISOString()}] ✖ Update failed: ${redactUpdateSecrets(err.message)}`);
+      db.logActivity('system_update', `System update failed: ${redactUpdateSecrets(err.message)}`, 'error');
+      updateState.running = false;
+      updateState.exitCode = 1;
+    }
+  })();
+});
+
+// ========================================
 // Start server
 // ========================================
 
@@ -5445,6 +6903,43 @@ const server = app.listen(PORT, HOST, () => {
   // Start 12-hour GSM span active check
   startGsmSpanCheckInterval();
 
+  // Schedule automatic "mark all as read" at 00:00:00 EAT every day
+  (function scheduleEATMidnightMark() {
+    try {
+      const MS_PER_DAY = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      // Compute UTC timestamp for today's 00:00 EAT (EAT = UTC+3).
+      // Midnight EAT corresponds to UTC time = 00:00 EAT - 3 hours.
+      const today = new Date();
+      const year = today.getUTCFullYear();
+      const month = today.getUTCMonth();
+      const day = today.getUTCDate();
+      const midnightEATUtc = Date.UTC(year, month, day, 0, 0, 0) - (3 * 60 * 60 * 1000);
+
+      let nextRun = midnightEATUtc;
+      if (nextRun <= now) nextRun += MS_PER_DAY;
+
+      const delay = nextRun - now;
+      logger.info(`[SCHED] Scheduling daily EAT-midnight mark-all-read in ${Math.round(delay / 1000)}s`);
+
+      setTimeout(async function runAndReschedule() {
+        try {
+          const changed = db.markAllRead();
+          logger.info(`[SCHED] markAllRead executed: ${changed} messages marked read`);
+          db.logActivity('sms_mark_all_read', `Automatic nightly mark-all-read: ${changed} messages`, 'info');
+        } catch (e) {
+          logger.warn(`[SCHED] markAllRead failed: ${e.message}`);
+        }
+
+        // Schedule next run using setTimeout again to avoid drift
+        scheduleEATMidnightMark();
+      }, delay);
+    } catch (e) {
+      logger.warn(`[SCHED] Failed to schedule EAT midnight mark: ${e.message}`);
+    }
+  })();
+
   logger.debug('Available endpoints: POST /api/auth/login, POST /api/auth/register, POST /api/auth/logout, GET /api/health, GET /api/gateway-config, POST /api/gateway-config, GET /api/pbx-config, POST /api/pbx-config, GET /api/sms-messages, PUT /api/sms-messages/:id/status, GET /api/gsm-spans, GET /api/gsm-spans/:gsm_span, PUT /api/gsm-spans/:gsm_span, GET /api/port-status, PUT /api/port-status/:port_number, GET /api/activity-logs, POST /api/activity-logs, GET /api/statistics, GET /api/available-ports, POST /api/agent-heartbeat, GET /api/agent-heartbeat, GET /api/users/profile/me, PUT /api/users/profile/me, GET /api/tg400-ports, GET /api/sim-ports, GET /api/sim-port/:port, PUT /api/sim-port/:port/label');
 });
 
@@ -5463,6 +6958,11 @@ process.on('SIGINT', () => {
 // ========================================
 async function checkActiveGsmSpans() {
   try {
+    // Skip silently if TG400 is not connected
+    if (!tg400Api || !tg400Api.isConnected || !tg400Api.isAuthenticated) {
+      logger.debug('[GSM CHECK] TG400 not connected — skipping GSM span check');
+      return;
+    }
     logger.info('[GSM CHECK] Checking active GSM spans from TG400...');
     
     const ports = await tg400Api.getAllPortsInfo();
@@ -5527,4 +7027,12 @@ function startGsmSpanCheckInterval() {
   }, 5000);
 }
 
-module.exports = app;
+app.use((req, res) => {
+  logger.warn(`[404-HANDLER] Unmatched request: ${req.method} ${req.path}`);
+  res.status(404).json({
+    success: false,
+    error: 'Endpoint not found',
+    path: req.path,
+    method: req.method
+  });
+});

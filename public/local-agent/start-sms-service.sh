@@ -88,9 +88,9 @@ start_service() {
         sleep 1
     fi
     
-    # Start the service in background
+    # Start the service in background (cap at 512MB to prevent OOM thrashing)
     cd "$SCRIPT_DIR/../.."
-    nohup node "$SCRIPT_DIR/api-server.cjs" > "$LOG_FILE" 2>&1 &
+    nohup node --max-old-space-size=512 "$SCRIPT_DIR/api-server.cjs" > "$LOG_FILE" 2>&1 &
     
     # Save PID
     local service_pid=$!
