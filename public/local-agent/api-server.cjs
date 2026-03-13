@@ -1193,9 +1193,21 @@ async function sendCallAutoSms(callRecord) {
       return false;
     }
 
+    // ✅ ONLY send SMS for inbound calls from external numbers (not internal extensions)
+    if (callRecord.direction !== 'inbound') {
+      logger.debug(` Call auto-SMS: Skipping ${callRecord.direction} call (only inbound calls are sent SMS)`);
+      return false;
+    }
+
     const callerNumber = callRecord.caller_number;
     if (!callerNumber) {
       logger.warn('Call auto-SMS: No caller number provided');
+      return false;
+    }
+
+    // ✅ Ensure it's an external phone number, not an internal extension (extensions are 1-4 digits)
+    if (callerNumber && /^\d{1,4}$/.test(callerNumber)) {
+      logger.debug(` Call auto-SMS: Skipping internal extension ${callerNumber}`);
       return false;
     }
 
@@ -1606,13 +1618,13 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
         try {
           numbers.forEach(recipient => {
             db.insertSMS({
-              sender_number: SMS_GATEWAY_CONFIG.senderid || 'System',
+              sender_number: recipient, // For sent SMS: show who received it (the external number)
               message_content: messageText,
               received_at: new Date().toISOString(),
               gsm_span: 2, // Default GSM span for sent SMS
               status: 'sent',
               direction: 'sent',
-              category: 'system'
+              category: 'system' // Indicates message came from system (not inbound)
             });
           });
         } catch (dbError) {
@@ -1689,13 +1701,13 @@ async function sendSmsReport(phoneNumbers, messageText) {
         try {
           numbers.forEach(recipient => {
             db.insertSMS({
-              sender_number: SMS_GATEWAY_CONFIG.senderid || 'System',
+              sender_number: recipient, // For sent SMS: show who received it (the external number)
               message_content: messageText,
               received_at: new Date().toISOString(),
               gsm_span: 2, // Default GSM span for sent SMS
               status: 'sent',
               direction: 'sent',
-              category: 'report'
+              category: 'report' // Indicates it was sent as part of a report
             });
           });
         } catch (dbError) {
