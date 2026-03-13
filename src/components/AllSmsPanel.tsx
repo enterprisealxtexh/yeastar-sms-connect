@@ -3,12 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Trash2, RefreshCw, Eye, EyeOff, Lock } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSmsMessages } from "@/hooks/useSmsMessages";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { SmsFilters, SmsFiltersState } from "./SmsFilters";
+import { SentSmsPanel } from "./SentSmsPanel";
 import { toast } from "sonner";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 
@@ -203,9 +205,19 @@ export const AllSmsPanel: React.FC = () => {
         </CardHeader>
       </Card>
 
-      {/* Messages Card */}
-      <Card className="card-glow border-border/50 bg-card flex flex-col min-h-0">
-        <CardHeader className="pb-3 shrink-0">
+      {/* Messages Tabs */}
+      <Tabs defaultValue="received" className="w-full">
+        <div className="mb-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="received">Received SMS</TabsTrigger>
+            <TabsTrigger value="sent">Sent SMS</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="received" className="space-y-0">
+          {/* Received Messages Card */}
+          <Card className="card-glow border-border/50 bg-card flex flex-col min-h-0">
+            <CardHeader className="pb-3 shrink-0">
           <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
             <div className="min-w-0">
               <CardTitle className="text-base font-semibold">All SMS Messages</CardTitle>
@@ -290,6 +302,12 @@ export const AllSmsPanel: React.FC = () => {
         </ScrollArea>
       </CardContent>
     </Card>
+        </TabsContent>
+
+        <TabsContent value="sent" className="space-y-0">
+          <SentSmsPanel />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

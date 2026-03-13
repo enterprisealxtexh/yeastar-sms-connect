@@ -74,6 +74,7 @@ class SMSDatabase {
         received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         gsm_span INTEGER NOT NULL CHECK (gsm_span >= 2 AND gsm_span <= 5),
         status TEXT DEFAULT 'unread' CHECK (status IN ('unread', 'read', 'processed', 'failed')),
+        direction TEXT DEFAULT 'received' CHECK (direction IN ('received', 'sent')),
         category TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -81,6 +82,7 @@ class SMSDatabase {
       
       CREATE INDEX IF NOT EXISTS idx_sms_gsm_span ON sms_messages(gsm_span);
       CREATE INDEX IF NOT EXISTS idx_sms_status ON sms_messages(status);
+      CREATE INDEX IF NOT EXISTS idx_sms_direction ON sms_messages(direction);
       CREATE INDEX IF NOT EXISTS idx_sms_received_at ON sms_messages(received_at DESC);
       CREATE INDEX IF NOT EXISTS idx_sms_sender ON sms_messages(sender_number);
     `);
@@ -1606,7 +1608,7 @@ class SMSDatabase {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const {
-          external_id, sender_number, message_content, received_at, gsm_span, status = 'unread', category = null
+          external_id, sender_number, message_content, received_at, gsm_span, status = 'unread', direction = 'received', category = null
         } = smsData;
         
         // Validate required fields - gsm_span should be 2-5
@@ -1651,8 +1653,8 @@ class SMSDatabase {
         
         const stmt = this.db.prepare(`
           INSERT INTO sms_messages 
-          (external_id, sender_number, message_content, received_at, sim_port, gsm_span, status, category)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (external_id, sender_number, message_content, received_at, sim_port, gsm_span, status, direction, category)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         
         const result = stmt.run(
@@ -1663,6 +1665,7 @@ class SMSDatabase {
           simPort,
           gsm_span,
           status,
+          direction,
           category
         );
         
@@ -1767,6 +1770,10 @@ class SMSDatabase {
       if (filters.status) {
         query += ' AND sm.status = ?';
         params.push(filters.status);
+      }
+      if (filters.direction) {
+        query += ' AND sm.direction = ?';
+        params.push(filters.direction);
       }
       if (filters.since) {
         query += ' AND sm.received_at >= ?';

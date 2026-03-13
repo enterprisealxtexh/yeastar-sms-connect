@@ -1579,6 +1579,24 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
 
       if (response && response.trim()) {
         logger.info(`✅ SMS sent successfully to ${numbers.length} recipient(s)`);
+        
+        // Store sent SMS in database for each recipient
+        try {
+          numbers.forEach(recipient => {
+            db.insertSMS({
+              sender_number: SMS_GATEWAY_CONFIG.senderid || 'System',
+              message_content: messageText,
+              received_at: new Date().toISOString(),
+              gsm_span: 2, // Default GSM span for sent SMS
+              status: 'sent',
+              direction: 'sent',
+              category: 'system'
+            });
+          });
+        } catch (dbError) {
+          logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
+        }
+        
         return true;
       } else {
         logger.warn(`SMS gateway empty response`);
@@ -1614,15 +1632,19 @@ async function sendSmsReport(phoneNumbers, messageText) {
       // Build and execute curl command directly using shell escaping
       const { execSync } = require('child_process');
       
-      // Use single quotes to prevent shell interpretation, but escape any single quotes in the message
-      const escapedMsg = messageText.replace(/'/g, "'\\''");
+      // Properly escape for shell: escape backslashes, double quotes, backticks, and dollar signs
+      const escapedMsg = messageText
+        .replace(/\\/g, '\\\\')    // Escape backslashes first
+        .replace(/"/g, '\\"')      // Escape double quotes
+        .replace(/`/g, '\\`')      // Escape backticks
+        .replace(/\$/g, '\\$');    // Escape dollar signs
       
       const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
 -H 'Accept: application/json' \
 -H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
 -H 'Content-Type: application/x-www-form-urlencoded' \
 -H 'Cookie: SERVERID=webC1' \
--d 'userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}'`;
+-d "userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}"`;
 
       logger.info(`Executing SMS curl...`);
       
@@ -1637,8 +1659,26 @@ async function sendSmsReport(phoneNumbers, messageText) {
       
       // Any response from gateway is typically success - they respond with JSON
       if (response && response.trim()) {
-        logger.info(`SMS sent successfully to ${numbers.length} recipient(s): ${mobileParam}`);
+        logger.info(`✅ SMS sent successfully to ${numbers.length} recipient(s): ${mobileParam}`);
         db.logActivity('sms_report_sent', `SMS sent to ${mobileParam}`, 'success');
+        
+        // Store sent SMS in database for each recipient
+        try {
+          numbers.forEach(recipient => {
+            db.insertSMS({
+              sender_number: SMS_GATEWAY_CONFIG.senderid || 'System',
+              message_content: messageText,
+              received_at: new Date().toISOString(),
+              gsm_span: 2, // Default GSM span for sent SMS
+              status: 'sent',
+              direction: 'sent',
+              category: 'report'
+            });
+          });
+        } catch (dbError) {
+          logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
+        }
+        
         return true;
       } else {
         logger.warn(`SMS Gateway empty response for: ${mobileParam}`);
@@ -4847,6 +4887,7 @@ app.get('/api/sms-messages', (req, res) => {
       sim_port,
       status,
       since,
+      direction,
       limit = 100
     } = req.query;
 
@@ -4854,6 +4895,7 @@ app.get('/api/sms-messages', (req, res) => {
     if (sim_port) filters.sim_port = parseInt(sim_port);
     if (status) filters.status = status;
     if (since) filters.since = since;
+    if (direction) filters.direction = direction;
 
     const messages = db.getSMSMessages(filters);
     const responseData = { success: true, data: messages, count: messages.length };
