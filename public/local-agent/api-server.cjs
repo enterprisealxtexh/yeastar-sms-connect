@@ -1540,6 +1540,26 @@ const SMS_GATEWAY_CONFIG = {
 };
 
 // Generic SMS sending function using hardcoded gateway
+// Format phone number to international format
+// Converts 0XXXXXXXXX to 254XXXXXXXXX (Kenya country code)
+function formatPhoneNumber(number) {
+  if (!number) return number;
+  const cleaned = String(number).trim();
+  
+  // If starts with 0, replace with 254
+  if (cleaned.startsWith('0')) {
+    return '254' + cleaned.substring(1);
+  }
+  
+  // If already starts with 254, return as is
+  if (cleaned.startsWith('254')) {
+    return cleaned;
+  }
+  
+  // Otherwise, prepend 254
+  return '254' + cleaned;
+}
+
 async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
   try {
     const numbers = Array.isArray(phoneNumberOrNumbers) ? phoneNumberOrNumbers : [phoneNumberOrNumbers];
@@ -1549,7 +1569,9 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
       return false;
     }
 
-    const mobileParam = numbers.map(n => n.trim()).join(',');
+    // Format all phone numbers to international format
+    const formattedNumbers = numbers.map(n => formatPhoneNumber(n));
+    const mobileParam = formattedNumbers.join(',');
     
     logger.info(`📤 Sending SMS via gateway to: ${mobileParam}`);
     logger.info(`   Message: ${messageText.substring(0, 80)}...`);
@@ -1622,11 +1644,12 @@ async function sendSmsReport(phoneNumbers, messageText) {
       return false;
     }
 
-    // Join phone numbers with comma (no space - gateway may not like spaces)
-    const mobileParam = numbers.map(n => n.trim()).join(',');
+    // Format all phone numbers to international format and join
+    const formattedNumbers = numbers.map(n => formatPhoneNumber(n));
+    const mobileParam = formattedNumbers.join(',');
     
-    logger.info(`SMS sending to: ${mobileParam}`);
-    logger.info(`Message length: ${messageText.length} characters`);
+    logger.info(`📤 SMS sending to: ${mobileParam}`);
+    logger.info(`   Message length: ${messageText.length} characters`);
 
     try {
       // Build and execute curl command directly using shell escaping
