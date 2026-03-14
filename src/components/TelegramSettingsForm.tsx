@@ -5,9 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Loader2, Phone, FileText, Mail } from "lucide-react";
+import { Send, Loader2, Phone, FileText, Mail, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { TemplateModal } from "./TemplateModal";
+import { useSmsSettings } from "@/hooks/useSmsSettings";
 
 interface TelegramConfig {
   enabled: boolean;
@@ -36,6 +37,7 @@ export const TelegramSettingsForm = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const { smsEnabled: globalSmsEnabled } = useSmsSettings();
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -166,18 +168,29 @@ export const TelegramSettingsForm = () => {
 
             {/* SMS Tab */}
             <TabsContent value="sms" className="space-y-3">
-              <div className="flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3">
+              {!globalSmsEnabled && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/8 px-3 py-2 text-xs text-amber-600">
+                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    The Nosteq SMS gateway is currently <strong>globally disabled</strong>. SMS notification delivery won't work until you re-enable it in the <strong>Configuration → SMS</strong> tab.
+                  </span>
+                </div>
+              )}
+              <div className={`flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3 ${
+                !globalSmsEnabled ? "opacity-50 pointer-events-none" : ""
+              }`}>
                 <div>
-                  <p className="text-sm font-medium">Enable SMS Notifications</p>
-                  <p className="text-xs text-muted-foreground">Send reports to configured phone numbers</p>
+                  <p className="text-sm font-medium">Use SMS for notification delivery</p>
+                  <p className="text-xs text-muted-foreground">Send alert & report messages via the Nosteq gateway to configured phone numbers</p>
                 </div>
                 <Switch
                   checked={config.sms_enabled}
                   onCheckedChange={(checked) => setConfig({ ...config, sms_enabled: checked })}
+                  disabled={!globalSmsEnabled}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Configure phone number recipients in the <strong>Setup</strong> tab.
+                Configure phone number recipients in the <strong>Setup</strong> tab. The master on/off for all SMS is in the <strong>SMS</strong> tab.
               </p>
             </TabsContent>
 

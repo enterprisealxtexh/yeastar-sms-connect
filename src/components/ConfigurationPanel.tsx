@@ -279,10 +279,10 @@ function SmsTabContent({ isSuperAdmin }: { isSuperAdmin: boolean }) {
               <div className="space-y-2">
                 <h3 className="font-semibold text-sm flex items-center gap-2">
                   <MessageSquare className="w-4 h-4" />
-                  SMS Sending Status
+                  Outbound SMS Gateway
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Enable or disable SMS sending globally for all users. When disabled, no SMS messages will be sent.
+                  Master switch for ALL outbound SMS via the Nosteq gateway — auto-reply, missed-call SMS, notification alerts, and daily reports. When disabled, nothing gets sent.
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -319,7 +319,7 @@ function SmsTabContent({ isSuperAdmin }: { isSuperAdmin: boolean }) {
             <Alert className="border-red-500/50 bg-red-500/5">
               <AlertCircle className="h-4 w-4 text-red-600" />
               <AlertDescription className="text-red-700">
-                SMS sending is currently disabled. No SMS messages will be sent until enabled.
+                Outbound SMS is globally off. No SMS will leave the system — auto-reply, missed-call SMS, notification alerts, and daily reports are all blocked until re-enabled.
               </AlertDescription>
             </Alert>
           )}
