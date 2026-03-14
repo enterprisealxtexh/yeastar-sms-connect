@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Shield, ShieldCheck, UserCog, Eye, Crown, UserPlus, Loader2, KeyRound, Trash2 } from "lucide-react";
+import { Shield, ShieldCheck, UserCog, Eye, Crown, UserPlus, Loader2, KeyRound, Trash2, ChevronsUpDown, Check, Search, X } from "lucide-react";
 import { useUsersWithRoles, useCurrentUserRole, useUpdateUserRole, useCreateUser, useDeleteUser, ROLE_META, type AppRole } from "@/hooks/useRoles";
+import { useExtensions } from "@/hooks/useExtensions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -25,11 +26,154 @@ const generatePin = () => {
   return String(Math.floor(100000 + Math.random() * 900000));
 };
 
+// Searchable multi-select dropdown for extensions
+const ExtensionMultiSelect = ({
+  extensions,
+  selected,
+  onChange,
+  isLoading,
+}: {
+  extensions: { extnumber: string; username: string }[];
+  selected: string[];
+  onChange: (val: string[]) => void;
+  isLoading: boolean;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handle = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
+
+  const filtered = extensions.filter(
+    (ext) =>
+      ext.extnumber.toLowerCase().includes(search.toLowerCase()) ||
+      ext.username.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const toggle = (num: string) => {
+    onChange(selected.includes(num) ? selected.filter((s) => s !== num) : [...selected, num]);
+  };
+
+  const removeOne = (num: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange(selected.filter((s) => s !== num));
+  };
+
+  const label =
+    selected.length === 0
+      ? "All extensions (no restriction)"
+      : isLoading
+      ? "Loading…"
+      : null;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[38px] hover:bg-muted/50 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        <span className="flex flex-wrap gap-1 flex-1 text-left">
+          {label ? (
+            <span className="text-muted-foreground">{label}</span>
+          ) : (
+            selected.map((num) => {
+              const ext = extensions.find((e) => e.extnumber === num);
+              return (
+                <span
+                  key={num}
+                  className="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs px-1.5 py-0.5 rounded"
+                >
+                  {num}{ext?.username ? ` – ${ext.username}` : ""}
+                  <X
+                    className="w-3 h-3 cursor-pointer hover:text-destructive"
+                    onClick={(e) => removeOne(num, e)}
+                  />
+                </span>
+              );
+            })
+          )}
+        </span>
+        <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0 ml-2" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-lg">
+          {/* Search */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+            <input
+              autoFocus
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              placeholder="Search by code or name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          {/* List */}
+          <div className="max-h-52 overflow-y-auto">
+            {isLoading ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">Loading extensions…</div>
+            ) : filtered.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">No extensions found</div>
+            ) : (
+              filtered.map((ext) => {
+                const checked = selected.includes(ext.extnumber);
+                return (
+                  <button
+                    key={ext.extnumber}
+                    type="button"
+                    onClick={() => toggle(ext.extnumber)}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+                  >
+                    <span
+                      className={cn(
+                        "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                        checked ? "bg-primary border-primary" : "border-input bg-background"
+                      )}
+                    >
+                      {checked && <Check className="w-3 h-3 text-primary-foreground" />}
+                    </span>
+                    <span className="font-mono font-medium">{ext.extnumber}</span>
+                    <span className="text-muted-foreground truncate">{ext.username}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {/* Footer */}
+          {selected.length > 0 && (
+            <div className="px-3 py-2 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+              <span>{selected.length} selected</span>
+              <button
+                type="button"
+                className="text-destructive hover:underline"
+                onClick={() => onChange([])}
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const RoleManagementPanel = () => {
   const { data: users, isLoading } = useUsersWithRoles();
   const { data: currentRole } = useCurrentUserRole();
   const updateRole = useUpdateUserRole();
   const createUser = useCreateUser();
+  const { extensions, isLoading: extensionsLoading } = useExtensions();
 
   const isSuperAdmin = currentRole === "super_admin";
   const deleteUser = useDeleteUser();
@@ -264,21 +408,17 @@ export const RoleManagementPanel = () => {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="user-extensions">Allowed Extensions (leave empty for all)</Label>
-                          <Input
-                            id="user-extensions"
-                            placeholder="e.g., 101,102,103 (comma-separated)"
-                            value={selectedExtensions.join(",")}
-                            onChange={(e) => {
-                              const extensions = e.target.value
-                                .split(",")
-                                .map((ext) => ext.trim())
-                                .filter((ext) => ext.length > 0);
-                              setSelectedExtensions(extensions);
-                            }}
+                          <Label>Allowed Extensions (leave empty for all)</Label>
+                          <ExtensionMultiSelect
+                            extensions={extensions}
+                            selected={selectedExtensions}
+                            onChange={setSelectedExtensions}
+                            isLoading={extensionsLoading}
                           />
                           <p className="text-xs text-muted-foreground">
-                            {selectedExtensions.length === 0 ? "No restrictions - can view all extensions" : `Restricted to: ${selectedExtensions.join(", ")}`}
+                            {selectedExtensions.length === 0
+                              ? "No restrictions — can view all extensions"
+                              : `Restricted to: ${selectedExtensions.join(", ")}`}
                           </p>
                         </div>
                       </>
