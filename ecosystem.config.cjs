@@ -9,8 +9,9 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         API_PORT: 2003,
-        API_HOST: '0.0.0.0',
+        API_HOST: '127.0.0.1',
         LOG_LEVEL: 'info',
+        SMS_DB_PATH: '/opt/yeastar-sms-connect/data/sms.db',
       },
       error_file: 'logs/api-server.error.log',
       out_file: 'logs/api-server.out.log',
