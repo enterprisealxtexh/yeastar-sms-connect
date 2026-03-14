@@ -30,16 +30,18 @@ const formatTimestampWithRelativeDate = (date: Date): string => {
   }
 };
 
-export const useSmsMessages = (limit = 50) => {
+export const useSmsMessages = (limit = 50, direction?: string) => {
   const queryClient = useQueryClient();
   const apiUrl = import.meta.env.VITE_API_URL;
 
   return useQuery({
-    queryKey: ["sms-messages", limit],
+    queryKey: ["sms-messages", limit, direction],
     queryFn: async (): Promise<SmsMessage[]> => {
       try {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (direction) params.set('direction', direction);
         const response = await fetch(
-          `${apiUrl}/api/sms-messages?limit=${limit}`
+          `${apiUrl}/api/sms-messages?${params.toString()}`
         );
         if (!response.ok) {
           console.warn(`API returned status ${response.status}`);

@@ -7,6 +7,12 @@ export interface CallAutoSmsConfig {
   enabled: boolean;
   answered_message: string;
   missed_message: string;
+  delay_enabled?: boolean;
+  delay_minutes?: number;
+  duplicate_window?: number;
+  allowed_ports?: number[];
+  allowed_extensions?: string[];
+  call_direction?: 'both' | 'inbound' | 'outbound';
   created_at: string;
   updated_at: string;
 }
@@ -26,7 +32,17 @@ export const useCallAutoSmsConfig = () => {
 export const useUpdateCallAutoSmsConfig = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { enabled: boolean; answered_message: string; missed_message: string }) => {
+    mutationFn: async (payload: { 
+      enabled: boolean; 
+      answered_message: string; 
+      missed_message: string;
+      delay_enabled?: boolean;
+      delay_minutes?: number;
+      duplicate_window?: number;
+      allowed_ports?: number[];
+      allowed_extensions?: string[];
+      call_direction?: 'both' | 'inbound' | 'outbound';
+    }) => {
       const res = await fetch(`${API_URL}/api/call-auto-sms-config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

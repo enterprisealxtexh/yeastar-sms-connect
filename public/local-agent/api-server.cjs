@@ -952,6 +952,13 @@ class YeastarPBXAPI {
 const pbxAPI = new YeastarPBXAPI();
 
 // ========================================
+// Service start time — only calls at or after this UTC moment get auto-SMS.
+// This prevents historical CDR backfill from ever triggering messages.
+// ========================================
+const SERVICE_START_UTC_MS = Date.now();
+logger.info(`Service start time (UTC): ${new Date(SERVICE_START_UTC_MS).toISOString()}`);
+
+// ========================================
 // Background Call Sync Job
 // ========================================
 
@@ -1137,6 +1144,47 @@ const missedCallAlertQueue = [];
 let isSendingMissedCallAlert = false;
 const MISSED_CALL_DELAY_MS = 300; // 300ms delay between missed call sends (prevents rate limiting)
 
+// Auto-SMS Queue with configurable delay
+const autoSmsQueue = [];
+let isProcessingAutoSms = false;
+const autoSmsQueuedNumbers = new Map(); // phone -> queued timestamp ms
+
+async function processAutoSmsQueue() {
+  if (isProcessingAutoSms || autoSmsQueue.length === 0) {
+    return;
+  }
+
+  isProcessingAutoSms = true;
+
+  try {
+    const item = autoSmsQueue.shift();
+    
+    if (item) {
+      const now = Date.now();
+      const delayMs = item.scheduledTime - now;
+      
+      // Wait until scheduled time
+      if (delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      
+      // Execute the SMS send
+      if (typeof item.fn === 'function') {
+        await item.fn();
+      }
+    }
+  } catch (error) {
+    logger.error(`Auto-SMS queue error: ${error.message}`);
+  } finally {
+    isProcessingAutoSms = false;
+    
+    // Process next item if queue not empty
+    if (autoSmsQueue.length > 0) {
+      processAutoSmsQueue();
+    }
+  }
+}
+
 async function processMissedCallQueue() {
   if (isSendingMissedCallAlert || missedCallAlertQueue.length === 0) {
     return;
@@ -1185,6 +1233,16 @@ async function sendAutoReplySms(senderNumber) {
       return false;
     }
 
+    // Prevent repeated auto-replies to the same number.
+    // Use the admin-configured duplicate window from call_auto_sms_config (default 10 min).
+    const callAutoSmsCfg = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : {};
+    const autoReplyDupWindow = callAutoSmsCfg?.duplicate_window || 10;
+    if (db.checkRecentSms && db.checkRecentSms(senderNumber, autoReplyDupWindow)) {
+      logger.info(` Auto-reply duplicate prevention: skipping ${senderNumber} (within ${autoReplyDupWindow} min window)`);
+      db.logActivity('auto_reply_sms_duplicate_prevented', `Auto-reply duplicate prevented for ${senderNumber}`, 'info');
+      return false;
+    }
+
     logger.info(`📧 Sending auto-reply to: ${senderNumber}`);
     logger.info(`   Message: ${autoReplyConfig.message.substring(0, 80)}...`);
     
@@ -1193,6 +1251,14 @@ async function sendAutoReplySms(senderNumber) {
     if (success) {
       logger.info(`✅ Auto-reply SMS sent to ${senderNumber}`);
       db.logActivity('auto_reply_sms_sent', `Auto-reply sent to ${senderNumber}`, 'success');
+      db.insertSMS({
+        sender_number: senderNumber,
+        message_content: autoReplyConfig.message,
+        received_at: new Date().toISOString(),
+        status: 'processed',
+        direction: 'sent',
+        category: 'auto_reply'
+      });
     } else {
       logger.error(`❌ Auto-reply SMS failed for ${senderNumber}`);
       db.logActivity('auto_reply_sms_failed', `Auto-reply failed for ${senderNumber}`, 'error');
@@ -1219,13 +1285,52 @@ async function sendCallAutoSms(callRecord) {
       return false;
     }
 
-    // ✅ ONLY send SMS for inbound calls from external numbers (not internal extensions)
-    if (callRecord.direction !== 'inbound') {
-      logger.debug(` Call auto-SMS: Skipping ${callRecord.direction} call (only inbound calls are sent SMS)`);
+    // Skip internal calls entirely (extension-to-extension)
+    if (callRecord.direction === 'internal') {
+      logger.debug(` Call auto-SMS: Skipping internal call`);
       return false;
     }
 
-    const callerNumber = callRecord.caller_number;
+    // Check configured call direction (inbound / outbound / both)
+    const configuredDirection = callAutoSmsConfig.call_direction || 'both';
+    if (configuredDirection !== 'both' && callRecord.direction !== configuredDirection) {
+      logger.debug(` Call auto-SMS: Skipping ${callRecord.direction} call (configured for '${configuredDirection}' only)`);
+      return false;
+    }
+
+    // Check extension filter — if a list is set, the call's extension must be in it
+    let allowedExtensions = [];
+    try { allowedExtensions = JSON.parse(callAutoSmsConfig.allowed_extensions || '[]'); } catch {}
+    if (allowedExtensions.length > 0 && !allowedExtensions.includes(String(callRecord.extension))) {
+      logger.debug(` Call auto-SMS: Extension '${callRecord.extension}' not in allowed list [${allowedExtensions.join(', ')}]`);
+      return false;
+    }
+
+    // ✅ Recency guard — only send SMS for calls that started AFTER this service instance was launched.
+    // CDR start_time is stored in UTC. We append 'Z' if no timezone designator is present so
+    // JavaScript always parses it as UTC (not server local time), matching the EAT display in the frontend.
+    // Historical CDR backfill records (any call before service start) are always rejected.
+    if (callRecord.start_time) {
+      const raw = String(callRecord.start_time).trim().replace(' ', 'T');
+      const utcTs = /Z$|[+-]\d{2}:\d{2}$/.test(raw) ? raw : `${raw}Z`;
+      const callMs = new Date(utcTs).getTime();
+      if (isNaN(callMs)) {
+        logger.warn(` Call auto-SMS: Could not parse start_time '${callRecord.start_time}' — skipping`);
+        return false;
+      }
+      if (callMs < SERVICE_START_UTC_MS) {
+        logger.debug(` Call auto-SMS: Skipping pre-service call from ${new Date(callMs).toISOString()} (service started ${new Date(SERVICE_START_UTC_MS).toISOString()})`);
+        return false;
+      }
+    }
+
+    // Determine the external number to receive the SMS
+    // Inbound: SMS goes to the external caller; Outbound: SMS goes to the external callee
+    const targetNumber = callRecord.direction === 'outbound'
+      ? callRecord.callee_number
+      : callRecord.caller_number;
+
+    const callerNumber = targetNumber;
     if (!callerNumber) {
       logger.warn('Call auto-SMS: No caller number provided');
       return false;
@@ -1273,21 +1378,70 @@ async function sendCallAutoSms(callRecord) {
 
     logger.info(`   Message: ${message.substring(0, 80)}...`);
     
-    const success = await sendSmsViaGateway(callerNumber, message);
+    // Calculate delay (admin-configurable, default 5 minutes)
+    const delayMinutes = (callAutoSmsConfig.delay_enabled && callAutoSmsConfig.delay_minutes) ? callAutoSmsConfig.delay_minutes : 0;
+    const delayMs = delayMinutes * 60 * 1000;
+    const scheduledTime = Date.now() + delayMs;
     
-    if (success) {
-      logger.info(`✅ Call auto-SMS sent to ${callerNumber}`);
-      db.logActivity('call_auto_sms_sent', `Call auto-SMS sent to ${callerNumber}`, 'success');
-    } else {
-      logger.error(`❌ Call auto-SMS failed for ${callerNumber}`);
-      db.logActivity('call_auto_sms_failed', `Call auto-SMS failed for ${callerNumber}`, 'error');
+    // Use admin-configured duplicate window (default 10 minutes)
+    const duplicateWindowMinutes = callAutoSmsConfig.duplicate_window || 10;
+
+    // Check for recent duplicates before queueing
+    if (db.checkRecentSms && db.checkRecentSms(callerNumber, duplicateWindowMinutes)) {
+      logger.info(` Auto-SMS: Duplicate prevention - SMS already sent to ${callerNumber} within ${duplicateWindowMinutes} min`);
+      db.logActivity('call_auto_sms_duplicate_prevented', `Duplicate prevented for ${callerNumber}`, 'info');
+      return false;
     }
-    
-    return success;
+
+    // Queue SMS for delayed sending
+    const existingQueuedAt = autoSmsQueuedNumbers.get(callerNumber);
+    if (existingQueuedAt && (Date.now() - existingQueuedAt) < (duplicateWindowMinutes * 60 * 1000)) {
+      logger.info(` Auto-SMS queue duplicate prevention: ${callerNumber} already queued recently`);
+      db.logActivity('call_auto_sms_queue_duplicate_prevented', `Queue duplicate prevented for ${callerNumber}`, 'info');
+      return false;
+    }
+
+    autoSmsQueuedNumbers.set(callerNumber, Date.now());
+
+    autoSmsQueue.push({
+      scheduledTime,
+      fn: async () => {
+        try {
+          const success = await sendSmsViaGateway(callerNumber, message);
+          if (success) {
+            logger.info(`✅ Call auto-SMS sent to ${callerNumber} (delayed ${delayMinutes}m)`);
+            db.logActivity('call_auto_sms_sent', `Call auto-SMS sent to ${callerNumber}`, 'success');
+            db.insertSMS({ sender_number: callerNumber, message_content: message, received_at: new Date().toISOString(), status: 'processed', direction: 'sent', category: 'auto' });
+          } else {
+            logger.error(`❌ Call auto-SMS failed for ${callerNumber}`);
+            db.logActivity('call_auto_sms_failed', `Call auto-SMS failed for ${callerNumber}`, 'error');
+          }
+        } catch (err) { logger.error(`Queued SMS error: ${err.message}`); }
+        finally {
+          autoSmsQueuedNumbers.delete(callerNumber);
+        }
+      }
+    });
+
+    if (!isProcessingAutoSms) processAutoSmsQueue();
+    return true;
   } catch (error) {
     logger.error(`Call auto-SMS exception: ${error.message}`);
     return false;
   }
+}
+
+// Template variable substitution
+function applyTemplate(template, vars) {
+  return Object.entries(vars).reduce((text, [key, val]) =>
+    text.split(`{${key}}`).join(val !== undefined && val !== null ? String(val) : ''),
+  template);
+}
+
+// Get template for a specific channel (tg_ or email_ prefix), falling back to shared key
+function getChannelTemplate(channel, eventType) {
+  const channelKey = `${channel}_${eventType}`;
+  return db.getNotificationTemplate(channelKey) || db.getNotificationTemplate(eventType) || null;
 }
 
 // Event-Driven Missed Call Alert (No Polling)
@@ -1297,7 +1451,7 @@ const notifiedMissedCalls = new Set(); // Track which missed calls we've already
 
 async function sendMissedCallAlert(callRecord) {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     
     // Only send if telegram is enabled and configured
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
@@ -1312,6 +1466,12 @@ async function sendMissedCallAlert(callRecord) {
 
     // Skip if not a missed call or already notified
     if (!['missed', 'no-answer', 'noanswer', 'failed'].includes(callRecord.status)) {
+      return;
+    }
+
+    // Only alert for inbound calls (external callers) — never internal extensions
+    if (callRecord.direction !== 'inbound') {
+      logger.debug(` Missed call alert: skipping ${callRecord.direction} call from ${callRecord.caller_number}`);
       return;
     }
 
@@ -1365,12 +1525,16 @@ async function sendMissedCallAlert(callRecord) {
         }
       }
       
-      let messageText = '🔔 MISSED CALL ALERT\n\n';
-      messageText += `Caller: ${callerNumber}\n`;
-      messageText += `Extension: ${extensionNumber} (${extensionUsername})\n`;
-      messageText += `Time: ${callTime} (Nairobi)\n`;
-      messageText += `Date: ${callDate}\n`;
-      messageText += `Ring Duration: ${duration}s\n`;
+      const missedTemplate = getChannelTemplate('tg', 'missed_call') ||
+        '\uD83D\uDD14 MISSED CALL ALERT\n\nCaller: {caller}\nExtension: {extension} ({extension_name})\nTime: {time} (Nairobi)\nDate: {date}\nRing Duration: {duration}s';
+      const messageText = applyTemplate(missedTemplate, {
+        caller: callerNumber,
+        extension: extensionNumber,
+        extension_name: extensionUsername,
+        time: callTime,
+        date: callDate,
+        duration: String(duration),
+      });
 
       const botToken = telegramConfig.bot_token;
       const chatId = telegramConfig.chat_id;
@@ -1408,8 +1572,18 @@ async function sendMissedCallAlert(callRecord) {
               db.logActivity('telegram_missed_call_alert_failed', `Failed to send alert for ${callerNumber}: ${tgJson.description || tgResp.statusText}`, 'error');
             }
 
-            // Also send via Email if enabled
-            await sendEmail(`Missed Call: ${callerNumber}`, messageText);
+            // Also send via Email if enabled — use email-specific template
+            const emailTemplate = getChannelTemplate('email', 'missed_call') ||
+              '🔔 MISSED CALL ALERT\n\nCaller: {caller}\nExtension: {extension} ({extension_name})\nTime: {time} (Nairobi)\nDate: {date}\nRing Duration: {duration}s';
+            const emailText = applyTemplate(emailTemplate, {
+              caller: callerNumber,
+              extension: extensionNumber,
+              extension_name: extensionUsername,
+              time: callTime,
+              date: callDate,
+              duration: String(duration),
+            });
+            await sendEmail(`Missed Call: ${callerNumber}`, emailText);
           } catch (error) {
             logger.error(`❌ Queue send error: ${error.message}`);
           }
@@ -1437,7 +1611,7 @@ async function checkAndAlertMissedCalls() {
 
 async function alertErrorImmediately(eventType, message) {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     
     // Only send if telegram is enabled
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
@@ -1461,10 +1635,13 @@ async function alertErrorImmediately(eventType, message) {
       hour12: true
     });
 
-    let messageText = 'ERROR ALERT\n\n';
-    messageText += `Type: ${eventType}\n`;
-    messageText += `Message: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}\n`;
-    messageText += `Time: ${nairobiTime} (Nairobi)\n`;
+    const errorTemplate = getChannelTemplate('tg', 'system_error') ||
+      'ERROR ALERT\n\nType: {error_type}\nMessage: {error_message}\nTime: {time}';
+    const messageText = applyTemplate(errorTemplate, {
+      error_type: eventType,
+      error_message: message.substring(0, 200) + (message.length > 200 ? '...' : ''),
+      time: nairobiTime + ' (Nairobi)',
+    });
 
     const botToken = telegramConfig.bot_token;
     const chatId = telegramConfig.chat_id;
@@ -1493,10 +1670,61 @@ async function alertErrorImmediately(eventType, message) {
       logger.error(`Telegram error send failed: ${tgJson.description || 'Unknown error'}`);
     }
 
-    // Also send via Email if enabled
-    await sendEmail(`System Alert: ${eventType}`, messageText);
+    // Send via Email using email-specific template
+    const emailErrTemplate = getChannelTemplate('email', 'system_error') ||
+      'ERROR ALERT\n\nType: {error_type}\nMessage: {error_message}\nTime: {time}';
+    const emailErrText = applyTemplate(emailErrTemplate, {
+      error_type: eventType,
+      error_message: message.substring(0, 200) + (message.length > 200 ? '...' : ''),
+      time: nairobiTime + ' (Nairobi)',
+    });
+    await sendEmail(`System Alert: ${eventType}`, emailErrText);
   } catch (error) {
     logger.error(`Error alert error: ${error.message}`);
+  }
+}
+
+// Send alert when a new inbound SMS is received
+async function sendNewSmsAlert(senderNumber, portLabel, messageContent) {
+  try {
+    const telegramConfig = db.getNotificationConfig();
+    if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) return;
+    if (!telegramConfig?.notify_new_sms) return;
+
+    const now = new Date().toLocaleString('en-KE', {
+      timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+    });
+    const tgSmsTemplate = getChannelTemplate('tg', 'new_sms') ||
+      '\uD83D\uDCAC NEW SMS RECEIVED\n\nFrom: {caller}\nPort: {port}\nTime: {time}\nMessage: {message}';
+    const text = applyTemplate(tgSmsTemplate, {
+      caller: senderNumber,
+      port: portLabel || 'Unknown',
+      time: now,
+      message: messageContent.substring(0, 300) + (messageContent.length > 300 ? '...' : ''),
+    });
+    const tgResp = await fetch(`https://api.telegram.org/bot${telegramConfig.bot_token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: telegramConfig.chat_id, text }),
+    });
+    const tgJson = await tgResp.json();
+    if (tgResp.ok && tgJson.ok) {
+      logger.info(`\uD83D\uDCE9 New SMS alert sent for ${senderNumber}`);
+      db.logActivity('new_sms_alert_sent', `New SMS alert sent for ${senderNumber}`, 'success');
+    }
+    // Email with channel-specific template
+    const emailSmsTemplate = getChannelTemplate('email', 'new_sms') ||
+      '\uD83D\uDCAC NEW SMS RECEIVED\n\nFrom: {caller}\nPort: {port}\nTime: {time}\nMessage: {message}';
+    const emailSmsText = applyTemplate(emailSmsTemplate, {
+      caller: senderNumber,
+      port: portLabel || 'Unknown',
+      time: now,
+      message: messageContent.substring(0, 300) + (messageContent.length > 300 ? '...' : ''),
+    });
+    await sendEmail(`New SMS from ${senderNumber}`, emailSmsText);
+  } catch (e) {
+    logger.error(`New SMS alert error: ${e.message}`);
   }
 }
 
@@ -1515,11 +1743,11 @@ startMissedCallAlerts();
 // Email Service (configurable SMTP via admin settings)
 // ========================================
 
-async function sendEmail(subject, bodyText) {
+async function sendEmail(subject, bodyText, { bypassEnabledCheck = false } = {}) {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     
-    if (!telegramConfig?.email_enabled) {
+    if (!bypassEnabledCheck && !telegramConfig?.email_enabled) {
       logger.debug(' Email notifications disabled - skipping');
       return false;
     }
@@ -1529,6 +1757,7 @@ async function sendEmail(subject, bodyText) {
     const smtpUser = telegramConfig.email_smtp_user;
     const smtpPass = telegramConfig.email_smtp_pass;
     const emailFrom = telegramConfig.email_from || smtpUser;
+    const encryption = telegramConfig.email_smtp_encryption || 'auto';
 
     if (!smtpHost || !smtpUser || !smtpPass) {
       logger.warn(' Email SMTP credentials not configured - skipping email send');
@@ -1549,12 +1778,24 @@ async function sendEmail(subject, bodyText) {
     }
 
     const nodemailer = require('nodemailer');
+    // Determine secure/tls settings based on encryption choice
+    let secure = false;
+    let tlsOptions = { rejectUnauthorized: false };
+    if (encryption === 'ssl' || (encryption === 'auto' && smtpPort === 465)) {
+      secure = true; // SSL/TLS from the start
+    } else if (encryption === 'starttls') {
+      secure = false; // STARTTLS upgrades after connection
+      tlsOptions = { ...tlsOptions, ciphers: 'SSLv3' };
+    } else if (encryption === 'none') {
+      secure = false;
+      tlsOptions = { rejectUnauthorized: false };
+    }
     const transporter = nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort,
-      secure: smtpPort === 465,
+      secure,
       auth: { user: smtpUser, pass: smtpPass },
-      tls: { rejectUnauthorized: false }
+      tls: tlsOptions
     });
 
     await transporter.sendMail({
@@ -1646,14 +1887,10 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
       return false;
     }
 
-    // ✅ Check for duplicate SMS within 24 hours for each recipient
-    const crypto = require('crypto');
-    const messageHash = crypto.createHash('md5').update(messageText).digest('hex');
-    
+    // Check for duplicate SMS within 24 hours for each recipient
     const filteredNumbers = [];
     for (const number of numbers) {
-      // Check if SMS was already sent to this number today
-      if (db.hasSentSmsToday(number, messageHash)) {
+      if (db.checkRecentSms(number, 1440)) {
         logger.warn(`⚠️  SMS already sent to ${number} today - skipping to prevent duplicate`);
         db.logActivity('sms_duplicate_prevented', `SMS to ${number} skipped (duplicate within 24h)`, 'warning');
         continue;
@@ -1704,17 +1941,13 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
         try {
           filteredNumbers.forEach(recipient => {
             db.insertSMS({
-              sender_number: recipient, // For sent SMS: show who received it (the external number)
+              sender_number: recipient,
               message_content: messageText,
               received_at: new Date().toISOString(),
-              gsm_span: 2, // Default GSM span for sent SMS
-              status: 'sent',
+              status: 'processed',
               direction: 'sent',
-              category: 'system' // Indicates message came from system (not inbound)
+              category: 'system'
             });
-            
-            // ✅ Log to SMS sent log to prevent duplicates within 24 hours
-            db.logSmsSent(recipient, messageHash);
           });
         } catch (dbError) {
           logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
@@ -1751,14 +1984,10 @@ async function sendSmsReport(phoneNumbers, messageText) {
       return false;
     }
 
-    // ✅ Check for duplicate SMS within 24 hours for each recipient
-    const crypto = require('crypto');
-    const messageHash = crypto.createHash('md5').update(messageText).digest('hex');
-    
+    // Check for duplicate SMS within 24 hours for each recipient
     const filteredNumbers = [];
     for (const number of numbers) {
-      // Check if SMS was already sent to this number today
-      if (db.hasSentSmsToday(number, messageHash)) {
+      if (db.checkRecentSms(number, 1440)) {
         logger.warn(`⚠️  SMS Report already sent to ${number} today - skipping to prevent duplicate`);
         db.logActivity('sms_report_duplicate_prevented', `SMS Report to ${number} skipped (duplicate within 24h)`, 'warning');
         continue;
@@ -1817,17 +2046,13 @@ async function sendSmsReport(phoneNumbers, messageText) {
         try {
           filteredNumbers.forEach(recipient => {
             db.insertSMS({
-              sender_number: recipient, // For sent SMS: show who received it (the external number)
+              sender_number: recipient,
               message_content: messageText,
               received_at: new Date().toISOString(),
-              gsm_span: 2, // Default GSM span for sent SMS
-              status: 'sent',
+              status: 'processed',
               direction: 'sent',
-              category: 'report' // Indicates it was sent as part of a report
+              category: 'report'
             });
-            
-            // ✅ Log to SMS sent log to prevent duplicates within 24 hours
-            db.logSmsSent(recipient, messageHash);
           });
         } catch (dbError) {
           logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
@@ -1865,7 +2090,7 @@ let lastReportTimes = {}; // Track last send times for morning and evening repor
 
 async function sendDailyReport() {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     if (!telegramConfig?.daily_report_enabled) {
       logger.info('Daily report disabled in notification settings');
       return;
@@ -1878,11 +2103,14 @@ async function sendDailyReport() {
     const callStats = db.db.prepare(`
       SELECT 
         COUNT(*) as total_calls,
-        SUM(CASE WHEN status = 'answered' THEN 1 ELSE 0 END) as answered,
-        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as missed,
-        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') AND is_returned = 0 THEN 1 ELSE 0 END) as unreturned_missed,
-        SUM(CASE WHEN status = 'busy' THEN 1 ELSE 0 END) as busy,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound_calls,
+        SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound_calls,
+        SUM(CASE WHEN direction = 'internal' THEN 1 ELSE 0 END) as internal_calls,
+        SUM(CASE WHEN direction = 'inbound' AND status = 'answered' THEN 1 ELSE 0 END) as inbound_answered,
+        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as inbound_missed,
+        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') AND is_returned = 0 THEN 1 ELSE 0 END) as inbound_unreturned,
+        SUM(CASE WHEN direction = 'outbound' AND status = 'answered' THEN 1 ELSE 0 END) as outbound_answered,
+        SUM(CASE WHEN direction = 'outbound' AND status IN ('missed', 'no-answer', 'noanswer', 'failed', 'busy') THEN 1 ELSE 0 END) as outbound_failed,
         COUNT(DISTINCT extension) as total_extensions
       FROM call_records
       WHERE SUBSTR(start_time, 1, 10) = ?
@@ -1911,13 +2139,19 @@ async function sendDailyReport() {
     if (hasCallData) {
       messageText += `Total Calls: ${callStats.total_calls}\n`;
       messageText += `Extensions with Calls: ${callStats.total_extensions}\n\n`;
-      messageText += `Call Status Breakdown:\n`;
-      messageText += `[Answered] ${callStats.answered || 0}\n`;
-      messageText += `[Missed] ${callStats.missed || 0}\n`;
-      messageText += `[Unreturned] ${callStats.unreturned_missed || 0}\n`;
-      messageText += `[Returned] ${(callStats.missed || 0) - (callStats.unreturned_missed || 0)}\n`;
-      messageText += `[Busy] ${callStats.busy || 0}\n`;
-      messageText += `[Failed] ${callStats.failed || 0}\n`;
+      
+      messageText += `--- Inbound & Outbound ---\n`;
+      const totalInOut = (callStats.inbound_calls || 0) + (callStats.outbound_calls || 0);
+      const totalAnswered = (callStats.inbound_answered || 0) + (callStats.outbound_answered || 0);
+      const totalLost = (callStats.inbound_missed || 0) + (callStats.outbound_failed || 0);
+      messageText += `[Total] ${totalInOut}\n`;
+      messageText += `[Answered] ${totalAnswered}\n`;
+      messageText += `[Missed/Failed] ${totalLost}\n`;
+      messageText += `[Unreturned] ${callStats.inbound_unreturned || 0}\n`;
+      messageText += `[Returned] ${(callStats.inbound_missed || 0) - (callStats.inbound_unreturned || 0)}\n\n`;
+      
+      messageText += `--- Internal ---\n`;
+      messageText += `[Total] ${callStats.internal_calls || 0}\n`;
     } else {
       messageText += `No calls today.\n`;
     }
@@ -1996,7 +2230,7 @@ function scheduleDailyReport() {
 
   // Check every second if it's time to send the report
   dailyReportInterval = setInterval(() => {
-    const telegramConfig = db.getTelegramConfig() || {};
+    const telegramConfig = db.getNotificationConfig() || {};
     if (!telegramConfig.daily_report_enabled) {
       return;
     }
@@ -2199,6 +2433,15 @@ async function startSmsListener(retryCount = 0) {
           
           // EVENT-DRIVEN: Send auto-reply SMS if enabled
           await sendAutoReplySms(sms.sender);
+
+          // EVENT-DRIVEN: Send new SMS notification alert if enabled
+          const portLabel = (() => {
+            try {
+              const row = db.db.prepare('SELECT label FROM port_labels WHERE port_number = ? LIMIT 1').get(internalPort);
+              return row?.label || `Port ${internalPort}`;
+            } catch (e) { return `Port ${internalPort}`; }
+          })();
+          await sendNewSmsAlert(sms.sender, portLabel, messageContent);
           
           // Invalidate cache on new SMS
           responseCache.delete('sms-messages:*');
@@ -3307,31 +3550,6 @@ app.get('/api/gateway-test', async (req, res) => {
   }
 });
 
-// SMS Gateway URLs endpoints
-app.post('/api/sms-gateway-url', (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ success: false, error: 'URL is required' });
-    }
-
-    // Validate URL format
-    try {
-      new URL(url);
-    } catch (e) {
-      return res.status(400).json({ success: false, error: 'Invalid URL format' });
-    }
-
-    // Store the SMS gateway URL in database or config
-    db.saveSmsGatewayUrl(url);
-    logger.info(`📱 SMS Gateway URL saved: ${url}`);
-    res.json({ success: true, message: 'SMS gateway URL saved' });
-  } catch (error) {
-    logger.error(`Error saving SMS gateway URL: ${error.message}`);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Test SMS Gateway URL connectivity
 app.post('/api/test-sms-gateway', async (req, res) => {
   try {
@@ -4055,78 +4273,238 @@ function mapCallStatus(status) {
 }
 
 // ========================================
-// Telegram Configuration Endpoints
+// Channel Setup Endpoints (Telegram credentials + Email SMTP)
 // ========================================
 
-app.get('/api/telegram-config', (req, res) => {
+app.get('/api/channel-setup', (req, res) => {
   try {
-    const config = db.getTelegramConfig();
+    const config = db.getChannelConfig();
     res.json({ success: true, data: config });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/telegram-config', (req, res) => {
+app.post('/api/channel-setup', (req, res) => {
   try {
     const {
       bot_token,
       chat_id,
-      enabled,
-      email_enabled,
-      email_recipients,
       email_smtp_host,
       email_smtp_port,
       email_smtp_user,
       email_smtp_pass,
       email_from,
-      sms_enabled,
-      notify_missed_calls,
-      notify_new_sms,
-      notify_system_errors,
-      notify_shift_changes,
-      daily_report_enabled,
-      daily_report_time
+      email_recipients,
+      email_smtp_encryption,
     } = req.body;
 
-    const success = db.saveTelegramConfig({
+    const success = db.saveChannelConfig({
       bot_token,
       chat_id,
-      enabled,
-      email_enabled,
-      email_recipients,
       email_smtp_host,
       email_smtp_port,
       email_smtp_user,
       email_smtp_pass,
       email_from,
-      sms_enabled,
-      notify_missed_calls,
-      notify_new_sms,
-      notify_system_errors,
-      notify_shift_changes,
-      daily_report_enabled,
-      daily_report_time
+      email_recipients,
+      email_smtp_encryption,
     });
 
     if (success) {
-      res.json({
-        success: true,
-        message: 'Telegram configuration saved',
-        data: db.getTelegramConfig()
-      });
+      res.json({ success: true, message: 'Channel credentials saved', data: db.getChannelConfig() });
     } else {
-      throw new Error('Failed to save Telegram configuration');
+      throw new Error('Failed to save channel credentials');
     }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// ========================================
+// Notification Preferences Endpoints (delivery toggles + schedule)
+// ========================================
+
+app.get('/api/notifications-setup', (req, res) => {
+  try {
+    const setup = db.getNotificationsSetup();
+    res.json({ success: true, data: setup });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/notifications-setup', (req, res) => {
+  try {
+    const {
+      telegram_enabled,
+      email_enabled,
+      sms_reports_enabled,
+      notify_missed_calls,
+      notify_new_sms,
+      notify_system_errors,
+      notify_shift_changes,
+      daily_report_enabled,
+      daily_report_time,
+    } = req.body;
+
+    const success = db.saveNotificationsSetup({
+      telegram_enabled,
+      email_enabled,
+      sms_reports_enabled,
+      notify_missed_calls,
+      notify_new_sms,
+      notify_system_errors,
+      notify_shift_changes,
+      daily_report_enabled,
+      daily_report_time,
+    });
+
+    if (success) {
+      res.json({ success: true, message: 'Notification preferences saved', data: db.getNotificationsSetup() });
+    } else {
+      throw new Error('Failed to save notification preferences');
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+// Test SMS endpoint
+app.post('/api/test-sms', async (req, res) => {
+  try {
+    const smsRecipients = db.getSmsReportRecipients();
+    
+    if (!smsRecipients || smsRecipients.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No SMS recipients configured',
+        details: 'Please add at least one phone number in Configuration → Setup'
+      });
+    }
+
+    // Send test SMS to first recipient only
+    const testRecipient = smsRecipients[0];
+    const testMessage = `SMS Gateway Test - System working. Time: ${new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}`;
+    
+    const smsSent = await sendSmsViaGateway(testRecipient.phone_number, testMessage);
+    
+    if (smsSent) {
+      res.json({
+        success: true,
+        message: 'Test SMS sent successfully',
+        details: `Sent to ${testRecipient.phone_number}`,
+        recipientCount: smsRecipients.length
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to send test SMS',
+        details: 'Check SMS gateway configuration (URL, API key) and try again'
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: 'SMS test failed',
+      details: error.message 
+    });
+  }
+});
+
+// Test Email endpoint
+app.post('/api/test-email', async (req, res) => {
+  try {
+    const telegramConfig = db.getNotificationConfig();
+
+    const smtpHost = telegramConfig?.email_smtp_host;
+    const smtpPort = Number(telegramConfig?.email_smtp_port) || 587;
+    const smtpUser = telegramConfig?.email_smtp_user;
+    const smtpPass = telegramConfig?.email_smtp_pass;
+    const emailFrom = telegramConfig?.email_from || smtpUser;
+    const encryption = telegramConfig?.email_smtp_encryption || 'auto';
+
+    // Check SMTP credentials
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email SMTP not configured',
+        missingFields: {
+          smtp_host: !smtpHost,
+          smtp_user: !smtpUser,
+          smtp_pass: !smtpPass
+        },
+        details: 'Please configure SMTP credentials in Configuration → Setup'
+      });
+    }
+
+    // Parse recipients properly (stored as JSON string in DB)
+    let recipients = [];
+    try {
+      const raw = telegramConfig.email_recipients;
+      recipients = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+    } catch (e) {
+      recipients = [];
+    }
+
+    if (recipients.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No email recipients configured',
+        details: 'Please add at least one email recipient in Configuration → Setup'
+      });
+    }
+
+    // Build transporter directly so we can return the real SMTP error to the caller
+    const nodemailer = require('nodemailer');
+    let secure = false;
+    let tlsOptions = { rejectUnauthorized: false };
+    if (encryption === 'ssl' || (encryption === 'auto' && smtpPort === 465)) {
+      secure = true;
+    } else if (encryption === 'starttls') {
+      secure = false;
+      tlsOptions = { ...tlsOptions, ciphers: 'SSLv3' };
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure,
+      auth: { user: smtpUser, pass: smtpPass },
+      tls: tlsOptions
+    });
+
+    const testMessage = `Email Gateway Test - System working correctly.\n\nTime: ${new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}\n\nIf you received this, your SMTP settings are correct.`;
+
+    await transporter.sendMail({
+      from: emailFrom,
+      to: recipients.join(','),
+      subject: 'SMS Gateway Test Email',
+      text: testMessage
+    });
+
+    logger.info(`✅ Test email sent to ${recipients.join(', ')}`);
+    res.json({
+      success: true,
+      message: 'Test email sent successfully',
+      details: `Sent to ${recipients.join(', ')}`,
+      recipientCount: recipients.length
+    });
+  } catch (error) {
+    logger.error(`Test email failed: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      error: 'Failed to send test email',
+      details: error.message  // real SMTP/nodemailer error surfaced to frontend
+    });
+  }
+});
+
 app.post('/api/telegram-send', async (req, res) => {
   try {
     const { action, bot_token: overrideBotToken, chat_id: overrideChatId } = req.body;
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
 
     // Allow overriding for testing purposes
     const botToken = overrideBotToken || telegramConfig?.bot_token;
@@ -4396,6 +4774,38 @@ app.get('/api/sms-templates', (req, res) => {
   }
 });
 
+// Notification alert templates endpoints
+app.get('/api/notification-templates', (req, res) => {
+  try {
+    const templates = db.getAllNotificationTemplates();
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/notification-templates/:eventType', (req, res) => {
+  try {
+    const { eventType } = req.params;
+    const allowed = ['missed_call', 'new_sms', 'system_error', 'shift_change', 'daily_report', 'callback_notify',
+    'tg_missed_call', 'tg_new_sms', 'tg_system_error', 'tg_shift_change', 'tg_daily_report',
+    'email_missed_call', 'email_new_sms', 'email_system_error', 'email_shift_change', 'email_daily_report',
+    'sms_callback_notify'];
+    if (!allowed.includes(eventType)) {
+      return res.status(400).json({ success: false, error: 'Invalid event type' });
+    }
+    const { template_text } = req.body;
+    if (typeof template_text !== 'string' || !template_text.trim()) {
+      return res.status(400).json({ success: false, error: 'template_text is required' });
+    }
+    const ok = db.saveNotificationTemplate(eventType, template_text);
+    if (ok) res.json({ success: true });
+    else res.status(500).json({ success: false, error: 'Failed to save template' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post('/api/sms-templates', (req, res) => {
   try {
     const { name, message } = req.body;
@@ -4497,12 +4907,22 @@ app.get('/api/call-auto-sms-config', (req, res) => {
 
 app.post('/api/call-auto-sms-config', (req, res) => {
   try {
-    const { enabled, answered_message, missed_message } = req.body;
+    const { enabled, answered_message, missed_message, delay_enabled, delay_minutes, duplicate_window, allowed_ports, allowed_extensions, call_direction } = req.body;
     if (!answered_message || !missed_message) {
       return res.status(400).json({ success: false, error: 'answered_message and missed_message are required' });
     }
     const success = db.saveCallAutoSmsConfig
-      ? db.saveCallAutoSmsConfig({ enabled: !!enabled, answered_message, missed_message })
+      ? db.saveCallAutoSmsConfig({ 
+          enabled: !!enabled, 
+          answered_message, 
+          missed_message,
+          delay_enabled: delay_enabled !== false,
+          delay_minutes: delay_minutes || 5,
+          duplicate_window: duplicate_window || 10,
+          allowed_ports: allowed_ports || [],
+          allowed_extensions: allowed_extensions || [],
+          call_direction: call_direction || 'both'
+        })
       : false;
     if (!success) {
       return res.status(500).json({ success: false, error: 'Failed to save call auto-SMS config' });
@@ -4552,30 +4972,32 @@ app.post('/api/sms-report-test', async (req, res) => {
 // Manual report generation endpoint
 app.post('/api/manual-report', async (req, res) => {
   try {
-    // Get today's date
     const today = new Date().toISOString().split('T')[0];
+    const telegramConfig = db.getNotificationConfig();
 
-    // === CALL STATISTICS (FROM MIDNIGHT TO NOW TODAY) ===
+    // === CALL STATISTICS ===
     const callStats = db.db.prepare(`
       SELECT 
         COUNT(*) as total_calls,
-        SUM(CASE WHEN status = 'answered' THEN 1 ELSE 0 END) as answered,
-        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as missed,
-        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') AND is_returned = 0 THEN 1 ELSE 0 END) as unreturned_missed,
-        SUM(CASE WHEN status = 'busy' THEN 1 ELSE 0 END) as busy,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN direction = 'inbound' THEN 1 ELSE 0 END) as inbound_calls,
+        SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) as outbound_calls,
+        SUM(CASE WHEN direction = 'internal' THEN 1 ELSE 0 END) as internal_calls,
+        SUM(CASE WHEN direction = 'inbound' AND status = 'answered' THEN 1 ELSE 0 END) as inbound_answered,
+        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') THEN 1 ELSE 0 END) as inbound_missed,
+        SUM(CASE WHEN direction = 'inbound' AND status IN ('missed', 'no-answer', 'noanswer') AND is_returned = 0 THEN 1 ELSE 0 END) as inbound_unreturned,
+        SUM(CASE WHEN direction = 'outbound' AND status = 'answered' THEN 1 ELSE 0 END) as outbound_answered,
+        SUM(CASE WHEN direction = 'outbound' AND status IN ('missed', 'no-answer', 'noanswer', 'failed', 'busy') THEN 1 ELSE 0 END) as outbound_failed,
         COUNT(DISTINCT extension) as total_extensions
       FROM call_records
       WHERE SUBSTR(start_time, 1, 10) = ?
     `).get(today);
 
-    // === SMS STATISTICS (FROM MIDNIGHT TO NOW TODAY) ===
+    // === SMS STATISTICS ===
     const smsStats = db.db.prepare(`
       SELECT COUNT(*) as total_sms FROM sms_messages 
       WHERE SUBSTR(received_at, 1, 10) = ?
     `).get(today);
 
-    // Check if there's any data to report
     const hasCallData = callStats && callStats.total_calls > 0;
     const hasSmsData = smsStats && smsStats.total_sms > 0;
 
@@ -4587,107 +5009,123 @@ app.post('/api/manual-report', async (req, res) => {
     if (hasCallData) {
       messageText += `Total Calls: ${callStats.total_calls}\n`;
       messageText += `Extensions with Calls: ${callStats.total_extensions}\n\n`;
-      messageText += `Call Status Breakdown:\n`;
-      messageText += `[Answered] ${callStats.answered || 0}\n`;
-      messageText += `[Missed] ${callStats.missed || 0}\n`;
-      messageText += `[Unreturned] ${callStats.unreturned_missed || 0}\n`;
-      messageText += `[Returned] ${(callStats.missed || 0) - (callStats.unreturned_missed || 0)}\n`;
-      messageText += `[Busy] ${callStats.busy || 0}\n`;
-      messageText += `[Failed] ${callStats.failed || 0}\n`;
+      
+      messageText += `--- Inbound & Outbound ---\n`;
+      const totalInOut = (callStats.inbound_calls || 0) + (callStats.outbound_calls || 0);
+      const totalAnswered = (callStats.inbound_answered || 0) + (callStats.outbound_answered || 0);
+      const totalLost = (callStats.inbound_missed || 0) + (callStats.outbound_failed || 0);
+      messageText += `[Total] ${totalInOut}\n`;
+      messageText += `[Answered] ${totalAnswered}\n`;
+      messageText += `[Missed/Failed] ${totalLost}\n`;
+      messageText += `[Unreturned] ${callStats.inbound_unreturned || 0}\n`;
+      messageText += `[Returned] ${(callStats.inbound_missed || 0) - (callStats.inbound_unreturned || 0)}\n\n`;
+      
+      messageText += `--- Internal ---\n`;
+      messageText += `[Total] ${callStats.internal_calls || 0}\n`;
     } else {
       messageText += `No calls today.\n`;
     }
 
     messageText += `\n========== SMS ==========\n\n`;
-
-    if (hasSmsData) {
-      messageText += `Total Messages Received: ${smsStats.total_sms}\n`;
-    } else {
-      messageText += `Total Messages Received: 0\n`;
-    }
-
+    messageText += `Total Messages Received: ${hasSmsData ? smsStats.total_sms : 0}\n`;
     messageText += `\n========== END REPORT ==========\n`;
 
-    logger.info('📱 Generating manual report for SMS delivery only...');
+    logger.info('📊 Generating manual report — sending to all configured channels...');
 
-    // Send to SMS recipients only
-    const smsRecipients = db.getSmsReportRecipients();
-    
-    logger.info(`📋 SMS Recipients found: ${smsRecipients?.length || 0}`);
-    if (smsRecipients && smsRecipients.length > 0) {
-      logger.info(`Recipients: ${smsRecipients.map(r => r.phone_number).join(', ')}`);
+    const sendResults = { telegram: false, email: false, sms: { count: 0 } };
+    const channelsSent = [];
+    const channelErrors = [];
+
+    // ========== TELEGRAM ==========
+    if (telegramConfig?.enabled) {
+      if (!telegramConfig?.bot_token || !telegramConfig?.chat_id) {
+        logger.warn('⚠️  Telegram enabled but missing credentials (bot_token or chat_id)');
+        channelErrors.push('Telegram: Missing bot token or chat ID');
+      } else {
+        try {
+          const telegramApiUrl = `https://api.telegram.org/bot${telegramConfig.bot_token}/sendMessage`;
+          const tgResp = await fetch(telegramApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: telegramConfig.chat_id, text: messageText })
+          });
+          const tgJson = await tgResp.json();
+          if (tgResp.ok && tgJson.ok) {
+            sendResults.telegram = true;
+            channelsSent.push('Telegram');
+            logger.info('✅ Manual report sent via Telegram');
+            db.logActivity('manual_report_telegram', 'Manual report sent via Telegram', 'success');
+          } else {
+            logger.error(`Telegram manual report failed: ${tgJson.description || 'Unknown error'}`);
+            channelErrors.push(`Telegram: ${tgJson.description || 'Send failed'}`);
+          }
+        } catch (tgErr) {
+          logger.error(`Telegram manual report exception: ${tgErr.message}`);
+          channelErrors.push(`Telegram: ${tgErr.message}`);
+        }
+      }
+    } else {
+      logger.info('Telegram not enabled — skipping');
     }
-    
-    const sendResults = {
-      sms: { count: 0, recipients: [] }
-    };
 
-    if (!smsRecipients || smsRecipients.length === 0) {
-      logger.warn('⚠️  No SMS recipients configured');
+    // ========== EMAIL ==========
+    if (telegramConfig?.email_enabled) {
+      const emailSent = await sendEmail('Manual System Report', messageText);
+      if (emailSent) {
+        sendResults.email = true;
+        channelsSent.push('Email');
+      } else {
+        logger.warn('Email send returned false (missing SMTP config or recipients)');
+        channelErrors.push('Email: SMTP not configured or no recipients set');
+      }
+    } else {
+      logger.info('Email not enabled — skipping');
+    }
+
+    // ========== SMS ==========
+    if (telegramConfig?.sms_enabled) {
+      const smsRecipients = db.getSmsReportRecipients();
+      if (!smsRecipients || smsRecipients.length === 0) {
+        logger.warn('⚠️  SMS enabled but no recipients configured');
+        channelErrors.push('SMS: No recipients configured');
+      } else {
+        try {
+          const phoneNumbers = smsRecipients.map(r => r.phone_number);
+          logger.info(`📱 Sending manual report via SMS to: ${phoneNumbers.join(', ')}`);
+          const smsSent = await sendSmsReport(phoneNumbers, messageText);
+          if (smsSent) {
+            sendResults.sms.count = smsRecipients.length;
+            channelsSent.push(`SMS (${smsRecipients.length})`);
+            logger.info(`✅ Manual report sent via SMS to ${smsRecipients.length} recipient(s)`);
+          } else {
+            logger.error('❌ SMS bulk send returned false');
+            channelErrors.push('SMS: Send failed');
+          }
+        } catch (smsErr) {
+          logger.error(`SMS manual report exception: ${smsErr.message}`);
+          channelErrors.push(`SMS: ${smsErr.message}`);
+        }
+      }
+    } else {
+      logger.info('SMS not enabled — skipping');
+    }
+
+    if (channelsSent.length === 0) {
+      logger.warn('⚠️  No channels were able to send the manual report. Errors:', channelErrors);
       return res.status(400).json({
         success: false,
-        error: 'No SMS recipients configured. Please add phone numbers to receive reports.'
+        error: 'No notification channels are configured or enabled.',
+        details: channelErrors.length > 0 ? channelErrors.join('; ') : 'Please configure at least one channel: Telegram (bot token + chat ID), Email (SMTP + recipients), or SMS (recipients).'
       });
     }
 
-    logger.info(`📱 Sending manual report via SMS to ${smsRecipients.length} recipient(s)...`);
-    
-    // Extract all phone numbers and send in one request
-    const phoneNumbers = smsRecipients.map(r => r.phone_number);
-    
-    try {
-      logger.info(`→ Sending to all recipients at once: ${phoneNumbers.join(', ')}`);
-      const smsSent = await sendSmsReport(phoneNumbers, messageText);
-      logger.info(`← Bulk SMS Result: ${smsSent ? '✅ Success' : '❌ Failed'}`);
-      
-      if (smsSent) {
-        sendResults.sms.count = smsRecipients.length;
-        smsRecipients.forEach(r => {
-          sendResults.sms.recipients.push({
-            phone: r.phone_number,
-            sent: true
-          });
-        });
-      } else {
-        smsRecipients.forEach(r => {
-          sendResults.sms.recipients.push({
-            phone: r.phone_number,
-            sent: false
-          });
-        });
-      }
-    } catch (error) {
-      logger.error(`Exception during bulk SMS send: ${error.message}`);
-      smsRecipients.forEach(r => {
-        sendResults.sms.recipients.push({
-          phone: r.phone_number,
-          sent: false,
-          error: error.message
-        });
-      });
-    }
-
-    logger.info(`📊 SMS Report Summary - Total Sent: ${sendResults.sms.count}/${smsRecipients.length}`);
-    
-    if (sendResults.sms.count === 0) {
-      logger.error('❌ Failed to send SMS to any recipients');
-      res.status(500).json({
-        success: false,
-        error: 'Failed to send SMS to recipients',
-        sendResults
-      });
-    } else {
-      logger.info(`✅ Manual report successfully sent to ${sendResults.sms.count} recipient(s)`);
-      res.json({
-        success: true,
-        message: `Manual report sent to ${sendResults.sms.count} SMS recipient${sendResults.sms.count !== 1 ? 's' : ''}`,
-        stats: {
-          calls: callStats,
-          sms: smsStats
-        },
-        sendResults
-      });
-    }
+    logger.info(`✅ Manual report delivered via: ${channelsSent.join(', ')}`);
+    res.json({
+      success: true,
+      message: `Report sent via ${channelsSent.join(', ')}`,
+      stats: { calls: callStats, sms: smsStats },
+      sendResults
+    });
   } catch (error) {
     logger.error(`Manual report generation failed: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
@@ -4987,6 +5425,54 @@ app.get('/api/call-records', (req, res) => {
   }
 });
 
+// PUT /api/call-records/:id/callback — mark a missed call as callback attempted
+app.put('/api/call-records/:id/callback', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { callback_attempted, callback_notes } = req.body;
+    const stmt = db.db.prepare(
+      `UPDATE call_records SET is_returned = ?, notes = ? WHERE id = ?`
+    );
+    const result = stmt.run(callback_attempted ? 1 : 0, callback_notes || null, id);
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, error: 'Record not found' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/missed-call-notify — email the admin about a pending missed call
+app.post('/api/missed-call-notify', async (req, res) => {
+  try {
+    const { caller_number, call_id } = req.body;
+    if (!caller_number) {
+      return res.status(400).json({ success: false, error: 'caller_number is required' });
+    }
+
+    const now = new Date().toLocaleString('en-KE', {
+      timeZone: 'Africa/Nairobi', hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+    const templateText = getChannelTemplate('email', 'missed_call')
+      || db.getNotificationTemplate('missed_call')
+      || '\uD83D\uDD14 MISSED CALL ALERT\n\nCaller: {caller}\nTime: {time}\n\nThis call is still pending callback.';
+    const body = applyTemplate(templateText, { caller: caller_number, time: now,
+      extension: '', extension_name: '', date: new Date().toLocaleDateString('en-KE', { timeZone: 'Africa/Nairobi' }), duration: '' });
+
+    const sent = await sendEmail(`Pending Callback: ${caller_number}`, body);
+    if (!sent) {
+      return res.status(500).json({ success: false, error: 'Email not sent — check SMTP settings or enable email notifications' });
+    }
+
+    db.logActivity('callback_email_sent', `Pending callback email sent for ${caller_number}`, 'success');
+    res.json({ success: true, message: `Email notification sent for ${caller_number}` });
+  } catch (error) {
+    logger.error(`missed-call-notify error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/call-stats', (req, res) => {
   try {
     const { extension } = req.query;
@@ -5096,6 +5582,21 @@ app.put('/api/sms-messages/mark-all-read', (req, res) => {
     const changed = db.markAllRead();
     db.logActivity('sms_mark_all_read', `Marked ${changed} messages as read by ${userRole}`, 'success');
     res.json({ success: true, changed });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/sms-messages/all-sent', (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const [userId, userRole] = token.split(':');
+    if (userRole === 'viewer') return res.status(403).json({ success: false, error: 'Forbidden' });
+    const count = db.deleteAllSentSMS();
+    db.logActivity('sms_sent_deleted_all', `All ${count} sent SMS deleted by ${userRole}`, 'success');
+    res.json({ success: true, deleted: count });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -5539,7 +6040,7 @@ app.use((err, req, res, next) => {
 // Test missed call alert
 app.post('/api/test-missed-call-alert', async (req, res) => {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     
     if (!telegramConfig?.enabled || !telegramConfig?.bot_token || !telegramConfig?.chat_id) {
       return res.status(400).json({
@@ -5634,88 +6135,33 @@ app.post('/api/test-missed-call-alert', async (req, res) => {
 });
 
 // ========================================
-// SMS Gateway Automation Endpoints
-// ========================================
-
-
-
-
-
-
-// Get Business Hours for Rule
-app.get('/api/business-hours/:rule_id', (req, res) => {
-  try {
-    const { rule_id } = req.params;
-    const hours = db.db.prepare(`SELECT * FROM business_hours WHERE rule_id = ?`).all(rule_id);
-    const parsed = hours.map(h => ({
-      ...h,
-      days_enabled: JSON.parse(h.days_enabled || '[]')
-    }));
-    res.json({ success: true, data: parsed });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Create Business Hours
-app.post('/api/business-hours', (req, res) => {
-  try {
-    const { rule_id, start_time, end_time, days_enabled } = req.body;
-    if (!rule_id || !start_time || !end_time || !days_enabled) {
-      return res.status(400).json({ success: false, error: 'All fields are required' });
-    }
-
-    const id = crypto.randomBytes(8).toString('hex');
-    const daysJson = JSON.stringify(days_enabled);
-    const stmt = db.db.prepare(`
-      INSERT INTO business_hours (id, rule_id, start_time, end_time, days_enabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `);
-    stmt.run(id, rule_id, start_time, end_time, daysJson);
-
-    const hours = db.db.prepare(`SELECT * FROM business_hours WHERE id = ?`).get(id);
-    res.status(201).json({ success: true, data: { ...hours, days_enabled: JSON.parse(hours.days_enabled) } });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Delete Business Hours
-app.delete('/api/business-hours/:id', requireRole('super_admin', 'admin'), (req, res) => {
-  try {
-    const { id } = req.params;
-    const stmt = db.db.prepare(`DELETE FROM business_hours WHERE id = ?`);
-    const info = stmt.run(id);
-
-    if (info.changes > 0) {
-      res.json({ success: true, message: 'Business hours deleted' });
-    } else {
-      res.status(404).json({ success: false, error: 'Business hours not found' });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ========================================
 // DEBUG ENDPOINTS - Missed Call Alert Diagnostics
 // ========================================
 
-// DEBUG: Check Telegram configuration
-app.get('/api/debug/telegram-config', (req, res) => {
+// DEBUG: Check channel + notification configuration
+app.get('/api/debug/notification-config', (req, res) => {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const channelConfig = db.getChannelConfig();
+    const notifSetup = db.getNotificationsSetup();
     res.json({
       success: true,
-      config: {
-        enabled: telegramConfig?.enabled || 0,
-        bot_token: telegramConfig?.bot_token ? '***' + telegramConfig.bot_token.slice(-4) : 'NOT SET',
-        chat_id: telegramConfig?.chat_id || 'NOT SET',
-        created_at: telegramConfig?.created_at,
-        updated_at: telegramConfig?.updated_at
+      channel_credentials: {
+        bot_token: channelConfig?.bot_token ? '***' + channelConfig.bot_token.slice(-4) : 'NOT SET',
+        chat_id: channelConfig?.chat_id || 'NOT SET',
+        smtp_configured: !!(channelConfig?.email_smtp_host && channelConfig?.email_smtp_user && channelConfig?.email_smtp_pass),
+        updated_at: channelConfig?.updated_at,
       },
-      configOK: !!(telegramConfig?.enabled && telegramConfig?.bot_token && telegramConfig?.chat_id),
-      note: 'enabled flag must be 1 or true for alerts to work'
+      notification_preferences: {
+        telegram_enabled: notifSetup?.telegram_enabled || 0,
+        email_enabled: notifSetup?.email_enabled || 0,
+        notify_missed_calls: notifSetup?.notify_missed_calls ?? 1,
+        notify_new_sms: notifSetup?.notify_new_sms || 0,
+        notify_system_errors: notifSetup?.notify_system_errors ?? 1,
+        daily_report_enabled: notifSetup?.daily_report_enabled || 0,
+        daily_report_time: notifSetup?.daily_report_time || '18:00',
+      },
+      configOK: !!(notifSetup?.telegram_enabled && channelConfig?.bot_token && channelConfig?.chat_id),
+      note: 'telegram_enabled flag in notification_preferences must be 1 for alerts to work',
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -5725,7 +6171,7 @@ app.get('/api/debug/telegram-config', (req, res) => {
 // DEBUG: Check recent missed calls in database
 app.get('/api/debug/missed-calls', (req, res) => {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     const startTime = telegramConfig?.updated_at || telegramConfig?.created_at || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
     // Get missed calls from multiple status values
@@ -5848,7 +6294,7 @@ app.get('/api/debug/error-alerts', (req, res) => {
       LIMIT 30
     `).all();
 
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
 
     res.json({
       success: true,
@@ -5960,7 +6406,7 @@ app.post('/api/debug/reset-notifications', async (req, res) => {
 // DEBUG: Check which missed calls have already been notified
 app.get('/api/debug/notified-calls', (req, res) => {
   try {
-    const telegramConfig = db.getTelegramConfig();
+    const telegramConfig = db.getNotificationConfig();
     const startTime = telegramConfig?.updated_at || telegramConfig?.created_at || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
     // Get all missed calls
@@ -6446,6 +6892,14 @@ const buildShiftAlertMessage = (payload = {}) => {
 
   const action = payload.action || 'shift_update';
 
+  // Use custom DB template if one has been configured (Telegram channel)
+  const shiftTemplate = getChannelTemplate('tg', 'shift_change');
+  if (shiftTemplate) {
+    const agentName = payload.agent_name || payload.requester_name ||
+      payload.original_agent_name || payload.new_agent_name || '-';
+    return applyTemplate(shiftTemplate, { action, agent: agentName, time: now, ...payload });
+  }
+
   if (payload.message) return payload.message;
 
   switch (action) {
@@ -6471,7 +6925,7 @@ const buildShiftAlertMessage = (payload = {}) => {
 };
 
 const dispatchShiftTelegramAlert = async (payload = {}) => {
-  const telegramConfig = db.getTelegramConfig();
+  const telegramConfig = db.getNotificationConfig();
 
   if (!telegramConfig?.enabled || !telegramConfig?.bot_token) {
     return { sent: false, reason: 'telegram_disabled_or_unconfigured' };
@@ -7019,6 +7473,10 @@ app.post('/api/system/update', (req, res) => {
   });
 
   (async () => {
+    const fs = require('fs');
+    const dbPath = path.join(projectDir, 'public/local-agent/sms.db');
+    const dbBackup = '/tmp/sms.db.update-backup';
+
     try {
       await runStep(`git fetch "${authUrl}" ${branch}`, `Fetching branch "${branch}"`);
 
@@ -7029,7 +7487,20 @@ app.post('/api/system/update', (req, res) => {
         pkgChanged = diffOut.trim().length > 0;
       } catch { pkgChanged = true; }
 
+      // Preserve live database before git reset (git reset --hard overwrites tracked files)
+      if (fs.existsSync(dbPath)) {
+        fs.copyFileSync(dbPath, dbBackup);
+        addLog(`[${new Date().toISOString()}] 💾 Database backed up before reset`);
+      }
+
       await runStep('git reset --hard FETCH_HEAD', 'Applying update');
+
+      // Restore live database after git reset
+      if (fs.existsSync(dbBackup)) {
+        fs.copyFileSync(dbBackup, dbPath);
+        fs.unlinkSync(dbBackup);
+        addLog(`[${new Date().toISOString()}] 💾 Database restored`);
+      }
 
       if (pkgChanged) {
         addLog(`[${new Date().toISOString()}] ▶ package.json changed — installing dependencies`);
@@ -7040,13 +7511,25 @@ app.post('/api/system/update', (req, res) => {
 
       await runStep('npm run build 2>&1', 'Building application');
 
-      addLog(`[${new Date().toISOString()}] ✅ Update complete! Restart the service to apply runtime changes.`);
+      addLog(`[${new Date().toISOString()}] ✅ Update complete! Reloading service to apply new code and run any database migrations...`);
       db.logActivity('system_update', `System updated to ${branch}`, 'success');
       updateState.running = false;
       updateState.exitCode = 0;
       updateState.lastCompletedAt = new Date().toISOString();
       updateState.updateAvailable = false;
+
+      // Reload PM2 processes so new code takes effect and runMigrations() fires automatically
+      // Short delay so the status writes above are visible on one last frontend poll
+      setTimeout(() => {
+        try { execSync('pm2 reload api-server --update-env', { stdio: 'ignore' }); } catch (e) {}
+        try { execSync('pm2 reload tg400-agent --update-env', { stdio: 'ignore' }); } catch (e) {}
+      }, 500);
     } catch (err) {
+      // Always restore DB even when the update fails mid-way
+      if (fs.existsSync(dbBackup)) {
+        try { fs.copyFileSync(dbBackup, dbPath); fs.unlinkSync(dbBackup); } catch (e) {}
+        addLog(`[${new Date().toISOString()}] 💾 Database restored after failed update`);
+      }
       addLog(`[${new Date().toISOString()}] ✖ Update failed: ${redactUpdateSecrets(err.message)}`);
       db.logActivity('system_update', `System update failed: ${redactUpdateSecrets(err.message)}`, 'error');
       updateState.running = false;

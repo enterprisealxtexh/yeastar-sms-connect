@@ -122,21 +122,6 @@ class SMSDatabase {
       CREATE INDEX IF NOT EXISTS idx_sim_port_number ON sim_port_config(port_number);
     `);
 
-    // SMS Sent Deduplication table - track sent SMS to prevent duplicates within 24 hours
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sms_sent_log (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        phone_number TEXT NOT NULL,
-        message_hash TEXT NOT NULL,
-        last_sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      CREATE INDEX IF NOT EXISTS idx_sms_sent_phone ON sms_sent_log(phone_number);
-      CREATE INDEX IF NOT EXISTS idx_sms_sent_last_time ON sms_sent_log(last_sent_at DESC);
-    `);
-
     // Call records table (CDR)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS call_records (
@@ -270,28 +255,39 @@ class SMSDatabase {
       );
     `);
 
-    // Telegram configuration table
+    // Channel credentials table — Telegram bot token/chat ID + email SMTP settings ONLY.
+    // Notification delivery preferences (toggles) live in notifications_setup below.
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS telegram_config (
+      CREATE TABLE IF NOT EXISTS notification_configurations (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        bot_token TEXT,
-        chat_id TEXT,
-        enabled BOOLEAN DEFAULT 0,
-        email_enabled BOOLEAN DEFAULT 0,
-        email_recipients TEXT DEFAULT '[]',
+        bot_token TEXT DEFAULT '',
+        chat_id TEXT DEFAULT '',
         email_smtp_host TEXT DEFAULT '',
         email_smtp_port INTEGER DEFAULT 587,
         email_smtp_user TEXT DEFAULT '',
         email_smtp_pass TEXT DEFAULT '',
         email_from TEXT DEFAULT '',
-        sms_enabled BOOLEAN DEFAULT 1,
+        email_recipients TEXT DEFAULT '[]',
+        email_smtp_encryption TEXT DEFAULT 'auto',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Notification preferences table — all delivery toggles and scheduling settings.
+    // Completely separate from channel credentials so saving preferences never wipes credentials.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS notifications_setup (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        telegram_enabled BOOLEAN DEFAULT 0,
+        email_enabled BOOLEAN DEFAULT 0,
+        sms_reports_enabled BOOLEAN DEFAULT 1,
         notify_missed_calls BOOLEAN DEFAULT 1,
         notify_new_sms BOOLEAN DEFAULT 0,
         notify_system_errors BOOLEAN DEFAULT 1,
         notify_shift_changes BOOLEAN DEFAULT 1,
         daily_report_enabled BOOLEAN DEFAULT 0,
         daily_report_time TEXT DEFAULT '18:00',
-        is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -339,17 +335,6 @@ class SMSDatabase {
       CREATE INDEX IF NOT EXISTS idx_pbx_ext_status ON pbx_extensions(status);
     `);
 
-    // SMS Gateway URLs table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sms_gateways (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        url TEXT NOT NULL UNIQUE,
-        active BOOLEAN DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
     // SMS Templates table
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sms_templates (
@@ -362,35 +347,12 @@ class SMSDatabase {
       );
     `);
 
-    // Missed Call Rules table (many-to-many with extensions)
+    // Notification Alert Templates table (per event-type, shared across channels)
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS missed_call_rules (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        extensions TEXT NOT NULL,
-        threshold INTEGER NOT NULL DEFAULT 3,
-        template_id TEXT NOT NULL,
-        gateway_id TEXT NOT NULL,
-        active BOOLEAN DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (template_id) REFERENCES sms_templates(id) ON DELETE CASCADE,
-        FOREIGN KEY (gateway_id) REFERENCES sms_gateways(id) ON DELETE CASCADE
-      );
-      
-      CREATE INDEX IF NOT EXISTS idx_missed_call_active ON missed_call_rules(active);
-    `);
-
-    // Business Hours table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS business_hours (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        rule_id TEXT NOT NULL,
-        start_time TEXT NOT NULL,
-        end_time TEXT NOT NULL,
-        days_enabled TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (rule_id) REFERENCES missed_call_rules(id) ON DELETE CASCADE
+      CREATE TABLE IF NOT EXISTS notification_templates (
+        event_type TEXT PRIMARY KEY,
+        template_text TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
@@ -447,6 +409,10 @@ class SMSDatabase {
         enabled BOOLEAN DEFAULT 0,
         answered_message TEXT DEFAULT '',
         missed_message TEXT DEFAULT '',
+        delay_enabled BOOLEAN DEFAULT 1,
+        delay_minutes INTEGER DEFAULT 5,
+        duplicate_window INTEGER DEFAULT 10,
+        allowed_ports TEXT DEFAULT '[]',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -604,34 +570,32 @@ class SMSDatabase {
     const callAutoSmsCount = this.db.prepare('SELECT COUNT(*) as cnt FROM call_auto_sms_config').get().cnt;
     if (callAutoSmsCount === 0) {
       this.db.prepare(
-        'INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message) VALUES (?, ?, ?)'
+        'INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message, delay_enabled, delay_minutes, allowed_ports) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(
         0,
         'Thank you for calling us! We appreciate your business and are here to help anytime.',
-        "We missed your call! Sorry we couldn't answer. We'll get back to you shortly. Your call is important to us."
+        "We missed your call! Sorry we couldn't answer. We'll get back to you shortly. Your call is important to us.",
+        1,
+        5,
+        JSON.stringify([1,2,3,4])
       );
     }
 
-    // Insert default Telegram config if empty
-    const telegramCount = this.db.prepare('SELECT COUNT(*) as cnt FROM telegram_config').get().cnt;
-    if (telegramCount === 0) {
+    // Insert default channel credentials if empty
+    const notificationCfgCount = this.db.prepare('SELECT COUNT(*) as cnt FROM notification_configurations').get().cnt;
+    if (notificationCfgCount === 0) {
       this.db.prepare(`
-        INSERT INTO telegram_config (
-          bot_token,
-          chat_id,
-          enabled,
-          email_enabled,
-          email_recipients,
-          sms_enabled,
-          notify_missed_calls,
-          notify_new_sms,
-          notify_system_errors,
-          notify_shift_changes,
-          daily_report_enabled,
-          daily_report_time,
-          is_active
-        )
-        VALUES ('', '', 0, 0, '[]', 1, 1, 0, 1, 1, 0, '18:00', 1)
+        INSERT INTO notification_configurations (bot_token, chat_id, email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass, email_from, email_recipients, email_smtp_encryption)
+        VALUES ('', '', '', 587, '', '', '', '[]', 'auto')
+      `).run();
+    }
+
+    // Insert default notification preferences if empty
+    const notifSetupCount = this.db.prepare('SELECT COUNT(*) as cnt FROM notifications_setup').get().cnt;
+    if (notifSetupCount === 0) {
+      this.db.prepare(`
+        INSERT INTO notifications_setup (telegram_enabled, email_enabled, sms_reports_enabled, notify_missed_calls, notify_new_sms, notify_system_errors, notify_shift_changes, daily_report_enabled, daily_report_time)
+        VALUES (0, 0, 1, 1, 0, 1, 1, 0, '18:00')
       `).run();
     }
   }
@@ -672,53 +636,155 @@ class SMSDatabase {
         }
       }
       
-      // Migration: Add is_returned column to call_records if it doesn't exist
+      // Drop removed tables from existing databases
+      try {
+        this.db.exec(`DROP TABLE IF EXISTS business_hours`);
+        this.db.exec(`DROP TABLE IF EXISTS missed_call_rules`);
+        this.db.exec(`DROP TABLE IF EXISTS sms_gateways`);
+        this.db.exec(`DROP TABLE IF EXISTS sms_sent_log`);
+      } catch (e) {
+        logger.warn(`⚠️  Cleanup migration failed: ${e.message}`);
+      }
+
+      // Migration: Add missing columns to call_records (older DBs may lack these)
       const callTableInfo = this.db.prepare(`PRAGMA table_info(call_records)`).all();
-      const hasIsReturnedColumn = callTableInfo.some(col => col.name === 'is_returned');
-      
-      if (!hasIsReturnedColumn) {
-        const logger = require('./logger.cjs');
-        logger.info('🔄 Migrating: Adding is_returned column to call_records table...');
-        try {
-          this.db.exec(`ALTER TABLE call_records ADD COLUMN is_returned INTEGER DEFAULT 0`);
-          logger.info('✅ Migration complete: is_returned column added');
-        } catch (e) {
-          if (!e.message.includes('duplicate column name')) {
-            throw e;
+      const callColumns = new Set(callTableInfo.map(col => col.name));
+      const callRecordColumnMigrations = [
+        { name: 'caller_number',   ddl: 'ALTER TABLE call_records ADD COLUMN caller_number TEXT' },
+        { name: 'callee_number',   ddl: 'ALTER TABLE call_records ADD COLUMN callee_number TEXT' },
+        { name: 'caller_name',     ddl: 'ALTER TABLE call_records ADD COLUMN caller_name TEXT' },
+        { name: 'callee_name',     ddl: 'ALTER TABLE call_records ADD COLUMN callee_name TEXT' },
+        { name: 'direction',       ddl: 'ALTER TABLE call_records ADD COLUMN direction TEXT' },
+        { name: 'status',          ddl: 'ALTER TABLE call_records ADD COLUMN status TEXT' },
+        { name: 'sim_port',        ddl: 'ALTER TABLE call_records ADD COLUMN sim_port INTEGER' },
+        { name: 'extension',       ddl: 'ALTER TABLE call_records ADD COLUMN extension TEXT' },
+        { name: 'answer_time',     ddl: 'ALTER TABLE call_records ADD COLUMN answer_time DATETIME' },
+        { name: 'ring_duration',   ddl: 'ALTER TABLE call_records ADD COLUMN ring_duration INTEGER' },
+        { name: 'talk_duration',   ddl: 'ALTER TABLE call_records ADD COLUMN talk_duration INTEGER' },
+        { name: 'hold_duration',   ddl: 'ALTER TABLE call_records ADD COLUMN hold_duration INTEGER' },
+        { name: 'total_duration',  ddl: 'ALTER TABLE call_records ADD COLUMN total_duration INTEGER' },
+        { name: 'recording_url',   ddl: 'ALTER TABLE call_records ADD COLUMN recording_url TEXT' },
+        { name: 'transfer_to',     ddl: 'ALTER TABLE call_records ADD COLUMN transfer_to TEXT' },
+        { name: 'metadata',        ddl: 'ALTER TABLE call_records ADD COLUMN metadata TEXT' },
+        { name: 'is_returned',     ddl: 'ALTER TABLE call_records ADD COLUMN is_returned INTEGER DEFAULT 0' },
+      ];
+      for (const migration of callRecordColumnMigrations) {
+        if (!callColumns.has(migration.name)) {
+          logger.info(`🔄 Migrating: Adding ${migration.name} column to call_records...`);
+          try {
+            this.db.exec(migration.ddl);
+            logger.info(`✅ Migration complete: call_records.${migration.name} added`);
+          } catch (e) {
+            if (!e.message.includes('duplicate column name')) {
+              logger.warn(`⚠️  Could not add call_records.${migration.name}: ${e.message}`);
+            }
           }
         }
       }
 
-      // Migration: Add notification settings columns to telegram_config
-      const telegramTableInfo = this.db.prepare(`PRAGMA table_info(telegram_config)`).all();
-      const telegramColumns = new Set(telegramTableInfo.map(col => col.name));
-      const telegramColumnMigrations = [
-        { name: 'email_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN email_enabled BOOLEAN DEFAULT 0' },
-        { name: 'email_recipients', ddl: "ALTER TABLE telegram_config ADD COLUMN email_recipients TEXT DEFAULT '[]'" },
-        { name: 'sms_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN sms_enabled BOOLEAN DEFAULT 1' },
-        { name: 'notify_missed_calls', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_missed_calls BOOLEAN DEFAULT 1' },
-        { name: 'notify_new_sms', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_new_sms BOOLEAN DEFAULT 0' },
-        { name: 'notify_system_errors', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_system_errors BOOLEAN DEFAULT 1' },
-        { name: 'notify_shift_changes', ddl: 'ALTER TABLE telegram_config ADD COLUMN notify_shift_changes BOOLEAN DEFAULT 1' },
-        { name: 'daily_report_enabled', ddl: 'ALTER TABLE telegram_config ADD COLUMN daily_report_enabled BOOLEAN DEFAULT 0' },
-        { name: 'daily_report_time', ddl: "ALTER TABLE telegram_config ADD COLUMN daily_report_time TEXT DEFAULT '18:00'" },
-        { name: 'email_smtp_host', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_host TEXT DEFAULT ''" },
-        { name: 'email_smtp_port', ddl: 'ALTER TABLE telegram_config ADD COLUMN email_smtp_port INTEGER DEFAULT 587' },
-        { name: 'email_smtp_user', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_user TEXT DEFAULT ''" },
-        { name: 'email_smtp_pass', ddl: "ALTER TABLE telegram_config ADD COLUMN email_smtp_pass TEXT DEFAULT ''" },
-        { name: 'email_from', ddl: "ALTER TABLE telegram_config ADD COLUMN email_from TEXT DEFAULT ''" }
-      ];
+      // Migration: Split notification_configurations into credentials + notifications_setup.
+      // This ensures saving Notifications page preferences never touches channel credentials and vice-versa.
+      try {
+        // Create notifications_setup if this is an older DB that doesn't have it yet
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS notifications_setup (
+            id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+            telegram_enabled BOOLEAN DEFAULT 0,
+            email_enabled BOOLEAN DEFAULT 0,
+            sms_reports_enabled BOOLEAN DEFAULT 1,
+            notify_missed_calls BOOLEAN DEFAULT 1,
+            notify_new_sms BOOLEAN DEFAULT 0,
+            notify_system_errors BOOLEAN DEFAULT 1,
+            notify_shift_changes BOOLEAN DEFAULT 1,
+            daily_report_enabled BOOLEAN DEFAULT 0,
+            daily_report_time TEXT DEFAULT '18:00',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
 
-      for (const migration of telegramColumnMigrations) {
-        if (!telegramColumns.has(migration.name)) {
-          try {
-            this.db.exec(migration.ddl);
-          } catch (e) {
-            if (!e.message.includes('duplicate column name')) {
-              throw e;
+        const notifSetupCount = this.db.prepare('SELECT COUNT(*) as cnt FROM notifications_setup').get().cnt;
+        if (notifSetupCount === 0) {
+          // Seed notifications_setup from legacy notification_configurations toggle columns (if they exist)
+          const legacyCols = new Set(this.db.prepare(`PRAGMA table_info(notification_configurations)`).all().map(c => c.name));
+          const legacy = this.db.prepare('SELECT * FROM notification_configurations LIMIT 1').get() || {};
+
+          const tgEnabled    = legacyCols.has('enabled')              ? (legacy.enabled ? 1 : 0)              : 0;
+          const emailEnabled = legacyCols.has('email_enabled')        ? (legacy.email_enabled ? 1 : 0)        : 0;
+          const smsReports   = legacyCols.has('sms_enabled')          ? (legacy.sms_enabled !== undefined ? (legacy.sms_enabled ? 1 : 0) : 1) : 1;
+          const missedCalls  = legacyCols.has('notify_missed_calls')  ? (legacy.notify_missed_calls !== undefined ? (legacy.notify_missed_calls ? 1 : 0) : 1) : 1;
+          const newSms       = legacyCols.has('notify_new_sms')       ? (legacy.notify_new_sms ? 1 : 0)       : 0;
+          const sysErrors    = legacyCols.has('notify_system_errors') ? (legacy.notify_system_errors !== undefined ? (legacy.notify_system_errors ? 1 : 0) : 1) : 1;
+          const shiftChgs    = legacyCols.has('notify_shift_changes') ? (legacy.notify_shift_changes !== undefined ? (legacy.notify_shift_changes ? 1 : 0) : 1) : 1;
+          const dailyReport  = legacyCols.has('daily_report_enabled') ? (legacy.daily_report_enabled ? 1 : 0) : 0;
+          const reportTime   = legacyCols.has('daily_report_time')    ? (legacy.daily_report_time || '18:00')  : '18:00';
+
+          this.db.prepare(`
+            INSERT INTO notifications_setup
+              (telegram_enabled, email_enabled, sms_reports_enabled, notify_missed_calls, notify_new_sms, notify_system_errors, notify_shift_changes, daily_report_enabled, daily_report_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(tgEnabled, emailEnabled, smsReports, missedCalls, newSms, sysErrors, shiftChgs, dailyReport, reportTime);
+          logger.info('✅ Migration: seeded notifications_setup from legacy notification_configurations');
+        }
+
+        // Remove legacy toggle/preference columns from notification_configurations so it is credentials-only.
+        // ALTER TABLE DROP COLUMN requires SQLite ≥ 3.35 — wrapped in try/catch for older builds.
+        const legacyDropCols = ['enabled', 'email_enabled', 'sms_enabled', 'notify_missed_calls', 'notify_new_sms', 'notify_system_errors', 'notify_shift_changes', 'daily_report_enabled', 'daily_report_time', 'is_active'];
+        const currentCols = new Set(this.db.prepare(`PRAGMA table_info(notification_configurations)`).all().map(c => c.name));
+        for (const col of legacyDropCols) {
+          if (currentCols.has(col)) {
+            try {
+              this.db.exec(`ALTER TABLE notification_configurations DROP COLUMN ${col}`);
+              logger.info(`✅ Migration: dropped legacy column notification_configurations.${col}`);
+            } catch (e) {
+              if (!e.message.includes('no such column') && !e.message.includes('syntax error')) {
+                logger.warn(`⚠️  Could not drop notification_configurations.${col} (SQLite < 3.35?): ${e.message}`);
+              }
             }
           }
         }
+
+        // Ensure new credential table has all expected columns
+        const credCols = new Set(this.db.prepare(`PRAGMA table_info(notification_configurations)`).all().map(c => c.name));
+        const credMigrations = [
+          { name: 'email_smtp_host',       ddl: "ALTER TABLE notification_configurations ADD COLUMN email_smtp_host TEXT DEFAULT ''" },
+          { name: 'email_smtp_port',       ddl: 'ALTER TABLE notification_configurations ADD COLUMN email_smtp_port INTEGER DEFAULT 587' },
+          { name: 'email_smtp_user',       ddl: "ALTER TABLE notification_configurations ADD COLUMN email_smtp_user TEXT DEFAULT ''" },
+          { name: 'email_smtp_pass',       ddl: "ALTER TABLE notification_configurations ADD COLUMN email_smtp_pass TEXT DEFAULT ''" },
+          { name: 'email_from',            ddl: "ALTER TABLE notification_configurations ADD COLUMN email_from TEXT DEFAULT ''" },
+          { name: 'email_recipients',      ddl: "ALTER TABLE notification_configurations ADD COLUMN email_recipients TEXT DEFAULT '[]'" },
+          { name: 'email_smtp_encryption', ddl: "ALTER TABLE notification_configurations ADD COLUMN email_smtp_encryption TEXT DEFAULT 'auto'" },
+        ];
+        for (const m of credMigrations) {
+          if (!credCols.has(m.name)) {
+            try { this.db.exec(m.ddl); logger.info(`✅ Migration: notification_configurations.${m.name} added`); } catch(e) {}
+          }
+        }
+      } catch (e) {
+        logger.warn(`⚠️  notifications_setup migration failed: ${e.message}`);
+      }
+      // Migration: also drop legacy telegram_config table if it still exists
+      try {
+        const legacyTelegramExists = !!this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_config' LIMIT 1`).get();
+        if (legacyTelegramExists) {
+          // Seed credentials from legacy table first if notification_configurations is still empty
+          const credCount = this.db.prepare('SELECT COUNT(*) as cnt FROM notification_configurations').get().cnt;
+          if (credCount === 0) {
+            const legacyRow = this.db.prepare('SELECT * FROM telegram_config LIMIT 1').get();
+            if (legacyRow) {
+              this.db.prepare(`INSERT INTO notification_configurations (bot_token, chat_id, email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass, email_from, email_recipients, email_smtp_encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+                legacyRow.bot_token || '', legacyRow.chat_id || '', legacyRow.email_smtp_host || '',
+                legacyRow.email_smtp_port || 587, legacyRow.email_smtp_user || '',
+                legacyRow.email_smtp_pass || '', legacyRow.email_from || '',
+                legacyRow.email_recipients || '[]', legacyRow.email_smtp_encryption || 'auto'
+              );
+            }
+          }
+          this.db.exec('DROP TABLE IF EXISTS telegram_config');
+          logger.info('✅ Migration: dropped legacy telegram_config table');
+        }
+      } catch (e) {
+        logger.warn(`⚠️  telegram_config cleanup migration failed: ${e.message}`);
       }
 
       // Migration: Clean up activity_logs with invalid sim_port values (not 1-4 and not null)
@@ -733,6 +799,41 @@ class SMSDatabase {
         }
       } catch (e) {
         // ignore if table doesn't exist yet
+      }
+
+      // Migration: Add missing columns to call_auto_sms_config (added after initial schema)
+      try {
+        const callSmsInfo = this.db.prepare(`PRAGMA table_info(call_auto_sms_config)`).all();
+        const colNames = callSmsInfo.map(c => c.name);
+        if (!colNames.includes('delay_enabled'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN delay_enabled BOOLEAN DEFAULT 1`);
+        if (!colNames.includes('delay_minutes'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN delay_minutes INTEGER DEFAULT 5`);
+        if (!colNames.includes('duplicate_window'))     this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN duplicate_window INTEGER DEFAULT 10`);
+        if (!colNames.includes('allowed_ports'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN allowed_ports TEXT DEFAULT '[]'`);
+        if (!colNames.includes('allowed_extensions'))   this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN allowed_extensions TEXT DEFAULT '[]'`);
+        if (!colNames.includes('call_direction'))       this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN call_direction TEXT DEFAULT 'both'`);
+      } catch (e) {
+        // ignore
+      }
+
+      // Migration: Seed default notification templates if none exist
+      try {
+        const tplCount = this.db.prepare('SELECT COUNT(*) as cnt FROM notification_templates').get().cnt;
+        if (tplCount === 0) {
+          const defaultTemplates = [
+            { event_type: 'missed_call',   template_text: '\uD83D\uDD14 MISSED CALL ALERT\n\nCaller: {caller}\nExtension: {extension} ({extension_name})\nTime: {time}\nDate: {date}\nRing Duration: {duration}s' },
+            { event_type: 'new_sms',       template_text: '\uD83D\uDCAC NEW SMS RECEIVED\n\nFrom: {caller}\nPort: {port}\nTime: {time}\nMessage: {message}' },
+            { event_type: 'system_error',  template_text: '\u26A0\uFE0F SYSTEM ERROR\n\nType: {error_type}\nMessage: {error_message}\nTime: {time}' },
+            { event_type: 'shift_change',  template_text: '\uD83D\uDCCB SHIFT UPDATE\n\nAction: {action}\nAgent: {agent}\nTime: {time}' },
+            { event_type: 'daily_report',      template_text: 'DAILY SYSTEM REPORT\n\nDate: {date}\nGenerated: {time}' },
+            { event_type: 'callback_notify',    template_text: 'Hi {caller}, we noticed we missed your call at {time}. We will get back to you shortly. Thank you for your patience.' },
+          ];
+          const ins = this.db.prepare('INSERT INTO notification_templates (event_type, template_text) VALUES (?, ?)');
+          for (const t of defaultTemplates) {
+            try { ins.run(t.event_type, t.template_text); } catch (e) { /* already exists */ }
+          }
+        }
+      } catch (e) {
+        // table may not exist yet on very first run; handled by CREATE TABLE above
       }
 
       // Migration: Ensure agent_shifts uses `agent_id` column (older DBs used `user_id`)
@@ -868,15 +969,172 @@ class SMSDatabase {
     }
   }
 
-  getTelegramConfig() {
+  // ── Channel Credentials (Telegram bot + Email SMTP) ─────────────────────────
+  // Returns only the credential fields stored in notification_configurations.
+  getChannelConfig() {
     try {
-      const stmt = this.db.prepare('SELECT * FROM telegram_config LIMIT 1');
-      return stmt.get();
+      return this.db.prepare('SELECT * FROM notification_configurations LIMIT 1').get() || null;
     } catch (error) {
-      console.error('Error getting Telegram config:', error.message);
+      console.error('Error getting channel config:', error.message);
       return null;
     }
   }
+
+  saveChannelConfig(config) {
+    try {
+      const current = this.db.prepare('SELECT * FROM notification_configurations LIMIT 1').get() || {};
+
+      const valCred = (incoming, stored, fallback) =>
+        (incoming !== undefined && incoming !== null && incoming !== '')
+          ? incoming
+          : (stored !== undefined && stored !== null && stored !== '' ? stored : fallback);
+      const val = (incoming, stored, fallback) =>
+        incoming !== undefined && incoming !== null ? incoming : (stored !== undefined && stored !== null ? stored : fallback);
+
+      const bot_token            = valCred(config.bot_token,            current.bot_token,            '');
+      const chat_id              = valCred(config.chat_id,              current.chat_id,              '');
+      const email_smtp_host      = valCred(config.email_smtp_host,      current.email_smtp_host,      '');
+      const email_smtp_port      = config.email_smtp_port !== undefined ? config.email_smtp_port : (current.email_smtp_port || 587);
+      const email_smtp_user      = valCred(config.email_smtp_user,      current.email_smtp_user,      '');
+      const email_smtp_pass      = valCred(config.email_smtp_pass,      current.email_smtp_pass,      '');
+      const email_from           = val(config.email_from,               current.email_from,           '');
+      const email_smtp_encryption = val(config.email_smtp_encryption,   current.email_smtp_encryption,'auto');
+
+      let email_recipients = current.email_recipients || '[]';
+      if (config.email_recipients !== undefined) {
+        email_recipients = JSON.stringify(Array.isArray(config.email_recipients) ? config.email_recipients : []);
+      }
+
+      if (current.id) {
+        this.db.prepare(`
+          UPDATE notification_configurations SET
+            bot_token = ?, chat_id = ?,
+            email_smtp_host = ?, email_smtp_port = ?, email_smtp_user = ?, email_smtp_pass = ?,
+            email_from = ?, email_recipients = ?, email_smtp_encryption = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(bot_token, chat_id, email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass,
+               email_from, email_recipients, email_smtp_encryption, current.id);
+      } else {
+        this.db.prepare(`
+          INSERT INTO notification_configurations (bot_token, chat_id, email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass, email_from, email_recipients, email_smtp_encryption)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(bot_token, chat_id, email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass,
+               email_from, email_recipients, email_smtp_encryption);
+      }
+
+      this.logActivity('channel_config_updated', 'Channel credentials saved', 'success');
+      return true;
+    } catch (error) {
+      console.error('Error saving channel config:', error.message);
+      return false;
+    }
+  }
+
+  // ── Notification Preferences (delivery toggles + schedule) ──────────────────
+  getNotificationsSetup() {
+    try {
+      return this.db.prepare('SELECT * FROM notifications_setup LIMIT 1').get() || null;
+    } catch (error) {
+      console.error('Error getting notifications setup:', error.message);
+      return null;
+    }
+  }
+
+  saveNotificationsSetup(config) {
+    try {
+      const current = this.db.prepare('SELECT * FROM notifications_setup LIMIT 1').get() || {};
+      const b = (v, fallback = 0) => (v !== undefined ? (v ? 1 : 0) : fallback);
+      const s = (v, fallback) => (v !== undefined && v !== null ? v : fallback);
+
+      const telegram_enabled   = b(config.telegram_enabled,   current.telegram_enabled   ?? 0);
+      const email_enabled      = b(config.email_enabled,       current.email_enabled      ?? 0);
+      const sms_reports_enabled = b(config.sms_reports_enabled, current.sms_reports_enabled ?? 1);
+      const notify_missed_calls = b(config.notify_missed_calls, current.notify_missed_calls ?? 1);
+      const notify_new_sms      = b(config.notify_new_sms,      current.notify_new_sms     ?? 0);
+      const notify_system_errors = b(config.notify_system_errors, current.notify_system_errors ?? 1);
+      const notify_shift_changes = b(config.notify_shift_changes, current.notify_shift_changes ?? 1);
+      const daily_report_enabled = b(config.daily_report_enabled, current.daily_report_enabled ?? 0);
+      const daily_report_time    = s(config.daily_report_time, current.daily_report_time || '18:00');
+
+      if (current.id) {
+        this.db.prepare(`
+          UPDATE notifications_setup SET
+            telegram_enabled = ?, email_enabled = ?, sms_reports_enabled = ?,
+            notify_missed_calls = ?, notify_new_sms = ?, notify_system_errors = ?,
+            notify_shift_changes = ?, daily_report_enabled = ?, daily_report_time = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(telegram_enabled, email_enabled, sms_reports_enabled, notify_missed_calls,
+               notify_new_sms, notify_system_errors, notify_shift_changes,
+               daily_report_enabled, daily_report_time, current.id);
+      } else {
+        this.db.prepare(`
+          INSERT INTO notifications_setup (telegram_enabled, email_enabled, sms_reports_enabled, notify_missed_calls, notify_new_sms, notify_system_errors, notify_shift_changes, daily_report_enabled, daily_report_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(telegram_enabled, email_enabled, sms_reports_enabled, notify_missed_calls,
+               notify_new_sms, notify_system_errors, notify_shift_changes,
+               daily_report_enabled, daily_report_time);
+      }
+
+      // When Telegram is enabled, reset the missed-call alert checkpoint to NOW
+      // so we only alert on calls that arrive after enabling.
+      if (config.telegram_enabled === true || config.telegram_enabled === 1) {
+        try {
+          this.db.prepare(`
+            INSERT INTO alert_checkpoints (alert_type, last_checked_at) VALUES ('missed_call', CURRENT_TIMESTAMP)
+            ON CONFLICT(alert_type) DO UPDATE SET last_checked_at = CURRENT_TIMESTAMP
+          `).run();
+        } catch (e) {}
+      }
+
+      this.logActivity('notifications_setup_updated', 'Notification preferences saved', 'success');
+      return true;
+    } catch (error) {
+      console.error('Error saving notifications setup:', error.message);
+      return false;
+    }
+  }
+
+  // ── Merged view — credentials + preferences — used by all internal alert functions ──
+  // Returns a single object shaped like the old notification_configurations so all
+  // existing sendMissedCallAlert / sendEmail / etc. keep working without changes.
+  getNotificationConfig() {
+    try {
+      const creds  = this.db.prepare('SELECT * FROM notification_configurations LIMIT 1').get() || {};
+      const setup  = this.db.prepare('SELECT * FROM notifications_setup LIMIT 1').get() || {};
+      return {
+        // Credentials
+        bot_token:            creds.bot_token            || '',
+        chat_id:              creds.chat_id              || '',
+        email_smtp_host:      creds.email_smtp_host      || '',
+        email_smtp_port:      creds.email_smtp_port      || 587,
+        email_smtp_user:      creds.email_smtp_user      || '',
+        email_smtp_pass:      creds.email_smtp_pass      || '',
+        email_from:           creds.email_from           || '',
+        email_recipients:     creds.email_recipients     || '[]',
+        email_smtp_encryption: creds.email_smtp_encryption || 'auto',
+        // Preferences (backward-compat field names used throughout api-server.cjs)
+        enabled:              setup.telegram_enabled     ?? 0,
+        email_enabled:        setup.email_enabled        ?? 0,
+        sms_enabled:          setup.sms_reports_enabled  ?? 1,
+        notify_missed_calls:  setup.notify_missed_calls  ?? 1,
+        notify_new_sms:       setup.notify_new_sms       ?? 0,
+        notify_system_errors: setup.notify_system_errors ?? 1,
+        notify_shift_changes: setup.notify_shift_changes ?? 1,
+        daily_report_enabled: setup.daily_report_enabled ?? 0,
+        daily_report_time:    setup.daily_report_time    || '18:00',
+        // Timestamps
+        created_at: creds.created_at,
+        updated_at: creds.updated_at || setup.updated_at,
+      };
+    } catch (error) {
+      console.error('Error getting merged notification config:', error.message);
+      return null;
+    }
+  }
+
+
 
   // User management helpers used by API server
   getAllUsers() {
@@ -993,95 +1251,6 @@ class SMSDatabase {
     }
   }
 
-  saveTelegramConfig(config) {
-    try {
-      const {
-        bot_token,
-        chat_id,
-        enabled,
-        email_enabled = false,
-        email_recipients = [],
-        email_smtp_host = '',
-        email_smtp_port = 587,
-        email_smtp_user = '',
-        email_smtp_pass = '',
-        email_from = '',
-        sms_enabled = true,
-        notify_missed_calls = true,
-        notify_new_sms = false,
-        notify_system_errors = true,
-        notify_shift_changes = true,
-        daily_report_enabled = false,
-        daily_report_time = '18:00'
-      } = config;
-      const stmt = this.db.prepare(`
-        UPDATE telegram_config 
-        SET
-          bot_token = ?,
-          chat_id = ?,
-          enabled = ?,
-          email_enabled = ?,
-          email_recipients = ?,
-          email_smtp_host = ?,
-          email_smtp_port = ?,
-          email_smtp_user = ?,
-          email_smtp_pass = ?,
-          email_from = ?,
-          sms_enabled = ?,
-          notify_missed_calls = ?,
-          notify_new_sms = ?,
-          notify_system_errors = ?,
-          notify_shift_changes = ?,
-          daily_report_enabled = ?,
-          daily_report_time = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = (SELECT id FROM telegram_config LIMIT 1)
-      `);
-      stmt.run(
-        bot_token || '',
-        chat_id || '',
-        enabled ? 1 : 0,
-        email_enabled ? 1 : 0,
-        JSON.stringify(Array.isArray(email_recipients) ? email_recipients : []),
-        email_smtp_host || '',
-        email_smtp_port || 587,
-        email_smtp_user || '',
-        email_smtp_pass || '',
-        email_from || '',
-        sms_enabled ? 1 : 0,
-        notify_missed_calls ? 1 : 0,
-        notify_new_sms ? 1 : 0,
-        notify_system_errors ? 1 : 0,
-        notify_shift_changes ? 1 : 0,
-        daily_report_enabled ? 1 : 0,
-        daily_report_time || '18:00'
-      );
-      
-      // If enabling Telegram, reset the missed call alert checkpoint to NOW
-      // This ensures we only send alerts for calls AFTER enabling, not historical calls
-      if (enabled === true || enabled === 1) {
-        try {
-          const checkpointStmt = this.db.prepare(`
-            INSERT INTO alert_checkpoints (alert_type, last_checked_at)
-            VALUES ('missed_call', CURRENT_TIMESTAMP)
-            ON CONFLICT(alert_type) DO UPDATE SET last_checked_at = CURRENT_TIMESTAMP
-          `);
-          checkpointStmt.run();
-        } catch (err) {
-          console.warn('Could not update alert checkpoint:', err.message);
-        }
-      }
-      
-      this.logActivity('telegram_config_updated', `Telegram config saved`, 'success');
-      return true;
-    } catch (error) {
-      console.error('Error saving Telegram config:', error.message);
-      this.logActivity('telegram_config_error', `Failed to save Telegram config: ${error.message}`, 'error');
-      return false;
-    }
-  }
-
-  // Alert checkpoint methods - track when to start checking for new alerts
   getAlertCheckpoint(alertType) {
     try {
       const stmt = this.db.prepare('SELECT last_checked_at FROM alert_checkpoints WHERE alert_type = ?');
@@ -1213,6 +1382,34 @@ class SMSDatabase {
       return false;
     } catch (error) {
       console.error('Error deleting SMS template:', error.message);
+      return false;
+    }
+  }
+
+  // Notification alert template methods
+  getNotificationTemplate(eventType) {
+    try {
+      const row = this.db.prepare('SELECT template_text FROM notification_templates WHERE event_type = ?').get(eventType);
+      return row?.template_text || null;
+    } catch (e) { return null; }
+  }
+
+  getAllNotificationTemplates() {
+    try {
+      return this.db.prepare('SELECT event_type, template_text, updated_at FROM notification_templates ORDER BY event_type').all();
+    } catch (e) { return []; }
+  }
+
+  saveNotificationTemplate(eventType, templateText) {
+    try {
+      this.db.prepare(`
+        INSERT INTO notification_templates (event_type, template_text, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(event_type) DO UPDATE SET template_text = excluded.template_text, updated_at = CURRENT_TIMESTAMP
+      `).run(eventType, templateText);
+      return true;
+    } catch (e) {
+      console.error('Error saving notification template:', e.message);
       return false;
     }
   }
@@ -1643,33 +1840,6 @@ class SMSDatabase {
     }
   }
 
-  saveSmsGatewayUrl(url) {
-    try {
-      const logger = require('./logger.cjs');
-      
-      // Check if URL already exists
-      const existing = this.db.prepare('SELECT id FROM sms_gateways WHERE url = ?').get(url);
-      
-      if (existing) {
-        logger.info(`SMS gateway URL already exists: ${url}`);
-        return true;
-      }
-      
-      // Insert new SMS gateway URL
-      const stmt = this.db.prepare(`
-        INSERT INTO sms_gateways (url, active, created_at, updated_at)
-        VALUES (?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `);
-      stmt.run(url);
-      
-      logger.info(`SMS gateway URL saved: ${url}`);
-      return true;
-    } catch (error) {
-      console.error('Error saving SMS gateway URL:', error.message);
-      return false;
-    }
-  }
-
   // System Settings methods
   getSystemSetting(key) {
     try {
@@ -1715,9 +1885,13 @@ class SMSDatabase {
           external_id, sender_number, message_content, received_at, gsm_span, status = 'unread', direction = 'received', category = null
         } = smsData;
         
-        // Validate required fields - gsm_span should be 2-5
-        if (!sender_number || gsm_span === undefined || gsm_span === null) {
-          logger.warn(`⚠️  SMS validation failed: sender=${sender_number}, gsm_span=${gsm_span}`);
+        // Validate required fields — gsm_span required for received SMS; optional for gateway-sent
+        if (!sender_number) {
+          logger.warn(`⚠️  SMS validation failed: missing sender_number`);
+          return false;
+        }
+        if ((direction === 'received' || !direction) && (gsm_span === undefined || gsm_span === null)) {
+          logger.warn(`⚠️  SMS validation failed: received SMS missing gsm_span=${gsm_span}`);
           return false;
         }
 
@@ -1732,28 +1906,26 @@ class SMSDatabase {
           return true; // Already stored — not an error
         }
 
-        // ADDITIONAL: Check for duplicates within last 5 seconds by content+sender+gsm_span
-        // This catches cases where external_id is null or non-unique
+        // Check for duplicates within last 5 seconds by content+sender+(gsm_span if present)
         const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
         const contentAbstract = message_content ? message_content.substring(0, 100) : '';
-        
-        const recentDupStmt = this.db.prepare(`
-          SELECT id FROM sms_messages 
-          WHERE sender_number = ? 
-          AND gsm_span = ? 
-          AND message_content LIKE ? 
-          AND received_at > ?
-          LIMIT 1
-        `);
-        const recentDup = recentDupStmt.get(sender_number, gsm_span, contentAbstract + '%', fiveSecondsAgo);
+        const hasGsmSpan = gsm_span !== undefined && gsm_span !== null;
+
+        const recentDupSql = hasGsmSpan
+          ? `SELECT id FROM sms_messages WHERE sender_number = ? AND gsm_span = ? AND message_content LIKE ? AND received_at > ? LIMIT 1`
+          : `SELECT id FROM sms_messages WHERE sender_number = ? AND gsm_span IS NULL AND message_content LIKE ? AND received_at > ? LIMIT 1`;
+        const recentDupArgs = hasGsmSpan
+          ? [sender_number, gsm_span, contentAbstract + '%', fiveSecondsAgo]
+          : [sender_number, contentAbstract + '%', fiveSecondsAgo];
+        const recentDup = this.db.prepare(recentDupSql).get(...recentDupArgs);
         
         if (recentDup) {
-          logger.debug(`ℹ️  SMS likely duplicate (received within 5s): sender=${sender_number}, gsm_span=${gsm_span}`);
+          logger.debug(`ℹ️  SMS likely duplicate (received within 5s): sender=${sender_number}`);
           return true; // Already stored — not an error
         }
         
-        // sim_port (1-4) derived from gsm_span (2-5): sim_port = gsm_span - 1
-        const simPort = Math.max(1, Math.min(4, gsm_span - 1));
+        // sim_port (1-4) derived from gsm_span (2-5) only when gsm_span is present
+        const simPort = hasGsmSpan ? Math.max(1, Math.min(4, gsm_span - 1)) : null;
         
         const stmt = this.db.prepare(`
           INSERT INTO sms_messages 
@@ -1767,7 +1939,7 @@ class SMSDatabase {
           message_content,
           received_at || new Date().toISOString(),
           simPort,
-          gsm_span,
+          hasGsmSpan ? gsm_span : null,
           status,
           direction,
           category
@@ -2015,57 +2187,13 @@ class SMSDatabase {
     }
   }
 
-  // SMS Sent Log methods - prevent duplicate SMS to same number within 24 hours
-  hasSentSmsToday(phoneNumber, messageHash = null) {
+  deleteAllSentSMS() {
     try {
-      // Check if SMS was sent to this number in the last 24 hours
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      
-      let query = `
-        SELECT id FROM sms_sent_log 
-        WHERE phone_number = ? AND last_sent_at >= ?
-      `;
-      const params = [phoneNumber, oneDayAgo];
-      
-      // If message hash provided, check for exact duplicate
-      if (messageHash) {
-        query += ` AND message_hash = ?`;
-        params.push(messageHash);
-      }
-      
-      const result = this.db.prepare(query).get(...params);
-      return result !== undefined;
+      const result = this.db.prepare("DELETE FROM sms_messages WHERE direction = 'sent'").run();
+      return result.changes;
     } catch (error) {
-      console.error('Error checking SMS sent log:', error.message);
-      return false;
-    }
-  }
-
-  logSmsSent(phoneNumber, messageHash = null) {
-    try {
-      // Check if record exists for this phone number
-      const existing = this.db.prepare(
-        `SELECT id FROM sms_sent_log WHERE phone_number = ?`
-      ).get(phoneNumber);
-      
-      if (existing) {
-        // Update existing record
-        this.db.prepare(
-          `UPDATE sms_sent_log 
-           SET message_hash = ?, last_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
-           WHERE phone_number = ?`
-        ).run(messageHash || '', phoneNumber);
-      } else {
-        // Create new record
-        this.db.prepare(
-          `INSERT INTO sms_sent_log (phone_number, message_hash) VALUES (?, ?)`
-        ).run(phoneNumber, messageHash || '');
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('Error logging SMS sent:', error.message);
-      return false;
+      console.error('Error deleting all sent SMS:', error.message);
+      return 0;
     }
   }
 
@@ -2545,21 +2673,39 @@ class SMSDatabase {
     }
   }
 
-  saveCallAutoSmsConfig({ enabled, answered_message, missed_message }) {
+  saveCallAutoSmsConfig({ enabled, answered_message, missed_message, delay_enabled, delay_minutes, duplicate_window, allowed_ports, allowed_extensions, call_direction }) {
     try {
       const existing = this.db.prepare('SELECT id FROM call_auto_sms_config LIMIT 1').get();
+      const portsJson      = Array.isArray(allowed_ports)      ? JSON.stringify(allowed_ports)      : (allowed_ports      || '[]');
+      const extensionsJson = Array.isArray(allowed_extensions) ? JSON.stringify(allowed_extensions) : (allowed_extensions || '[]');
+      const direction      = call_direction || 'both';
       if (existing) {
         this.db.prepare(`
-          UPDATE call_auto_sms_config SET enabled = ?, answered_message = ?, missed_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-        `).run(enabled ? 1 : 0, answered_message, missed_message, existing.id);
+          UPDATE call_auto_sms_config SET enabled = ?, answered_message = ?, missed_message = ?, delay_enabled = ?, delay_minutes = ?, duplicate_window = ?, allowed_ports = ?, allowed_extensions = ?, call_direction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes || 5, duplicate_window || 10, portsJson, extensionsJson, direction, existing.id);
       } else {
         this.db.prepare(`
-          INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message) VALUES (?, ?, ?)
-        `).run(enabled ? 1 : 0, answered_message, missed_message);
+          INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message, delay_enabled, delay_minutes, duplicate_window, allowed_ports, allowed_extensions, call_direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes || 5, duplicate_window || 10, portsJson, extensionsJson, direction);
       }
       return true;
     } catch (error) {
       console.error('Error saving call auto-SMS config:', error.message);
+      return false;
+    }
+  }
+
+  // Check if SMS was recently sent to this number (uses sms_messages direction='sent')
+  checkRecentSms(caller_number, minutesWindow = 10) {
+    try {
+      const cutoffTime = new Date(Date.now() - minutesWindow * 60000).toISOString();
+      const result = this.db.prepare(`
+        SELECT COUNT(*) as count FROM sms_messages
+        WHERE direction = 'sent' AND sender_number = ? AND received_at > ? AND status != 'failed'
+      `).get(caller_number, cutoffTime);
+      return result.count > 0;
+    } catch (error) {
+      console.error('Error checking recent SMS:', error.message);
       return false;
     }
   }

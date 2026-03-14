@@ -24,6 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# SQLite WAL temp files
+# SQLite database files (production data - never commit these)
+*.db
 *.db-shm
 *.db-wal

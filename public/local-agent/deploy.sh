@@ -26,6 +26,14 @@ fi
 # Configure SSH for git operations
 export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
+# Preserve the live SQLite database before git reset (git reset --hard would wipe it if tracked)
+DB_FILE="public/local-agent/sms.db"
+DB_BACKUP="/tmp/sms.db.deploy-backup"
+if [ -f "$DB_FILE" ]; then
+    log_msg "Backing up live database to $DB_BACKUP..."
+    cp "$DB_FILE" "$DB_BACKUP"
+fi
+
 # Pull latest code
 log_msg "Pulling latest code from GitHub using SSH key..."
 git fetch origin
@@ -40,6 +48,14 @@ if [ $? -ne 0 ]; then
     log_msg "ERROR: Git reset failed"
     [ -d "dist_backup" ] && mv dist_backup dist
     exit 1
+fi
+
+# Restore the live database (in case git reset --hard replaced it with a stale committed version)
+if [ -f "$DB_BACKUP" ]; then
+    log_msg "Restoring live database from backup..."
+    cp "$DB_BACKUP" "$DB_FILE"
+    rm -f "$DB_BACKUP"
+    log_msg "Database restored."
 fi
 
 # Install dependencies

@@ -28,6 +28,7 @@ export type DashboardTab =
   | "roles"
   | "profile"
   | "messages"
+  | "notifications"
   | "staff";
 
 interface NavItem {
@@ -42,6 +43,7 @@ const navItems: NavItem[] = [
   { id: "messages", label: "Messages", icon: FileText },
   { id: "calls", label: "Calls & Contacts", icon: PhoneCall },
   { id: "analytics", label: "Insights", icon: BarChart3 },
+  { id: "notifications", label: "Notifications", icon: Send, adminOnly: true },
   { id: "staff", label: "Staff / Clock In", icon: Users, adminOnly: true },
   { id: "roles", label: "Roles & Permissions", icon: Crown, adminOnly: true },
   { id: "config", label: "Configuration", icon: Settings, adminOnly: true },

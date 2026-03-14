@@ -43,15 +43,15 @@ export const TelegramSettingsForm = () => {
     const loadConfig = async () => {
       try {
         const apiUrl = import.meta.env.VITE_API_URL;
-        const tgRes = await fetch(`${apiUrl}/api/telegram-config`);
+        const tgRes = await fetch(`${apiUrl}/api/notifications-setup`);
 
         if (tgRes.ok) {
           const { data } = await tgRes.json();
           if (data) {
             setConfig({
-              enabled: !!data.enabled,
+              enabled: !!data.telegram_enabled,
               email_enabled: !!data.email_enabled,
-              sms_enabled: data.sms_enabled === undefined ? true : !!data.sms_enabled,
+              sms_enabled: data.sms_reports_enabled === undefined ? true : !!data.sms_reports_enabled,
               notify_missed_calls: data.notify_missed_calls === undefined ? true : !!data.notify_missed_calls,
               notify_new_sms: !!data.notify_new_sms,
               notify_system_errors: data.notify_system_errors === undefined ? true : !!data.notify_system_errors,
@@ -74,10 +74,20 @@ export const TelegramSettingsForm = () => {
     setIsSaving(true);
     try {
       const apiUrl = import.meta.env.VITE_API_URL;
-      const response = await fetch(`${apiUrl}/api/telegram-config`, {
+      const response = await fetch(`${apiUrl}/api/notifications-setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          telegram_enabled:    config.enabled,
+          email_enabled:       config.email_enabled,
+          sms_reports_enabled: config.sms_enabled,
+          notify_missed_calls: config.notify_missed_calls,
+          notify_new_sms:      config.notify_new_sms,
+          notify_system_errors: config.notify_system_errors,
+          notify_shift_changes: config.notify_shift_changes,
+          daily_report_enabled: config.daily_report_enabled,
+          daily_report_time:   config.daily_report_time,
+        }),
       });
       if (!response.ok) throw new Error("Failed to save configuration");
       const result = await response.json();
@@ -139,10 +149,6 @@ export const TelegramSettingsForm = () => {
                 <Mail className="w-4 h-4" />
                 Email
               </TabsTrigger>
-              <TabsTrigger value="sms" className="flex-1 gap-2">
-                <Phone className="w-4 h-4" />
-                SMS
-              </TabsTrigger>
               <TabsTrigger value="telegram" className="flex-1 gap-2">
                 <Send className="w-4 h-4" />
                 Telegram
@@ -163,34 +169,6 @@ export const TelegramSettingsForm = () => {
               </div>
               <p className="text-xs text-muted-foreground">
                 Configure SMTP credentials and email recipients in the <strong>Setup</strong> tab.
-              </p>
-            </TabsContent>
-
-            {/* SMS Tab */}
-            <TabsContent value="sms" className="space-y-3">
-              {!globalSmsEnabled && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/8 px-3 py-2 text-xs text-amber-600">
-                  <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  <span>
-                    The Nosteq SMS gateway is currently <strong>globally disabled</strong>. SMS notification delivery won't work until you re-enable it in the <strong>Configuration → SMS</strong> tab.
-                  </span>
-                </div>
-              )}
-              <div className={`flex items-center justify-between rounded-lg border border-border/30 bg-muted/20 p-3 ${
-                !globalSmsEnabled ? "opacity-50 pointer-events-none" : ""
-              }`}>
-                <div>
-                  <p className="text-sm font-medium">Use SMS for notification delivery</p>
-                  <p className="text-xs text-muted-foreground">Send alert & report messages via the Nosteq gateway to configured phone numbers</p>
-                </div>
-                <Switch
-                  checked={config.sms_enabled}
-                  onCheckedChange={(checked) => setConfig({ ...config, sms_enabled: checked })}
-                  disabled={!globalSmsEnabled}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Configure phone number recipients in the <strong>Setup</strong> tab. The master on/off for all SMS is in the <strong>SMS</strong> tab.
               </p>
             </TabsContent>
 

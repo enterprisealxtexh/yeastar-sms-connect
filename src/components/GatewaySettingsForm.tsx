@@ -65,20 +65,12 @@ export const GatewaySettingsForm = () => {
   };
 
   const handleTestConnection = async () => {
-    // First save the current config
-    if (localConfig.gateway_ip !== config?.gateway_ip || 
-        localConfig.api_username !== config?.api_username || 
-        localConfig.api_password !== config?.api_password) {
-      await handleSave();
-    }
-
     setIsTesting(true);
     setConnectionStatus('idle');
 
     try {
-      // Test real connection to TG400 Gateway via backend endpoint
       const gateway_ip = localConfig.gateway_ip || '192.168.5.3';
-      const api_port = localConfig.api_port || 5038;
+      const api_port = (localConfig as { api_port?: number }).api_port || 5038;
       const apiUrl = import.meta.env.VITE_API_URL;
       
       const response = await fetch(`${apiUrl}/api/gateway-test`);

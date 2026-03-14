@@ -20,6 +20,7 @@ import { ContactsPanel } from "@/components/ContactsPanel";
 import { CallsContactsTab } from "@/components/CallsContactsTab";
 import { AllSmsPanel } from "@/components/AllSmsPanel";
 import { StaffPanel } from "@/components/StaffPanel";
+import { NotificationsPanel } from "@/components/NotificationsPanel";
 
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,6 +54,17 @@ const Index = () => {
     return (saved as DashboardTab) || "dashboard";
   });
   
+  // Validate activeTab permissions: if user lacks permission, reset to dashboard
+  // ONLY run this AFTER auth has finished loading
+  useEffect(() => {
+    if (role === null) return; // Auth still loading, skip validation
+    
+    const adminOnlyTabs: DashboardTab[] = ["notifications", "staff", "roles", "config"];
+    if (adminOnlyTabs.includes(activeTab) && !isAdmin) {
+      setActiveTab("dashboard");
+    }
+  }, [role, isAdmin]); // Depend on role which is null during loading
+
   // Save activeTab to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem("activeTab", activeTab);
@@ -67,7 +79,7 @@ const Index = () => {
   const [callRecordsDirectionFilter, setCallRecordsDirectionFilter] = useState<string>("all");
   const [callRecordsStatusFilter, setCallRecordsStatusFilter] = useState<string>("all");
 
-  const { data: messages = [], isLoading: messagesLoading } = useSmsMessages();
+  const { data: messages = [], isLoading: messagesLoading } = useSmsMessages(50, 'received');
   const { data: logs = [], isLoading: logsLoading } = useActivityLogs();
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const { data: callsResponse, isLoading: callsLoading } = useCallRecords(callRecordsPage, 50, callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter);
@@ -252,6 +264,10 @@ const Index = () => {
 
           {activeTab === "roles" && (
             <RoleManagementPanel />
+          )}
+
+          {activeTab === "notifications" && isAdmin && (
+            <NotificationsPanel />
           )}
 
           {activeTab === "profile" && (

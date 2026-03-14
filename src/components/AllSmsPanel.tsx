@@ -28,7 +28,7 @@ export const AllSmsPanel: React.FC = () => {
   const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
-  const { data: messages = [], isLoading } = useSmsMessages(1000);
+  const { data: messages = [], isLoading } = useSmsMessages(1000, 'received');
   const { role, isAdmin } = useAuth();
   const { data: permissions } = useUserPermissions();
   const canDelete = role === 'super_admin';

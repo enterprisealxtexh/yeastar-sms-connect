@@ -68,16 +68,24 @@ export const useMarkCallbackAttempted = () => {
   });
 };
 
-export const useSendMissedCallEmail = () => {
+export const useSendMissedCallSms = () => {
   return useMutation({
-    mutationFn: async (_params: { call_id: string; to_email: string }) => {
-      throw new Error("Email sending is not available in local mode");
+    mutationFn: async ({ caller_number }: { caller_number: string }) => {
+      const response = await fetch(`${API_URL}/api/missed-call-notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caller_number }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to send notification');
+      }
     },
     onSuccess: () => {
-      toast.success("Missed call notification sent");
+      toast.success('Admin notified by email');
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to send email");
+      toast.error(error.message || 'Failed to send notification');
     },
   });
 };

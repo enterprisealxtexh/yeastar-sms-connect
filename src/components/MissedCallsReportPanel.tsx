@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { format } from "date-fns";
-import { useMissedCallReport, useMarkCallbackAttempted, useSendMissedCallEmail, type MissedCallRecord } from "@/hooks/useMissedCallReport";
+import { useMissedCallReport, useMarkCallbackAttempted, useSendMissedCallSms, type MissedCallRecord } from "@/hooks/useMissedCallReport";
 import { useAutoReplyConfig } from "../hooks/useAutoReplyConfig";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 import { useExtensions } from "@/hooks/useExtensions";
@@ -38,7 +38,7 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
   const { data: calls = [], isLoading } = useMissedCallReport();
   const { data: autoConfig } = useAutoReplyConfig();
   const { mutate: markCallback, isPending: isMarking } = useMarkCallbackAttempted();
-  const { mutate: sendEmail, isPending: isSendingEmail } = useSendMissedCallEmail();
+  const { mutate: sendSms, isPending: isSendingSms } = useSendMissedCallSms();
   const { data: portLabels } = usePortLabels();
   const { getUsername } = useExtensions();
   const { role } = useAuth();
@@ -48,7 +48,7 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+  const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -101,16 +101,11 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
     setExpandedId(null);
   };
 
-  const handleSendEmail = async (call: MissedCallRecord) => {
-    const email = autoConfig?.notification_email;
-    if (!email) {
-      toast.error("No notification email configured. Set it in the Configuration tab → Auto-Reply SMS.");
-      return;
-    }
-    setSendingEmailId(call.id);
-    sendEmail(
-      { call_id: call.id, to_email: email },
-      { onSettled: () => setSendingEmailId(null) }
+  const handleNotify = (call: MissedCallRecord) => {
+    setSendingSmsId(call.id);
+    sendSms(
+      { caller_number: call.caller_number },
+      { onSettled: () => setSendingSmsId(null) }
     );
   };
 
@@ -294,10 +289,10 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
                         size="sm"
                         variant="outline"
                         className="h-8 gap-1.5 text-xs"
-                        disabled={sendingEmailId === call.id || isSendingEmail}
-                        onClick={() => handleSendEmail(call)}
+                        disabled={sendingSmsId === call.id || isSendingSms}
+                        onClick={() => handleNotify(call)}
                       >
-                        {sendingEmailId === call.id ? (
+                        {sendingSmsId === call.id ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
                           <Mail className="w-3 h-3" />

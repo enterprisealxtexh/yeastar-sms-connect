@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Send, Loader2, AlertCircle, CheckCircle, Trash2, Phone, Plus, Mail } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Send, Loader2, AlertCircle, CheckCircle, Trash2, Phone, Plus, Mail, AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 
@@ -16,6 +17,7 @@ interface SetupConfig {
   email_smtp_pass: string;
   email_from: string;
   email_recipients: string[];
+  email_smtp_encryption: string;
 }
 
 interface SmsRecipient {
@@ -34,12 +36,14 @@ export const SetupPanel = () => {
     email_smtp_pass: "",
     email_from: "",
     email_recipients: [],
+    email_smtp_encryption: "auto",
   });
   const [smsRecipients, setSmsRecipients] = useState<SmsRecipient[]>([]);
   const [newPhoneNumber, setNewPhoneNumber] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isAddingPhone, setIsAddingPhone] = useState(false);
   const [isRemovingPhone, setIsRemovingPhone] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
@@ -50,13 +54,24 @@ export const SetupPanel = () => {
       try {
         const apiUrl = import.meta.env.VITE_API_URL;
         const [tgRes, smsRes] = await Promise.all([
-          fetch(`${apiUrl}/api/telegram-config`),
+          fetch(`${apiUrl}/api/channel-setup`),
           fetch(`${apiUrl}/api/sms-report-recipients`),
         ]);
 
         if (tgRes.ok) {
           const { data } = await tgRes.json();
+          console.log('📋 [Setup] Loaded telegram config:', {
+            bot_token: data?.bot_token ? '✓ set' : '✗ missing',
+            chat_id: data?.chat_id ? '✓ set' : '✗ missing',
+            email_smtp_host: data?.email_smtp_host ? `✓ ${data.email_smtp_host}` : '✗ missing',
+            email_smtp_port: data?.email_smtp_port || 587,
+            email_smtp_user: data?.email_smtp_user ? '✓ set' : '✗ missing',
+            email_smtp_pass: data?.email_smtp_pass ? '✓ set' : '✗ missing',
+            email_from: data?.email_from ? `✓ ${data.email_from}` : '✗ missing',
+            email_recipients: data?.email_recipients ? `✓ ${JSON.stringify(data.email_recipients)}` : '✗ none',
+          });
           if (data) {
+            setHasUnsavedChanges(false);
             setConfig({
               bot_token: data.bot_token || "",
               chat_id: data.chat_id || "",
@@ -65,6 +80,7 @@ export const SetupPanel = () => {
               email_smtp_user: data.email_smtp_user || "",
               email_smtp_pass: data.email_smtp_pass || "",
               email_from: data.email_from || "",
+              email_smtp_encryption: data.email_smtp_encryption || "auto",
               email_recipients: (() => {
                 const raw = data.email_recipients;
                 if (Array.isArray(raw)) return raw;
@@ -84,6 +100,7 @@ export const SetupPanel = () => {
 
         if (smsRes.ok) {
           const { data } = await smsRes.json();
+          console.log('📱 [Setup] Loaded SMS recipients:', data?.length ? `✓ ${data.length} recipient(s)` : '✗ none', data);
           if (data) setSmsRecipients(data);
         }
       } catch (err) {
@@ -100,17 +117,18 @@ export const SetupPanel = () => {
     try {
       const apiUrl = import.meta.env.VITE_API_URL;
       // Load current full config first so we don't overwrite notification settings
-      const existing = await fetch(`${apiUrl}/api/telegram-config`).then((r) => r.json());
-      const merged = { ...(existing.data || {}), ...config };
-      const res = await fetch(`${apiUrl}/api/telegram-config`, {
+      const res = await fetch(`${apiUrl}/api/channel-setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(merged),
+        body: JSON.stringify(config),
       });
       if (!res.ok) throw new Error("Save failed");
+      setHasUnsavedChanges(false);
       toast.success("Setup saved successfully");
       setTestResult(null);
+      console.log('✅ [Setup] Configuration saved successfully');
     } catch (err) {
+      console.error('❌ [Setup] Failed to save:', err);
       toast.error(err instanceof Error ? err.message : "Failed to save setup");
     } finally {
       setIsSaving(false);
@@ -120,11 +138,13 @@ export const SetupPanel = () => {
   const handleTestTelegram = async () => {
     if (!config.bot_token || !config.chat_id) {
       setTestResult({ success: false, message: "Bot token and Chat ID are required" });
+      console.warn('⚠️  Telegram test skipped: missing credentials');
       return;
     }
     setIsTesting(true);
     setTestResult(null);
     try {
+      console.log('🧪 [Setup] Testing Telegram with token:', config.bot_token.substring(0, 10) + '...');
       const apiUrl = import.meta.env.VITE_API_URL;
       const res = await fetch(`${apiUrl}/api/telegram-send`, {
         method: "POST",
@@ -134,14 +154,17 @@ export const SetupPanel = () => {
       const result = await res.json();
       if (res.ok && result.success) {
         setTestResult({ success: true, message: "Test message sent to your Telegram chat!" });
+        console.log('✅ [Setup] Telegram test passed');
         toast.success("Telegram connection test passed!");
       } else {
         setTestResult({ success: false, message: result.error || result.message || "Test failed" });
+        console.warn('❌ [Setup] Telegram test failed:', result);
         toast.error("Telegram connection test failed");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Connection test failed";
       setTestResult({ success: false, message: msg });
+      console.error('❌ [Setup] Telegram test exception:', err);
       toast.error(msg);
     } finally {
       setIsTesting(false);
@@ -196,9 +219,10 @@ export const SetupPanel = () => {
     setIsRemovingPhone(phoneNumber);
     try {
       const apiUrl = import.meta.env.VITE_API_URL;
+      const token = localStorage.getItem('authToken');
       const res = await fetch(
         `${apiUrl}/api/sms-report-recipients/${encodeURIComponent(phoneNumber)}`,
-        { method: "DELETE" }
+        { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
       );
       const result = await res.json();
       if (res.ok && result.success) {
@@ -225,6 +249,12 @@ export const SetupPanel = () => {
 
   return (
     <div className="space-y-6">
+      {hasUnsavedChanges && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-700 dark:text-amber-400 text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>Unsaved changes — click <strong>Save Setup</strong> below to apply.</span>
+        </div>
+      )}
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-border/50 h-full">
           <CardHeader className="pb-3">
@@ -252,7 +282,7 @@ export const SetupPanel = () => {
                 type="password"
                 placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
                 value={config.bot_token}
-                onChange={(e) => setConfig({ ...config, bot_token: e.target.value })}
+                onChange={(e) => { setConfig({ ...config, bot_token: e.target.value }); setHasUnsavedChanges(true); }}
                 className="font-mono text-sm h-9"
               />
             </div>
@@ -266,7 +296,7 @@ export const SetupPanel = () => {
               <Input
                 placeholder="123456789"
                 value={config.chat_id}
-                onChange={(e) => setConfig({ ...config, chat_id: e.target.value })}
+                onChange={(e) => { setConfig({ ...config, chat_id: e.target.value }); setHasUnsavedChanges(true); }}
                 className="font-mono text-sm h-9"
               />
             </div>
@@ -322,7 +352,7 @@ export const SetupPanel = () => {
                 <Input
                   placeholder="smtp.gmail.com"
                   value={config.email_smtp_host}
-                  onChange={(e) => setConfig({ ...config, email_smtp_host: e.target.value })}
+                  onChange={(e) => { setConfig({ ...config, email_smtp_host: e.target.value }); setHasUnsavedChanges(true); }}
                   className="h-8 text-sm"
                 />
               </div>
@@ -332,17 +362,35 @@ export const SetupPanel = () => {
                   type="number"
                   placeholder="587"
                   value={config.email_smtp_port}
-                  onChange={(e) => setConfig({ ...config, email_smtp_port: Number(e.target.value) })}
+                  onChange={(e) => { setConfig({ ...config, email_smtp_port: Number(e.target.value) }); setHasUnsavedChanges(true); }}
                   className="h-8 text-sm"
                 />
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Encryption</Label>
+              <Select
+                value={config.email_smtp_encryption}
+                onValueChange={(v) => { setConfig({ ...config, email_smtp_encryption: v }); setHasUnsavedChanges(true); }}
+              >
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Select encryption" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (detect by port)</SelectItem>
+                  <SelectItem value="ssl">SSL / TLS (port 465)</SelectItem>
+                  <SelectItem value="starttls">STARTTLS (port 587)</SelectItem>
+                  <SelectItem value="none">None (unencrypted)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">Auto: uses SSL if port 465, otherwise STARTTLS</p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Username</Label>
               <Input
                 placeholder="you@gmail.com"
                 value={config.email_smtp_user}
-                onChange={(e) => setConfig({ ...config, email_smtp_user: e.target.value })}
+                onChange={(e) => { setConfig({ ...config, email_smtp_user: e.target.value }); setHasUnsavedChanges(true); }}
                 className="h-8 text-sm"
               />
             </div>
@@ -352,7 +400,7 @@ export const SetupPanel = () => {
                 type="password"
                 placeholder="••••••••••••"
                 value={config.email_smtp_pass}
-                onChange={(e) => setConfig({ ...config, email_smtp_pass: e.target.value })}
+                onChange={(e) => { setConfig({ ...config, email_smtp_pass: e.target.value }); setHasUnsavedChanges(true); }}
                 className="h-8 text-sm"
               />
             </div>
@@ -363,7 +411,7 @@ export const SetupPanel = () => {
               <Input
                 placeholder="alerts@yourcompany.com"
                 value={config.email_from}
-                onChange={(e) => setConfig({ ...config, email_from: e.target.value })}
+                onChange={(e) => { setConfig({ ...config, email_from: e.target.value }); setHasUnsavedChanges(true); }}
                 className="h-8 text-sm"
               />
               <p className="text-[10px] text-muted-foreground">

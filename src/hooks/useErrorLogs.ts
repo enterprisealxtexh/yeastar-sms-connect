@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 export interface ErrorLog {
   id: string;
@@ -15,7 +16,7 @@ export interface ErrorLog {
 }
 
 export const useErrorLogs = (limit = 50) => {
-  return useQuery({
+  const query = useQuery({
     queryKey: ["error-logs", limit],
     queryFn: async (): Promise<ErrorLog[]> => {
       // Local SQLite doesn't have a dedicated error_logs table
@@ -26,4 +27,25 @@ export const useErrorLogs = (limit = 50) => {
     staleTime: 60000, // 60 second stale time
     retry: 1,
   });
+
+  // Local mode stubs: keep UI actions available without breaking type contracts.
+  const diagnoseError = useMutation({
+    mutationFn: async (_id: string) => true,
+  });
+
+  const markResolved = useMutation({
+    mutationFn: async (_id: string) => true,
+  });
+
+  const unresolvedCount = useMemo(
+    () => (query.data || []).filter((e) => !e.resolved).length,
+    [query.data]
+  );
+
+  return {
+    ...query,
+    diagnoseError,
+    markResolved,
+    unresolvedCount,
+  };
 };
