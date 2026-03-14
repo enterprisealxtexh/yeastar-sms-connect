@@ -62,6 +62,7 @@ export const RoleManagementPanel = () => {
       password,
       role,
       full_name: fullName,
+      pin,
     });
 
     // If viewer role and permissions are specified, send them to the API

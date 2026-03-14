@@ -2274,13 +2274,19 @@ class SMSDatabase {
       const crypto = require('crypto');
       const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
       
-      const stmt = this.db.prepare('SELECT * FROM users WHERE email = ? AND password_hash = ? AND is_active = 1 LIMIT 1');
+      const stmt = this.db.prepare(`
+        SELECT u.*, COALESCE(ur.role, u.role) as effective_role
+        FROM users u
+        LEFT JOIN user_roles ur ON ur.user_id = u.id
+        WHERE u.email = ? AND u.password_hash = ? AND u.is_active = 1
+        LIMIT 1
+      `);
       const user = stmt.get(email, passwordHash);
       
       if (user) {
         // Update last login
         this.db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
-        return { success: true, user: { id: user.id, email: user.email, role: user.role, name: user.name } };
+        return { success: true, user: { id: user.id, email: user.email, role: user.effective_role, name: user.name } };
       }
       
       return { success: false, error: 'Invalid email or password' };

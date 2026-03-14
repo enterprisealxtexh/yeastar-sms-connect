@@ -122,6 +122,7 @@ export interface CreateUserInput {
   password: string;
   role: AppRole;
   full_name: string;
+  pin?: string;
 }
 
 // Equivalent of: supabase.functions.invoke("create-user", { body: input })
@@ -137,6 +138,7 @@ export const useCreateUser = () => {
           password: input.password,
           name: input.full_name,
           role: input.role,
+          pin: input.pin || null,
         }),
       });
       const json = await resp.json();
