@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Shield, ShieldCheck, UserCog, Eye, Crown, UserPlus, Loader2, KeyRound, Trash2, ChevronsUpDown, Check, Search, X } from "lucide-react";
 import { useUsersWithRoles, useCurrentUserRole, useUpdateUserRole, useCreateUser, useDeleteUser, ROLE_META, type AppRole } from "@/hooks/useRoles";
 import { useExtensions } from "@/hooks/useExtensions";
+import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -174,6 +175,8 @@ export const RoleManagementPanel = () => {
   const updateRole = useUpdateUserRole();
   const createUser = useCreateUser();
   const { extensions, isLoading: extensionsLoading } = useExtensions();
+  const { data: portLabels } = usePortLabels();
+  const ALL_PORTS = [1, 2, 3, 4];
 
   const isSuperAdmin = currentRole === "super_admin";
   const deleteUser = useDeleteUser();
@@ -382,28 +385,47 @@ export const RoleManagementPanel = () => {
                       <>
                         <div className="space-y-2">
                           <Label>Allowed SIM Ports (leave empty for all)</Label>
-                          <div className="flex flex-wrap gap-2">
-                            {[1, 2, 3, 4].map((port) => (
-                              <button
-                                key={port}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedPorts((prev) =>
-                                    prev.includes(port) ? prev.filter((p) => p !== port) : [...prev, port]
-                                  );
-                                }}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-                                  selectedPorts.includes(port)
-                                    ? "bg-primary text-primary-foreground border-primary"
-                                    : "border-border bg-background text-foreground hover:bg-muted"
-                                }`}
-                              >
-                                Port {port}
-                              </button>
-                            ))}
+                          <div className="relative">
+                            <div className="min-h-[36px] w-full rounded-md border border-border bg-background px-3 py-1.5 flex flex-wrap gap-1.5 cursor-pointer" onClick={(e) => {
+                              const el = e.currentTarget.nextElementSibling as HTMLElement;
+                              if (el) el.classList.toggle('hidden');
+                            }}>
+                              {selectedPorts.length === 0 ? (
+                                <span className="text-sm text-muted-foreground self-center">All ports (no restriction)</span>
+                              ) : (
+                                selectedPorts.map((p) => (
+                                  <span key={p} className="inline-flex items-center gap-1 bg-primary/15 text-primary text-xs rounded px-2 py-0.5">
+                                    {getPortLabel(p, portLabels) || `Port ${p}`}
+                                    <button type="button" className="hover:text-destructive" onClick={(e) => { e.stopPropagation(); setSelectedPorts((prev) => prev.filter((x) => x !== p)); }}>
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </span>
+                                ))
+                              )}
+                              <ChevronsUpDown className="w-4 h-4 text-muted-foreground ml-auto self-center" />
+                            </div>
+                            <div className="hidden absolute z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-md">
+                              {ALL_PORTS.map((port) => {
+                                const label = getPortLabel(port, portLabels) || `Port ${port}`;
+                                const checked = selectedPorts.includes(port);
+                                return (
+                                  <div
+                                    key={port}
+                                    className="flex items-center gap-2 px-3 py-2 hover:bg-muted cursor-pointer text-sm"
+                                    onClick={() => setSelectedPorts((prev) => checked ? prev.filter((p) => p !== port) : [...prev, port])}
+                                  >
+                                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-primary border-primary' : 'border-border'}`}>
+                                      {checked && <Check className="w-3 h-3 text-primary-foreground" />}
+                                    </div>
+                                    <span>{label}</span>
+                                    <span className="text-xs text-muted-foreground ml-auto">Port {port}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            {selectedPorts.length === 0 ? "No restrictions - can view all ports" : `Restricted to: Port ${selectedPorts.join(", ")}`}
+                            {selectedPorts.length === 0 ? "No restrictions - can view all ports" : `Restricted to: ${selectedPorts.map((p) => getPortLabel(p, portLabels) || `Port ${p}`).join(", ")}`}
                           </p>
                         </div>
 
