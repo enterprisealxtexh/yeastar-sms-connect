@@ -36,6 +36,7 @@ module.exports = {
       autorestart: true,
       watch: false,
     },
-    // REMOVED frontend - Nginx serves it instead
+    // Frontend is served by Nginx from /opt/yeastar-sms-connect/dist
+    // API proxied by Nginx /api/ → localhost:2003
   ],
 };
