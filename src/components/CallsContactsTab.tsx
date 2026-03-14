@@ -21,6 +21,7 @@ interface CallsContactsTabProps {
   allTimeStats?: any;
   todayStats?: any;
   statsLoading?: boolean;
+  isViewer?: boolean;
 }
 
 export const CallsContactsTab = ({
@@ -39,6 +40,7 @@ export const CallsContactsTab = ({
   allTimeStats,
   todayStats,
   statsLoading = false,
+  isViewer = false,
 }: CallsContactsTabProps) => {
   const [activeSubTab, setActiveSubTab] = useState("calls");
 
@@ -75,6 +77,7 @@ export const CallsContactsTab = ({
             onDirectionFilterChange={onDirectionFilterChange}
             statusFilter={statusFilter}
             onStatusFilterChange={onStatusFilterChange}
+            isViewer={isViewer}
           />
         </TabsContent>
 

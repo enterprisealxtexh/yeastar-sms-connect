@@ -32,6 +32,7 @@ export const AllSmsPanel: React.FC = () => {
   const { role, isAdmin } = useAuth();
   const { data: permissions } = useUserPermissions();
   const canDelete = role === 'super_admin';
+  const isViewer = role === 'viewer';
   const apiUrl = import.meta.env.VITE_API_URL;
   const token = localStorage.getItem('authToken');
   const { data: portLabels } = usePortLabels();
@@ -201,6 +202,7 @@ export const AllSmsPanel: React.FC = () => {
             onFiltersChange={setFilters}
             simPorts={simPorts}
             portLabels={portLabels}
+            isViewer={isViewer}
           />
         </CardHeader>
       </Card>

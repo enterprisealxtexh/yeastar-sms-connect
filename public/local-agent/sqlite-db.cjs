@@ -1525,19 +1525,21 @@ class SMSDatabase {
       return [];
     }
   }
-  getCallStats(filterDate = null) {
+  getCallStats(filterDate = null, extension = null) {
     try {
       // If filterDate is not provided, use today's date
       const dateToFilter = filterDate || new Date().toISOString().split('T')[0];
       
       // For filtering by date, use LIKE to match YYYY-MM-DD at the start of the timestamp
       const dateFilterClause = `start_time LIKE '${dateToFilter}%'`;
+      const extClause = extension ? ` AND (caller_number = ? OR callee_number = ?)` : '';
+      const extParams = extension ? [extension, extension] : [];
       
-      const totalCalls = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE ${dateFilterClause}`).get().count;
-      const answered = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'answered' AND ${dateFilterClause}`).get().count;
-      const missed = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'missed' AND ${dateFilterClause}`).get().count;
-      const totalTalk = this.db.prepare(`SELECT SUM(talk_duration) as total FROM call_records WHERE status = 'answered' AND ${dateFilterClause}`).get().total || 0;
-      const totalRing = this.db.prepare(`SELECT SUM(ring_duration) as total FROM call_records WHERE ${dateFilterClause}`).get().total || 0;
+      const totalCalls = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE ${dateFilterClause}${extClause}`).get(...extParams).count;
+      const answered = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'answered' AND ${dateFilterClause}${extClause}`).get(...extParams).count;
+      const missed = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'missed' AND ${dateFilterClause}${extClause}`).get(...extParams).count;
+      const totalTalk = this.db.prepare(`SELECT SUM(talk_duration) as total FROM call_records WHERE status = 'answered' AND ${dateFilterClause}${extClause}`).get(...extParams).total || 0;
+      const totalRing = this.db.prepare(`SELECT SUM(ring_duration) as total FROM call_records WHERE ${dateFilterClause}${extClause}`).get(...extParams).total || 0;
 
       return {
         totalCalls,
@@ -1558,13 +1560,15 @@ class SMSDatabase {
     }
   }
 
-  getAllTimeCallStats() {
+  getAllTimeCallStats(extension = null) {
     try {
-      const totalCalls = this.db.prepare(`SELECT COUNT(*) as count FROM call_records`).get().count;
-      const answered = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'answered'`).get().count;
-      const missed = this.db.prepare(`SELECT COUNT(*) as count FROM call_records WHERE status = 'missed'`).get().count;
-      const totalTalk = this.db.prepare(`SELECT SUM(talk_duration) as total FROM call_records WHERE status = 'answered'`).get().total || 0;
-      const totalRing = this.db.prepare(`SELECT SUM(ring_duration) as total FROM call_records`).get().total || 0;
+      const whereClause = extension ? `WHERE (caller_number = ? OR callee_number = ?)` : '';
+      const extParams = extension ? [extension, extension] : [];
+      const totalCalls = this.db.prepare(`SELECT COUNT(*) as count FROM call_records ${whereClause}`).get(...extParams).count;
+      const answered = this.db.prepare(`SELECT COUNT(*) as count FROM call_records ${extension ? 'WHERE (caller_number = ? OR callee_number = ?) AND' : 'WHERE'} status = 'answered'`).get(...extParams).count;
+      const missed = this.db.prepare(`SELECT COUNT(*) as count FROM call_records ${extension ? 'WHERE (caller_number = ? OR callee_number = ?) AND' : 'WHERE'} status = 'missed'`).get(...extParams).count;
+      const totalTalk = this.db.prepare(`SELECT SUM(talk_duration) as total FROM call_records ${extension ? 'WHERE (caller_number = ? OR callee_number = ?) AND' : 'WHERE'} status = 'answered'`).get(...extParams).total || 0;
+      const totalRing = this.db.prepare(`SELECT SUM(ring_duration) as total FROM call_records ${whereClause}`).get(...extParams).total || 0;
 
       return {
         totalCalls,

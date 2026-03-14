@@ -141,6 +141,28 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
   next();
 };
 
+// Middleware: any authenticated user (sets req.currentUserId and req.currentUserRole)
+const requireAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  const [userId, tokenRole] = token.split(':');
+  if (!userId || !tokenRole) return res.status(401).json({ success: false, error: 'Invalid token' });
+
+  const dbUser = db.db.prepare(
+    `SELECT COALESCE(ur.role, u.role) as role, u.is_active 
+     FROM users u LEFT JOIN user_roles ur ON ur.user_id = u.id 
+     WHERE u.id = ?`
+  ).get(userId);
+
+  if (!dbUser || !dbUser.is_active) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  req.currentUserId = userId;
+  req.currentUserRole = dbUser.role;
+  next();
+};
+
 app.get('/api/users', requireRole('super_admin', 'admin'), (req, res) => {
   try {
     const users = db.getAllUsers ? db.getAllUsers() : [];
@@ -2801,9 +2823,12 @@ app.delete('/api/users/:id', requireRole('super_admin'), (req, res) => {
 });
 
 // Get user port permissions (admin)
-app.get('/api/users/:id/port-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+app.get('/api/users/:id/port-permissions', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
+    if (req.currentUserRole !== 'super_admin' && req.currentUserRole !== 'admin' && req.currentUserId !== id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const ports = db.getUserPortPermissions(id);
     res.json({ success: true, data: ports });
   } catch (error) {
@@ -2834,9 +2859,12 @@ app.post('/api/users/:id/port-permissions', requireRole('super_admin', 'admin'),
 });
 
 // Get user extension permissions (admin)
-app.get('/api/users/:id/extension-permissions', requireRole('super_admin', 'admin'), (req, res) => {
+app.get('/api/users/:id/extension-permissions', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
+    if (req.currentUserRole !== 'super_admin' && req.currentUserRole !== 'admin' && req.currentUserId !== id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const extensions = db.getUserExtensionPermissions(id);
     res.json({ success: true, data: extensions });
   } catch (error) {
@@ -4961,7 +4989,8 @@ app.get('/api/call-records', (req, res) => {
 
 app.get('/api/call-stats', (req, res) => {
   try {
-    const stats = db.getCallStats();
+    const { extension } = req.query;
+    const stats = db.getCallStats(null, extension && extension !== 'all' ? extension : null);
     res.json({ success: true, data: stats });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4971,7 +5000,8 @@ app.get('/api/call-stats', (req, res) => {
 // Get all-time call statistics
 app.get('/api/call-stats/all-time', (req, res) => {
   try {
-    const stats = db.getAllTimeCallStats();
+    const { extension } = req.query;
+    const stats = db.getAllTimeCallStats(extension && extension !== 'all' ? extension : null);
     res.json({ success: true, data: stats });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

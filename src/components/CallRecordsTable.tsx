@@ -25,6 +25,7 @@ interface CallRecordsTableProps {
   onDirectionFilterChange?: (direction: string) => void;
   statusFilter?: string;
   onStatusFilterChange?: (status: string) => void;
+  isViewer?: boolean;
 }
 
 const formatDuration = (seconds: number): string => {
@@ -46,7 +47,8 @@ export const CallRecordsTable = ({
   directionFilter = "all",
   onDirectionFilterChange,
   statusFilter = "all",
-  onStatusFilterChange
+  onStatusFilterChange,
+  isViewer = false,
 }: CallRecordsTableProps) => {
   const [search, setSearch] = useState("");
   const { extensions } = useExtensions();
@@ -92,6 +94,7 @@ export const CallRecordsTable = ({
                 className="pl-8 w-48"
               />
             </div>
+            {!isViewer && (
             <Select value={extensionFilter} onValueChange={(value) => onExtensionFilterChange?.(value)}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Extension" />
@@ -105,6 +108,7 @@ export const CallRecordsTable = ({
                 ))}
               </SelectContent>
             </Select>
+            )}
             <Select value={statusFilter} onValueChange={(value) => onStatusFilterChange?.(value)}>
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Status" />

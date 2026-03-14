@@ -34,9 +34,10 @@ interface SmsFiltersProps {
   onFiltersChange: (filters: SmsFiltersState) => void;
   simPorts: number[];
   portLabels?: Record<number, PortLabel>;
+  isViewer?: boolean;
 }
 
-export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: SmsFiltersProps) => {
+export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels, isViewer = false }: SmsFiltersProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const updateFilter = <K extends keyof SmsFiltersState>(
@@ -105,6 +106,7 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: S
       {isExpanded && (
         <div className="grid gap-3 sm:grid-cols-5 p-3 rounded-lg bg-muted/30 border border-border/30">
           {/* SIM Port Filter */}
+          {!isViewer && (
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">SIM Port</label>
             <Select
@@ -127,8 +129,10 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: S
               </SelectContent>
             </Select>
           </div>
+          )}
 
           {/* Status Filter */}
+          {!isViewer && (
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Status</label>
             <Select
@@ -146,8 +150,10 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: S
             </SelectContent>
           </Select>
           </div>
+          )}
 
           {/* Category Filter */}
+          {!isViewer && (
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground flex items-center gap-1">
               <Sparkles className="w-3 h-3" />
@@ -172,6 +178,7 @@ export const SmsFilters = ({ filters, onFiltersChange, simPorts, portLabels }: S
               </SelectContent>
             </Select>
           </div>
+          )}
 
           {/* Date From */}
           <div className="space-y-1">

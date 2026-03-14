@@ -53,11 +53,12 @@ export const useCallRecords = (page = 1, pageSize = 100, extension?: string, dir
   });
 };
 
-export const useCallStats = () => {
+export const useCallStats = (extension?: string) => {
   return useQuery({
-    queryKey: ["call-stats"],
+    queryKey: ["call-stats", extension ?? null],
     queryFn: async () => {
-      const response = await fetch(`${apiUrl}/api/call-stats`);
+      const params = extension && extension !== 'all' ? `?extension=${encodeURIComponent(extension)}` : '';
+      const response = await fetch(`${apiUrl}/api/call-stats${params}`);
       if (!response.ok) {
         throw new Error('Failed to fetch call stats');
       }
@@ -76,11 +77,12 @@ export const useCallStats = () => {
   });
 };
 
-export const useAllTimeCallStats = () => {
+export const useAllTimeCallStats = (extension?: string) => {
   return useQuery({
-    queryKey: ["call-stats-all-time"],
+    queryKey: ["call-stats-all-time", extension ?? null],
     queryFn: async () => {
-      const response = await fetch(`${apiUrl}/api/call-stats/all-time`);
+      const params = extension && extension !== 'all' ? `?extension=${encodeURIComponent(extension)}` : '';
+      const response = await fetch(`${apiUrl}/api/call-stats/all-time${params}`);
       if (!response.ok) {
         throw new Error('Failed to fetch all-time call stats');
       }

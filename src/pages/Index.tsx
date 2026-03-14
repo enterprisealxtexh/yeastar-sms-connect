@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { SystemFooter } from "@/components/SystemFooter";
@@ -78,24 +78,29 @@ const Index = () => {
   const viewerPorts = permissions?.ports ?? [];
   const viewerExtensions = permissions?.extensions ?? [];
 
+  // Lock viewer's extension filter to their assigned extension (server-side filtering)
+  useEffect(() => {
+    if (isViewer && viewerExtensions.length > 0) {
+      setCallRecordsExtensionFilter(viewerExtensions[0]);
+      setCallRecordsPage(1);
+    }
+  }, [isViewer, viewerExtensions.join(',')]);
+
   const filteredMessages = useMemo(() => {
     if (!isViewer || viewerPorts.length === 0) return messages;
     return messages.filter((m: any) => viewerPorts.includes(m.simPort));
   }, [messages, isViewer, viewerPorts]);
 
-  const filteredCalls = useMemo(() => {
-    if (!isViewer || viewerExtensions.length === 0) return calls;
-    return calls.filter((c: any) =>
-      viewerExtensions.includes(c.extension) ||
-      viewerExtensions.includes(c.caller_number) ||
-      viewerExtensions.includes(c.callee_number)
-    );
-  }, [calls, isViewer, viewerExtensions]);
+  // For calls, server handles filtering via callRecordsExtensionFilter (locked for viewers)
+  // No client-side call filtering needed
   // Reset to page 1 when any filter changes
   useEffect(() => {
     setCallRecordsPage(1);
-  }, [callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter]);  const { data: callStats, isLoading: callStatsLoading } = useCallStats();
-  const { data: allTimeCallStats, isLoading: allTimeCallStatsLoading } = useAllTimeCallStats();
+  }, [callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter]);
+
+  const viewerExtForStats = isViewer && viewerExtensions.length > 0 ? viewerExtensions[0] : undefined;
+  const { data: callStats, isLoading: callStatsLoading } = useCallStats(viewerExtForStats);
+  const { data: allTimeCallStats, isLoading: allTimeCallStatsLoading } = useAllTimeCallStats(viewerExtForStats);
   const { config: pbxConfig } = usePbxConfig();
   const { data: pbxStatus } = usePbxStatus();
   const { data: gatewayStatus } = useGatewayStatus();
@@ -212,7 +217,7 @@ const Index = () => {
                   {callsLoading ? (
                     <Skeleton className="h-[200px] rounded-lg" />
                   ) : (
-                    <CallsSummaryPanel calls={filteredCalls} />
+                    <CallsSummaryPanel calls={calls} />
                   )}
                   {(!isViewer && !logsLoading) && (
                     <ActivityLog logs={logs} />
@@ -224,11 +229,11 @@ const Index = () => {
 
           {activeTab === "calls" && (
             <CallsContactsTab
-              calls={filteredCalls}
+              calls={calls}
               isLoading={callsLoading}
               currentPage={callRecordsPage}
               totalPages={callsPagination.totalPages}
-              totalCount={filteredCalls.length}
+              totalCount={callsPagination.total}
               onPageChange={setCallRecordsPage}
               extensionFilter={callRecordsExtensionFilter}
               onExtensionFilterChange={setCallRecordsExtensionFilter}
@@ -239,6 +244,7 @@ const Index = () => {
               allTimeStats={allTimeCallStats}
               todayStats={callStats}
               statsLoading={allTimeCallStatsLoading || callStatsLoading}
+              isViewer={isViewer}
             />
           )}
 
