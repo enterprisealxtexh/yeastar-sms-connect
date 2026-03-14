@@ -12,6 +12,8 @@ import { useActivityLogs } from "@/hooks/useActivityLogs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { BarChart3, FileText, ScrollText, BrainCircuit, Send } from "lucide-react";
+import type { AppRole } from "@/hooks/useAuth";
+import type { UserPermissions } from "@/hooks/useUserPermissions";
 
 type Section = "analytics" | "reports" | "logs" | "ai" | "telegram";
 
@@ -21,7 +23,7 @@ interface SectionItem {
   icon: React.ElementType;
 }
 
-const sections: SectionItem[] = [
+const allSections: SectionItem[] = [
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "reports", label: "Reports", icon: FileText },
   { id: "logs", label: "Logs", icon: ScrollText },
@@ -29,7 +31,20 @@ const sections: SectionItem[] = [
   { id: "telegram", label: "Telegram", icon: Send },
 ];
 
-export const InsightsPanel = () => {
+// Sections viewers are NOT allowed to see
+const VIEWER_HIDDEN_SECTIONS: Section[] = ["logs", "ai", "telegram"];
+
+interface InsightsPanelProps {
+  role?: AppRole | null;
+  permissions?: UserPermissions;
+}
+
+export const InsightsPanel = ({ role, permissions }: InsightsPanelProps) => {
+  const isViewer = role === "viewer";
+  const sections = isViewer
+    ? allSections.filter(s => !VIEWER_HIDDEN_SECTIONS.includes(s.id))
+    : allSections;
+
   const [active, setActive] = useState<Section>("analytics");
   const [dateFrom, setDateFrom] = useState<Date | undefined>();
   const [dateTo, setDateTo] = useState<Date | undefined>();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,8 @@ import { BarChart3, PieChartIcon, Clock, TrendingUp, MessageSquare, Zap, Phone, 
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 import { useExtensions } from "@/hooks/useExtensions";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))"];
 
@@ -37,6 +39,23 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
   const { data: analytics, isLoading } = useAnalytics(7, dateFrom, dateTo);
   const { data: portLabels } = usePortLabels();
   const { getUsername } = useExtensions();
+  const { role } = useAuth();
+  const { data: permissions } = useUserPermissions();
+  const isViewer = role === "viewer";
+  const viewerPorts = permissions?.ports ?? [];
+  const viewerExtensions = permissions?.extensions ?? [];
+
+  const visibleExtensionBreakdown = useMemo(() => {
+    const all = analytics?.extensionBreakdown ?? [];
+    if (isViewer && viewerExtensions.length > 0) return all.filter(e => viewerExtensions.includes(e.extension));
+    return all;
+  }, [analytics?.extensionBreakdown, isViewer, viewerExtensions]);
+
+  const visiblePortActivity = useMemo(() => {
+    const all = analytics?.portActivity ?? [];
+    if (isViewer && viewerPorts.length > 0) return all.filter(p => viewerPorts.includes(p.port));
+    return all;
+  }, [analytics?.portActivity, isViewer, viewerPorts]);
 
   const handleResetDates = () => {
     setDateFrom(undefined);
@@ -273,7 +292,7 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={analytics.portActivity}
+                    data={visiblePortActivity}
                     cx="50%"
                     cy="50%"
                     innerRadius={50}
@@ -284,7 +303,7 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
                     label={({ port, count }) => (count > 0 ? `P${port}` : "")}
                     labelLine={false}
                   >
-                    {analytics.portActivity.map((_, index) => (
+                    {visiblePortActivity.map((_, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
@@ -305,7 +324,7 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-2 ml-4">
-                {analytics.portActivity.map((item, index) => (
+                {visiblePortActivity.map((item, index) => (
                   <div key={item.port} className="flex items-center gap-2 text-xs">
                     <div
                       className="w-3 h-3 rounded-full"
@@ -359,7 +378,7 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
         </CardContent>
       </Card>
       {/* Per-Extension Breakdown */}
-      {analytics.extensionBreakdown.length > 0 && (
+      {visibleExtensionBreakdown.length > 0 && (
         <Card className="card-glow border-border/50 bg-card">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-3">
@@ -385,7 +404,7 @@ export const AnalyticsDashboard = ({ dateFrom: initialDateFrom, dateTo: initialD
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {analytics.extensionBreakdown.map((ext) => (
+                {visibleExtensionBreakdown.map((ext) => (
                   <TableRow key={ext.extension}>
                     <TableCell className="font-medium">
                       <div className="flex flex-col leading-tight">

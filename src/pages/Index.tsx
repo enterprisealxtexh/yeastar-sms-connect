@@ -34,11 +34,14 @@ import { usePbxStatus } from "@/hooks/usePbxStatus";
 import { useGatewayStatus } from "@/hooks/useGatewayStatus";
 import { useCallRecords, useCallStats, useAllTimeCallStats } from "@/hooks/useCallRecords";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 import { formatDateNairobi } from "@/lib/dateUtils";
 
 const Index = () => {
   const queryClient = useQueryClient();
   const { role, isAdmin } = useAuth();
+  const { data: permissions } = useUserPermissions();
+  const isViewer = role === "viewer";
   
   // Initialize activeTab from localStorage, default to "dashboard"
   const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
@@ -70,6 +73,24 @@ const Index = () => {
   const { data: callsResponse, isLoading: callsLoading } = useCallRecords(callRecordsPage, 50, callRecordsExtensionFilter, callRecordsDirectionFilter, callRecordsStatusFilter);
   const calls = callsResponse?.data || [];
   const callsPagination = callsResponse?.pagination || { page: 1, pageSize: 50, total: 0, totalPages: 1 };
+
+  // Apply viewer port/extension restrictions client-side
+  const viewerPorts = permissions?.ports ?? [];
+  const viewerExtensions = permissions?.extensions ?? [];
+
+  const filteredMessages = useMemo(() => {
+    if (!isViewer || viewerPorts.length === 0) return messages;
+    return messages.filter((m: any) => viewerPorts.includes(m.simPort));
+  }, [messages, isViewer, viewerPorts]);
+
+  const filteredCalls = useMemo(() => {
+    if (!isViewer || viewerExtensions.length === 0) return calls;
+    return calls.filter((c: any) =>
+      viewerExtensions.includes(c.extension) ||
+      viewerExtensions.includes(c.caller_number) ||
+      viewerExtensions.includes(c.callee_number)
+    );
+  }, [calls, isViewer, viewerExtensions]);
   // Reset to page 1 when any filter changes
   useEffect(() => {
     setCallRecordsPage(1);
@@ -185,17 +206,15 @@ const Index = () => {
                 {messagesLoading ? (
                   <Skeleton className="h-[400px] rounded-lg" />
                 ) : (
-                  <SmsInbox messages={messages} />
+                  <SmsInbox messages={filteredMessages} />
                 )}
                 <div className="flex flex-col gap-6">
                   {callsLoading ? (
                     <Skeleton className="h-[200px] rounded-lg" />
                   ) : (
-                    <CallsSummaryPanel calls={calls} />
+                    <CallsSummaryPanel calls={filteredCalls} />
                   )}
-                  {logsLoading ? (
-                    <Skeleton className="h-[200px] rounded-lg" />
-                  ) : (
+                  {(!isViewer && !logsLoading) && (
                     <ActivityLog logs={logs} />
                   )}
                 </div>
@@ -205,11 +224,11 @@ const Index = () => {
 
           {activeTab === "calls" && (
             <CallsContactsTab
-              calls={calls}
+              calls={filteredCalls}
               isLoading={callsLoading}
               currentPage={callRecordsPage}
               totalPages={callsPagination.totalPages}
-              totalCount={callsPagination.total}
+              totalCount={filteredCalls.length}
               onPageChange={setCallRecordsPage}
               extensionFilter={callRecordsExtensionFilter}
               onExtensionFilterChange={setCallRecordsExtensionFilter}
@@ -223,7 +242,7 @@ const Index = () => {
             />
           )}
 
-          {activeTab === "analytics" && <InsightsPanel />}
+          {activeTab === "analytics" && <InsightsPanel role={role} permissions={permissions} />}
 
           {activeTab === "roles" && (
             <RoleManagementPanel />

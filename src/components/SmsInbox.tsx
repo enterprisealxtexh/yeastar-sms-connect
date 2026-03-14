@@ -8,6 +8,7 @@ import { SmsCategoryBadge, SmsCategory } from "./SmsCategoryBadge";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
+import { useAuth } from "@/hooks/useAuth";
 
 interface SmsMessage {
   id: string;
@@ -33,6 +34,15 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
   const apiUrl = import.meta.env.VITE_API_URL;
   const token = localStorage.getItem('authToken');
   const { data: portLabels } = usePortLabels();
+  const { isAdmin } = useAuth();
+
+  // For non-admins, hide account balance information from MPESA messages
+  const maskContent = (content: string): string => {
+    if (isAdmin) return content;
+    const idx = content.search(/new utility balance/i);
+    if (idx !== -1) return content.substring(0, idx).trimEnd() + "…";
+    return content;
+  };
 
   // Count messages received today
   const todaySmsCount = useMemo(() => {
@@ -144,8 +154,8 @@ export const SmsInbox = ({ messages }: SmsInboxProps) => {
                       </div>
                     </div>
                   </div>
-                  <p className="text-sm text-secondary-foreground leading-relaxed">
-                    {message.content}
+                  <p className="text-sm text-secondary-foreground leading-relaxed line-clamp-2">
+                    {maskContent(message.content)}
                   </p>
                 </div>
               ))}

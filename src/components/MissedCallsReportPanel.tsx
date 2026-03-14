@@ -23,6 +23,8 @@ import { useExtensions } from "@/hooks/useExtensions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { SendReportDialog } from "./SendReportDialog";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserPermissions } from "@/hooks/useUserPermissions";
 
 interface MissedCallsReportPanelProps {
   dateFrom?: Date;
@@ -39,6 +41,10 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
   const { mutate: sendEmail, isPending: isSendingEmail } = useSendMissedCallEmail();
   const { data: portLabels } = usePortLabels();
   const { getUsername } = useExtensions();
+  const { role } = useAuth();
+  const { data: permissions } = useUserPermissions();
+  const isViewer = role === "viewer";
+  const viewerExtensions = permissions?.extensions ?? [];
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -73,6 +79,7 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
 
   // Filter calls by date range
   const filteredCalls = calls.filter((call) => {
+    if (isViewer && viewerExtensions.length > 0 && !viewerExtensions.includes(call.extension ?? "")) return false;
     if (!dateFrom && !dateTo) return true;
     const callDate = new Date(call.start_time);
     if (dateFrom && callDate < dateFrom) return false;
