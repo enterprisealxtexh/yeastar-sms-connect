@@ -258,6 +258,20 @@ export const configApi = {
   },
 };
 
+// ─── Customer Ratings ────────────────────────────────────────────────────────
+export const ratingsApi = {
+  settings: () => apiFetch<any>('/api/ratings/settings'),
+  saveSettings: (data: any) =>
+    apiCall('/api/ratings/settings', { method: 'POST', body: JSON.stringify(data) }),
+  analytics: (days = 30) => apiFetch<any>(`/api/ratings/analytics?days=${days}`),
+  publicForm: (token: string) => apiFetch<any>(`/api/public/ratings/${encodeURIComponent(token)}`),
+  submitPublic: (token: string, data: any) =>
+    apiCall(`/api/public/ratings/${encodeURIComponent(token)}/submit`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+};
+
 export default {
   auth: authApi,
   sms: smsApi,
@@ -268,6 +282,7 @@ export default {
   users: usersApi,
   contacts: contactsApi,
   config: configApi,
+  ratings: ratingsApi,
   call: apiCall,
   fetch: apiFetch,
 };

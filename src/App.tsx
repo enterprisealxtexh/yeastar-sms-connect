@@ -9,6 +9,7 @@ import { useInactivityLogout } from "@/hooks/useInactivityLogout";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import RatingPublicPage from "./pages/RatingPublicPage";
 
 // Optimized React Query configuration for better caching and performance
 const queryClient = new QueryClient({
@@ -41,6 +42,7 @@ const AppWithInactivity = () => {
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
+      <Route path="/rate/:token" element={<RatingPublicPage />} />
       <Route
         path="/"
         element={

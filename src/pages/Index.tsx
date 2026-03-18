@@ -21,6 +21,7 @@ import { CallsContactsTab } from "@/components/CallsContactsTab";
 import { AllSmsPanel } from "@/components/AllSmsPanel";
 import { StaffPanel } from "@/components/StaffPanel";
 import { NotificationsPanel } from "@/components/NotificationsPanel";
+import { CustomerRatingsPanel } from "@/components/CustomerRatingsPanel";
 
 import { DashboardSidebar, DashboardTab } from "@/components/DashboardSidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -59,7 +60,7 @@ const Index = () => {
   useEffect(() => {
     if (role === null) return; // Auth still loading, skip validation
     
-    const adminOnlyTabs: DashboardTab[] = ["notifications", "staff", "roles", "config"];
+    const adminOnlyTabs: DashboardTab[] = ["notifications", "staff", "roles", "config", "ratings"];
     if (adminOnlyTabs.includes(activeTab) && !isAdmin) {
       setActiveTab("dashboard");
     }
@@ -274,6 +275,8 @@ const Index = () => {
           )}
 
           {activeTab === "analytics" && <InsightsPanel role={role} permissions={permissions} />}
+
+          {activeTab === "ratings" && isAdmin && <CustomerRatingsPanel />}
 
           {activeTab === "roles" && (
             <RoleManagementPanel />

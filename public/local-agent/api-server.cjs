@@ -1216,6 +1216,59 @@ async function processMissedCallQueue() {
 // Auto-Reply SMS
 // ========================================
 
+function shouldGenerateRatingForSource(settings, source) {
+  const trigger = settings?.trigger_source || 'both';
+  return trigger === 'both' || trigger === source;
+}
+
+function isClockInRequiredForExtension(settings, extension) {
+  if (!extension) return false;
+  const policies = Array.isArray(settings?.extension_policies) ? settings.extension_policies : [];
+  const match = policies.find((p) => String(p.extension || '') === String(extension));
+  return !!(match && match.require_clock_in);
+}
+
+function buildRatingUrl(baseUrl, token) {
+  const base = String(baseUrl || 'https://calls.nosteq.co.ke/admin/rate').replace(/\/+$/, '');
+  return `${base}/${token}`;
+}
+
+function createRatingLinkForCustomer({ phoneNumber, source, extension = null, callRecord = null }) {
+  try {
+    const settings = db.getCustomerRatingSettings ? db.getCustomerRatingSettings() : null;
+    if (!settings?.enabled) return null;
+    if (!shouldGenerateRatingForSource(settings, source)) return null;
+
+    let possibleAgents = [];
+    if (extension && db.getActiveAgentsForExtension) {
+      possibleAgents = db.getActiveAgentsForExtension(extension);
+    }
+
+    if (isClockInRequiredForExtension(settings, extension) && possibleAgents.length === 0) {
+      logger.info(` Rating link skipped for ${phoneNumber}: extension ${extension} requires active clock-in`);
+      return null;
+    }
+
+    const link = db.createCustomerRatingLink
+      ? db.createCustomerRatingLink({
+          phone_number: phoneNumber,
+          source,
+          extension,
+          call_record_id: callRecord?.id || null,
+          possible_agent_ids: possibleAgents.map((a) => a.id),
+          metadata: callRecord ? { call_status: callRecord.status, call_time: callRecord.start_time } : null,
+        })
+      : null;
+
+    if (!link) return null;
+    const url = buildRatingUrl(settings.public_base_url, link.token);
+    return { url, token: link.token };
+  } catch (error) {
+    logger.warn(`Rating link generation failed: ${error.message}`);
+    return null;
+  }
+}
+
 async function sendAutoReplySms(senderNumber) {
   try {
     const autoReplyConfig = db.getAutoReplyConfig ? db.getAutoReplyConfig() : null;
@@ -1249,17 +1302,28 @@ async function sendAutoReplySms(senderNumber) {
       return false;
     }
 
+    let finalMessage = autoReplyConfig.message;
+    const rating = createRatingLinkForCustomer({
+      phoneNumber: senderNumber,
+      source: 'auto_reply',
+      extension: null,
+      callRecord: null,
+    });
+    if (rating?.url) {
+      finalMessage = `${finalMessage}\n\nRate our service: ${rating.url}`;
+    }
+
     logger.info(`📧 Sending auto-reply to: ${senderNumber}`);
-    logger.info(`   Message: ${autoReplyConfig.message.substring(0, 80)}...`);
-    
-    const success = await sendSmsViaGateway(senderNumber, autoReplyConfig.message);
+    logger.info(`   Message: ${finalMessage.substring(0, 80)}...`);
+
+    const success = await sendSmsViaGateway(senderNumber, finalMessage);
     
     if (success) {
       logger.info(`✅ Auto-reply SMS sent to ${senderNumber}`);
       db.logActivity('auto_reply_sms_sent', `Auto-reply sent to ${senderNumber}`, 'success');
       db.insertSMS({
         sender_number: senderNumber,
-        message_content: autoReplyConfig.message,
+        message_content: finalMessage,
         received_at: new Date().toISOString(),
         status: 'processed',
         direction: 'sent',
@@ -1385,6 +1449,16 @@ async function sendCallAutoSms(callRecord) {
       .replace(/\{time\}/g, new Date(callRecord.start_time).toLocaleTimeString('en-KE'))
       .replace(/\{date\}/g, new Date(callRecord.start_time).toLocaleDateString('en-KE'))
       .replace(/\{duration\}/g, `${callRecord.talk_duration || 0}s`);
+
+    const rating = createRatingLinkForCustomer({
+      phoneNumber: callerNumber,
+      source: 'call_auto_sms',
+      extension: callRecord.extension || null,
+      callRecord,
+    });
+    if (rating?.url) {
+      message = `${message}\n\nRate our service: ${rating.url}`;
+    }
 
     logger.info(`   Message: ${message.substring(0, 80)}...`);
     
@@ -4953,6 +5027,125 @@ app.post('/api/call-auto-sms-config', (req, res) => {
       return res.status(500).json({ success: false, error: 'Failed to save call auto-SMS config' });
     }
     res.json({ success: true, message: 'Call auto-SMS config saved' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Customer Ratings API Endpoints
+// ========================================
+
+app.get('/api/ratings/settings', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const settings = db.getCustomerRatingSettings ? db.getCustomerRatingSettings() : null;
+    res.json({ success: true, data: settings });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/ratings/settings', requireRole('super_admin'), (req, res) => {
+  try {
+    const {
+      enabled,
+      company_name,
+      company_icon_url,
+      public_base_url,
+      link_valid_hours,
+      trigger_source,
+      include_recommendation,
+      questions,
+      extension_policies,
+    } = req.body;
+
+    const ok = db.saveCustomerRatingSettings
+      ? db.saveCustomerRatingSettings({
+          enabled,
+          company_name,
+          company_icon_url,
+          public_base_url,
+          link_valid_hours,
+          trigger_source,
+          include_recommendation,
+          questions,
+          extension_policies,
+        })
+      : false;
+
+    if (!ok) {
+      return res.status(500).json({ success: false, error: 'Failed to save ratings settings' });
+    }
+
+    res.json({ success: true, message: 'Ratings settings saved' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/ratings/analytics', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const days = Number(req.query.days || 30);
+    const data = db.getCustomerRatingAnalytics ? db.getCustomerRatingAnalytics(days) : { summary: {}, byAgent: [], rows: [] };
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Public endpoints: no authentication required
+app.get('/api/public/ratings/:token', (req, res) => {
+  try {
+    const token = req.params.token;
+    const details = db.getCustomerRatingTokenDetails ? db.getCustomerRatingTokenDetails(token) : null;
+
+    if (!details || !details.link) {
+      return res.status(404).json({ success: false, error: 'Rating link not found' });
+    }
+
+    if (details.link.status === 'used') {
+      return res.status(410).json({ success: false, error: 'This rating link has already been used' });
+    }
+
+    if (details.link.status === 'expired') {
+      return res.status(410).json({ success: false, error: 'This rating link has expired' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        token,
+        phone_number: details.link.phone_number,
+        extension: details.link.extension,
+        expires_at: details.link.expires_at,
+        possible_agents: details.link.possible_agents || [],
+        settings: {
+          company_name: details.settings?.company_name || 'Customer Support',
+          company_icon_url: details.settings?.company_icon_url || '',
+          include_recommendation: !!details.settings?.include_recommendation,
+          questions: Array.isArray(details.settings?.questions) ? details.settings.questions : [],
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/public/ratings/:token/submit', (req, res) => {
+  try {
+    const token = req.params.token;
+    const { overall_rating, recommend_rating, comments, answers, agent_id } = req.body;
+
+    const result = db.submitCustomerRating
+      ? db.submitCustomerRating(token, { overall_rating, recommend_rating, comments, answers, agent_id })
+      : { success: false, error: 'Rating submission is unavailable' };
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: result.error || 'Failed to submit rating' });
+    }
+
+    res.json({ success: true, message: 'Thank you for your feedback' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
