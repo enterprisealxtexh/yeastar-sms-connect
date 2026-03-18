@@ -62,6 +62,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter
+          basename={import.meta.env.PROD ? '/admin' : '/'}
           future={{
             v7_startTransition: true,
             v7_relativeSplatPath: true,
