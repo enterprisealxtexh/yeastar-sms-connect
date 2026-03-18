@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
@@ -8,6 +10,9 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
+      },
+      env_development: {
+        NODE_ENV: 'development',
       },
       error_file: 'logs/frontend.error.log',
       out_file: 'logs/frontend.out.log',
@@ -27,9 +32,18 @@ module.exports = {
         API_PORT: 2003,
         API_HOST: '127.0.0.1',
         LOG_LEVEL: 'info',
-        SMS_DB_PATH: '/opt/yeastar-sms-connect/public/local-agent/sms.db',
+        SMS_DB_PATH: path.join(__dirname, 'public', 'local-agent', 'sms.db'),
         CORS_ORIGIN: 'https://calls.nosteq.co.ke',
         PUBLIC_APP_URL: 'https://calls.nosteq.co.ke',
+      },
+      env_development: {
+        NODE_ENV: 'development',
+        API_PORT: 2003,
+        API_HOST: '127.0.0.1',
+        LOG_LEVEL: 'info',
+        SMS_DB_PATH: path.join(__dirname, 'public', 'local-agent', 'sms.db'),
+        CORS_ORIGIN: '*',
+        PUBLIC_APP_URL: 'http://localhost:4173',
       },
       error_file: 'logs/api-server.error.log',
       out_file: 'logs/api-server.out.log',
@@ -46,6 +60,10 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
+        LOG_LEVEL: 'info',
+      },
+      env_development: {
+        NODE_ENV: 'development',
         LOG_LEVEL: 'info',
       },
       error_file: 'logs/tg400-agent.error.log',

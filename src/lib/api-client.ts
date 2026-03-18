@@ -8,7 +8,42 @@
  *   - Prod: https://calls.nosteq.co.ke  (Nginx proxies /api → localhost:2003)
  */
 
-const BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:2003').replace(/\/+$/, '');
+const BASE_URLS = (() => {
+  const configured = String(import.meta.env.VITE_API_URL || '').trim();
+  if (configured) return [configured.replace(/\/+$/, '')];
+
+  // In production, try same-origin first (nginx /api proxy), then host:2003 fallback.
+  if (import.meta.env.PROD && typeof window !== 'undefined') {
+    const originBase = String(window.location.origin || '').replace(/\/+$/, '');
+    const hostFallback = `http://${window.location.hostname}:2003`.replace(/\/+$/, '');
+    return originBase === hostFallback ? [originBase] : [originBase, hostFallback];
+  }
+
+  // Local development fallback when VITE_API_URL is not set.
+  return ['http://localhost:2003'];
+})();
+
+async function fetchJsonWithFallback(path: string, options: RequestInit): Promise<{ response: Response; result: any }> {
+  let lastError: Error | null = null;
+
+  for (const base of BASE_URLS) {
+    try {
+      const response = await fetch(`${base}${path}`, options);
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Non-JSON response from ${base}${path}`);
+      }
+
+      const result = await response.json();
+      return { response, result };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    }
+  }
+
+  throw lastError || new Error('Failed to fetch');
+}
 
 /**
  * Core fetch wrapper.
@@ -30,8 +65,7 @@ export async function apiCall<T = any>(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
 
-    const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
-    const result = await response.json();
+    const { response, result } = await fetchJsonWithFallback(path, { ...options, headers });
 
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
 
@@ -64,8 +98,7 @@ export async function apiFetchFull<T = any>(endpoint: string, options: RequestIn
     ...(options.headers as Record<string, string>),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
-  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
-  const result = await response.json();
+  const { response, result } = await fetchJsonWithFallback(path, { ...options, headers });
   if (!response.ok || !result.success) throw new Error(result.error || `HTTP ${response.status}`);
   return result as T;
 }

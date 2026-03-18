@@ -1,3 +1,5 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
@@ -23,13 +25,13 @@ module.exports = {
       exec_mode: 'fork',
       node_args: '--max-old-space-size=512',
       env: {
-        NODE_ENV: 'production',
+        NODE_ENV: 'development',
         API_PORT: 2003,
         API_HOST: '127.0.0.1',
         LOG_LEVEL: 'info',
-        SMS_DB_PATH: '/opt/yeastar-sms-connect/data/sms.db',
-        CORS_ORIGIN: 'https://calls.nosteq.co.ke',
-        PUBLIC_APP_URL: 'https://calls.nosteq.co.ke',
+        SMS_DB_PATH: path.join(__dirname, 'public', 'local-agent', 'sms.db'),
+        CORS_ORIGIN: '*',
+        PUBLIC_APP_URL: 'http://localhost:4173',
       },
       error_file: 'logs/api-server.error.log',
       out_file: 'logs/api-server.out.log',

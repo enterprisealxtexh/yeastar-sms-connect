@@ -49,7 +49,7 @@ const defaultSettings: RatingSettings = {
   enabled: false,
   company_name: "Customer Support",
   company_icon_url: "",
-  public_base_url: "app_url/support/rating",
+  public_base_url: "/support",
   link_valid_hours: 24,
   trigger_source: "both",
   include_recommendation: true,
@@ -77,6 +77,7 @@ export const CustomerRatingsPanel = () => {
 
   const [activeTab, setActiveTab] = useState<"analytics" | "configuration">("analytics");
   const [settings, setSettings] = useState<RatingSettings>(defaultSettings);
+  const [showFilters, setShowFilters] = useState(false);
 
   const [days, setDays] = useState(30);
   const [startDate, setStartDate] = useState("");
@@ -119,9 +120,13 @@ export const CustomerRatingsPanel = () => {
 
   useEffect(() => {
     if (!settingsData) return;
+    const normalizedBaseUrl = String(settingsData.public_base_url || defaultSettings.public_base_url)
+      .replace(/^app_url(?=\/|$)/i, "") || "/support";
+
     setSettings({
       ...defaultSettings,
       ...settingsData,
+      public_base_url: normalizedBaseUrl,
       questions: Array.isArray(settingsData.questions) && settingsData.questions.length > 0
         ? settingsData.questions
         : defaultSettings.questions,
@@ -205,7 +210,9 @@ export const CustomerRatingsPanel = () => {
 
   const publicPreviewLink = useMemo(() => {
     const base = String(settings.public_base_url || "").replace(/\/+$/, "");
-    return base ? `${base}/<token>` : "";
+    if (!base) return "";
+    const ratingPath = /\/(rating|rate)$/i.test(base) ? base : `${base}/rating`;
+    return `${ratingPath}/<token>`;
   }, [settings.public_base_url]);
 
   const resetFilters = () => {
@@ -243,88 +250,93 @@ export const CustomerRatingsPanel = () => {
       {activeTab === "analytics" && (
         <>
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle>Ratings Analytics</CardTitle>
+              <Button variant="outline" size="sm" onClick={() => setShowFilters((v) => !v)}>
+                {showFilters ? "Hide Filters" : "Show Filters"}
+              </Button>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Period</Label>
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={days}
-                    onChange={(e) => setDays(Number(e.target.value || 30))}
-                  >
-                    <option value={7}>Last 7 days</option>
-                    <option value={30}>Last 30 days</option>
-                    <option value={90}>Last 90 days</option>
-                  </select>
+            {showFilters && (
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>Period</Label>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={days}
+                      onChange={(e) => setDays(Number(e.target.value || 30))}
+                    >
+                      <option value={7}>Last 7 days</option>
+                      <option value={30}>Last 30 days</option>
+                      <option value={90}>Last 90 days</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Start Date</Label>
+                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>End Date</Label>
+                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Start Date</Label>
-                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>End Date</Label>
-                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                </div>
-              </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Served By</Label>
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={agentId}
-                    onChange={(e) => setAgentId(e.target.value)}
-                  >
-                    <option value="">All users</option>
-                    {agentOptions.map((a: any) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>Served By</Label>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={agentId}
+                      onChange={(e) => setAgentId(e.target.value)}
+                    >
+                      <option value="">All users</option>
+                      {agentOptions.map((a: any) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Source</Label>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={source}
+                      onChange={(e) => setSource(e.target.value)}
+                    >
+                      <option value="">All sources</option>
+                      <option value="auto_reply">Auto Reply</option>
+                      <option value="call_auto_sms">Call Auto-SMS</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Extension</Label>
+                    <Input value={extension} onChange={(e) => setExtension(e.target.value)} placeholder="e.g. 1001" />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Source</Label>
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={source}
-                    onChange={(e) => setSource(e.target.value)}
-                  >
-                    <option value="">All sources</option>
-                    <option value="auto_reply">Auto Reply</option>
-                    <option value="call_auto_sms">Call Auto-SMS</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Extension</Label>
-                  <Input value={extension} onChange={(e) => setExtension(e.target.value)} placeholder="e.g. 1001" />
-                </div>
-              </div>
 
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Search</Label>
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Phone, served-by, extension, comment"
-                  />
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Search</Label>
+                    <Input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Phone, served-by, extension, comment"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Min Rating</Label>
+                    <Input type="number" min={1} max={5} value={minRating} onChange={(e) => setMinRating(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Rating</Label>
+                    <Input type="number" min={1} max={5} value={maxRating} onChange={(e) => setMaxRating(e.target.value)} />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Min Rating</Label>
-                  <Input type="number" min={1} max={5} value={minRating} onChange={(e) => setMinRating(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Max Rating</Label>
-                  <Input type="number" min={1} max={5} value={maxRating} onChange={(e) => setMaxRating(e.target.value)} />
-                </div>
-              </div>
 
-              <div>
-                <Button variant="outline" size="sm" onClick={resetFilters}>Reset Filters</Button>
-              </div>
-            </CardContent>
+                <div>
+                  <Button variant="outline" size="sm" onClick={resetFilters}>Reset Filters</Button>
+                </div>
+              </CardContent>
+            )}
           </Card>
 
           <Card>
@@ -545,7 +557,7 @@ export const CustomerRatingsPanel = () => {
                     <Input
                       value={settings.public_base_url}
                       onChange={(e) => setSettings((s) => ({ ...s, public_base_url: e.target.value }))}
-                      placeholder="app_url/support/rating"
+                      placeholder="/support"
                       disabled={!canEdit}
                     />
                     <p className="text-xs text-muted-foreground">Preview: {publicPreviewLink || "-"}</p>

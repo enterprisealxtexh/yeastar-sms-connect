@@ -128,11 +128,13 @@ const RatingPublicPage = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {effectiveData?.settings?.company_icon_url ? (
-                <img
-                  src={effectiveData.settings.company_icon_url}
-                  alt="Company icon"
-                  className="h-10 w-10 rounded object-cover"
-                />
+                <div className="h-14 w-14 rounded-md border bg-white/95 p-1 shadow-sm">
+                  <img
+                    src={effectiveData.settings.company_icon_url}
+                    alt="Company icon"
+                    className="h-full w-full object-contain"
+                  />
+                </div>
               ) : null}
               <div>
                 <CardTitle>{effectiveData?.settings?.company_name || "Customer Support"}</CardTitle>
@@ -154,12 +156,9 @@ const RatingPublicPage = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          {effectiveData?.served_by_agent && (
+          {effectiveData?.served_by_agent?.name && (
             <div className="rounded-md border p-3 text-sm bg-muted/30">
               Served by: <strong>{effectiveData.served_by_agent.name}</strong>
-              {effectiveData.served_by_agent.extension && (
-                <span className="text-xs text-muted-foreground ml-2">(Ext {effectiveData.served_by_agent.extension})</span>
-              )}
             </div>
           )}
 

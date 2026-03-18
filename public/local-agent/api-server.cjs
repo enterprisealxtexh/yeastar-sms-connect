@@ -105,7 +105,7 @@ process.on('unhandledRejection', (reason) => {
 const dbPath = process.env.SMS_DB_PATH || path.join(__dirname, 'sms.db');
 const db = require('./shared-db.cjs');
 
-if (!db) {
+if (!db || !db.db) {
   console.error('Failed to initialize database. Exiting.');
   process.exit(1);
 }
@@ -1312,9 +1312,21 @@ function resolveSystemAppUrl() {
 
 function buildRatingUrl(baseUrl, token) {
   const appUrl = resolveSystemAppUrl();
-  const rawBase = String(baseUrl || 'app_url/support/rating').trim();
-  const resolvedBase = rawBase.replace(/^app_url(?=\/|$)/, appUrl).replace(/\/+$/, '');
-  return `${resolvedBase}/${token}`;
+  const rawBase = String(baseUrl || '/support').trim();
+  const withoutLegacyPrefix = rawBase.replace(/^app_url(?=\/|$)/i, '').trim();
+
+  let resolvedBase = '';
+  if (/^https?:\/\//i.test(withoutLegacyPrefix)) {
+    resolvedBase = withoutLegacyPrefix.replace(/\/+$/, '');
+  } else {
+    const normalizedPath = (withoutLegacyPrefix || '/support').startsWith('/')
+      ? (withoutLegacyPrefix || '/support')
+      : `/${withoutLegacyPrefix || 'support'}`;
+    resolvedBase = `${appUrl}${normalizedPath}`.replace(/\/+$/, '');
+  }
+
+  const withRatingPath = /\/(rating|rate)$/i.test(resolvedBase) ? resolvedBase : `${resolvedBase}/rating`;
+  return `${withRatingPath}/${token}`;
 }
 
 function createRatingLinkForCustomer({ phoneNumber, source, extension = null, callRecord = null }) {

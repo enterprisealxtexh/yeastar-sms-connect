@@ -539,7 +539,7 @@ class SMSDatabase {
         enabled BOOLEAN DEFAULT 0,
         company_name TEXT DEFAULT 'Customer Support',
         company_icon_url TEXT DEFAULT '',
-        public_base_url TEXT DEFAULT 'app_url/support/rating',
+        public_base_url TEXT DEFAULT '/support',
         link_valid_hours INTEGER DEFAULT 24,
         trigger_source TEXT DEFAULT 'both' CHECK (trigger_source IN ('auto_reply', 'call_auto_sms', 'both')),
         include_recommendation BOOLEAN DEFAULT 1,
@@ -680,7 +680,7 @@ class SMSDatabase {
         0,
         'Customer Support',
         '',
-        'app_url/support/rating',
+        '/support',
         24,
         'both',
         1,
@@ -990,7 +990,41 @@ class SMSDatabase {
         // ignore
       }
 
-      // Migration: normalize rating public URL default to app_url/support/rating
+      // Migration: hard dedupe for inbound SMS and enforce uniqueness at DB level.
+      // This prevents race-condition double inserts when two handlers process the same event.
+      try {
+        const hasSmsTable = this.db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='sms_messages' LIMIT 1
+        `).get();
+
+        if (hasSmsTable) {
+          this.db.exec(`
+            DELETE FROM sms_messages
+            WHERE rowid IN (
+              SELECT s1.rowid
+              FROM sms_messages s1
+              JOIN sms_messages s2
+                ON s1.sender_number = s2.sender_number
+               AND s1.message_content = s2.message_content
+               AND COALESCE(s1.received_at, '') = COALESCE(s2.received_at, '')
+               AND COALESCE(s1.gsm_span, -1) = COALESCE(s2.gsm_span, -1)
+               AND COALESCE(s1.direction, 'received') = COALESCE(s2.direction, 'received')
+               AND s1.rowid > s2.rowid
+               AND COALESCE(s1.direction, 'received') = 'received'
+            )
+          `);
+
+          this.db.exec(`
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_received_dedupe
+            ON sms_messages(sender_number, message_content, received_at, COALESCE(gsm_span, -1))
+            WHERE direction = 'received'
+          `);
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Migration: normalize rating public URL default to /support
       try {
         const hasRatingsSettings = this.db.prepare(`
           SELECT name FROM sqlite_master WHERE type='table' AND name='customer_rating_settings' LIMIT 1
@@ -998,11 +1032,13 @@ class SMSDatabase {
         if (hasRatingsSettings) {
           this.db.prepare(`
             UPDATE customer_rating_settings
-            SET public_base_url = 'app_url/support/rating',
+            SET public_base_url = '/support',
                 updated_at = CURRENT_TIMESTAMP
             WHERE public_base_url IS NULL
                OR TRIM(public_base_url) = ''
                OR public_base_url = 'https://calls.nosteq.co.ke/admin/rate'
+               OR public_base_url = 'app_url/support'
+               OR public_base_url = 'app_url/support/rating'
           `).run();
         }
       } catch (e) {
@@ -2118,8 +2154,32 @@ class SMSDatabase {
           return true; // Already stored — not an error
         }
 
+        // Exact duplicate guard for inbound messages where external_id is missing.
+        // This catches repeated gateway events that carry the same timestamp/content.
+        const exactDup = this.db.prepare(`
+          SELECT id
+          FROM sms_messages
+          WHERE direction = 'received'
+            AND sender_number = ?
+            AND message_content = ?
+            AND COALESCE(gsm_span, -1) = COALESCE(?, -1)
+            AND received_at = ?
+          LIMIT 1
+        `).get(
+          sender_number,
+          message_content || '',
+          gsm_span !== undefined ? gsm_span : null,
+          received_at || new Date().toISOString()
+        );
+
+        if (exactDup) {
+          logger.debug(`ℹ️  SMS exact duplicate skipped: sender=${sender_number}, gsm_span=${gsm_span}`);
+          return true;
+        }
+
         // Check for duplicates within last 5 seconds by content+sender+(gsm_span if present)
-        const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
+        const dedupeWindowMs = 30000; // 30s anti-duplicate window for rapid repeat gateway events
+        const fiveSecondsAgo = new Date(Date.now() - dedupeWindowMs).toISOString();
         const contentAbstract = message_content ? message_content.substring(0, 100) : '';
         const hasGsmSpan = gsm_span !== undefined && gsm_span !== null;
 
@@ -2132,7 +2192,7 @@ class SMSDatabase {
         const recentDup = this.db.prepare(recentDupSql).get(...recentDupArgs);
         
         if (recentDup) {
-          logger.debug(`ℹ️  SMS likely duplicate (received within 5s): sender=${sender_number}`);
+          logger.debug(`ℹ️  SMS likely duplicate (received within 30s): sender=${sender_number}`);
           return true; // Already stored — not an error
         }
         
@@ -2140,7 +2200,7 @@ class SMSDatabase {
         const simPort = hasGsmSpan ? Math.max(1, Math.min(4, gsm_span - 1)) : null;
         
         const stmt = this.db.prepare(`
-          INSERT INTO sms_messages 
+          INSERT OR IGNORE INTO sms_messages 
           (external_id, sender_number, message_content, received_at, sim_port, gsm_span, status, direction, category)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
@@ -2162,8 +2222,8 @@ class SMSDatabase {
           return true;
         }
         
-        logger.warn(`⚠️  SMS insert returned 0 changes: ${sender_number} on GsmSpan ${gsm_span}`);
-        return false;
+        logger.debug(`ℹ️  SMS insert ignored (duplicate or constraint): sender=${sender_number}, gsm_span=${gsm_span}, ext_id=${external_id || 'null'}`);
+        return true;
         
       } catch (error) {
         lastError = error;
@@ -2316,37 +2376,28 @@ class SMSDatabase {
   }
   saveSMSMessage(smsData) {
     try {
-      // gsm_span (2-5), sim_port (1-4): sim_port = gsm_span - 1
       const gsm_span = smsData.gsm_span || (smsData.sim_port ? smsData.sim_port + 1 : 2);
-      const sim_port = smsData.sim_port || Math.max(1, Math.min(4, gsm_span - 1));
-      
-      // Validate gsm_span is in valid range
+
       if (gsm_span < 2 || gsm_span > 5) {
         throw new Error(`Invalid gsm_span: ${gsm_span}. Must be 2-5`);
       }
-      
-      const stmt = this.db.prepare(`
-        INSERT INTO sms_messages (
-          sender_number, message_content, sim_port, gsm_span, status, 
-          external_id, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      const result = stmt.run(
-        smsData.sender_number,
-        smsData.message_content,
-        sim_port,
+
+      const saved = this.insertSMS({
+        external_id: smsData.external_id || null,
+        sender_number: smsData.sender_number,
+        message_content: smsData.message_content,
+        received_at: smsData.received_at || new Date().toISOString(),
         gsm_span,
-        smsData.status || 'unread',
-        smsData.external_id || null,
-        smsData.received_at || new Date().toISOString()
-      );
-      
-      // ✅ Auto-save contact from SMS sender
-      if (result.changes > 0 && smsData.sender_number) {
+        status: smsData.status || 'unread',
+        direction: smsData.direction || 'received',
+        category: smsData.category || null,
+      });
+
+      if (saved && smsData.sender_number) {
         this.saveOrUpdateContact(smsData.sender_number, null, 'sms');
       }
-      
-      return result.changes > 0;
+
+      return !!saved;
     } catch (error) {
       console.error('❌ Error saving SMS message:', error.message);
       console.error('   Data:', { sender: smsData.sender_number, gsm_span: smsData.gsm_span });
@@ -2356,33 +2407,16 @@ class SMSDatabase {
 
   saveBulkSMS(messages) {
     try {
-      // sim_port (1-4), gsm_span (2-5): sim_port = gsm_span - 1
-      const insert = this.db.prepare(`
-        INSERT INTO sms_messages (
-          sender_number, message_content, sim_port, gsm_span, status, 
-          external_id, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      
+      let allOk = true;
       const insertMany = this.db.transaction((msgs) => {
         for (const msg of msgs) {
-          const gsm_span = msg.gsm_span || (msg.sim_port ? msg.sim_port + 1 : 2);
-          const sim_port = msg.sim_port || Math.max(1, Math.min(4, gsm_span - 1));
-          
-          insert.run(
-            msg.sender_number,
-            msg.message_content,
-            sim_port,
-            gsm_span,
-            msg.status || 'unread',
-            msg.external_id || null,
-            msg.received_at || new Date().toISOString()
-          );
+          const saved = this.saveSMSMessage(msg);
+          if (!saved) allOk = false;
         }
       });
 
       insertMany(messages);
-      return true;
+      return allOk;
     } catch (error) {
       console.error('Error saving bulk SMS:', error.message);
       return false;
@@ -3350,7 +3384,7 @@ class SMSDatabase {
         enabled: settings.enabled !== undefined ? (settings.enabled ? 1 : 0) : (current.enabled ? 1 : 0),
         company_name: settings.company_name ?? current.company_name ?? 'Customer Support',
         company_icon_url: settings.company_icon_url ?? current.company_icon_url ?? '',
-        public_base_url: settings.public_base_url ?? current.public_base_url ?? 'app_url/support/rating',
+        public_base_url: settings.public_base_url ?? current.public_base_url ?? '/support',
         link_valid_hours: Number(settings.link_valid_hours ?? current.link_valid_hours ?? 24),
         trigger_source: settings.trigger_source ?? current.trigger_source ?? 'both',
         include_recommendation: settings.include_recommendation !== undefined
