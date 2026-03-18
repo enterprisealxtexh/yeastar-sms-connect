@@ -359,19 +359,48 @@ class YeastarPBXAPI {
       endTime = new Date().toISOString().split('T')[0];
     }
 
+    // Normalize date-only values to full datetime so PBX APIs that require timestamps still work.
+    const normalizedStart = /^\d{4}-\d{2}-\d{2}$/.test(String(startTime))
+      ? `${startTime} 00:00:00`
+      : String(startTime);
+    const normalizedEnd = /^\d{4}-\d{2}-\d{2}$/.test(String(endTime))
+      ? `${endTime} 23:59:59`
+      : String(endTime);
+
     const params = new URLSearchParams({
       access_token: token,
-      starttime: startTime,
-      endtime: endTime,
+      starttime: normalizedStart,
+      endtime: normalizedEnd,
       limit: limit.toString()
     });
+
+    const normalizeCdrPayload = (response) => {
+      const candidateArrays = [
+        response?.data,
+        response?.cdrs,
+        response?.cdr,
+        response?.records,
+        response?.result,
+        response?.items,
+      ];
+      for (const arr of candidateArrays) {
+        if (Array.isArray(arr)) {
+          return {
+            status: 'Success',
+            data: arr,
+            raw: response,
+          };
+        }
+      }
+      return null;
+    };
 
     try {
       // Try different CDR endpoints
       const endpoints = [
         `/api/v1.0.0/cdr/get?${params}`,
-        `/api/v2.0.0/cdr/query?token=${token}&starttime=${startTime}&endtime=${endTime}&limit=${limit}`,
-        `/api/v1.0.0/recording/get?${params}`
+        `/api/v2.0.0/cdr/query?token=${token}&starttime=${encodeURIComponent(normalizedStart)}&endtime=${encodeURIComponent(normalizedEnd)}&limit=${limit}`,
+        `/api/v1.0.0/recording/get?${params}`,
       ];
 
       for (const endpoint of endpoints) {
@@ -379,11 +408,34 @@ class YeastarPBXAPI {
           logger.info(`Querying CDR: ${endpoint}`);
           const response = await this.makeRequest('GET', endpoint);
           if (response.status === 'Success' || response.errcode === 0) {
-            return response;
+            const normalized = normalizeCdrPayload(response);
+            if (normalized) {
+              return normalized;
+            }
           }
         } catch (error) {
           logger.debug(`CDR endpoint failed: ${endpoint} - ${error.message}`);
         }
+      }
+
+      // v1.1.0 query endpoint (some PBX setups allow query but block download random token)
+      try {
+        const response = await this.makeRequest('POST', `/api/v1.1.0/cdr/query?token=${token}`, {
+          extid: 'all',
+          starttime: normalizedStart,
+          endtime: normalizedEnd,
+          page: 1,
+          page_size: limit,
+          sort: 'desc',
+        });
+        if (response.status === 'Success' || response.errcode === 0) {
+          const normalized = normalizeCdrPayload(response);
+          if (normalized) {
+            return normalized;
+          }
+        }
+      } catch (error) {
+        logger.debug(`CDR endpoint failed: /api/v1.1.0/cdr/query - ${error.message}`);
       }
       
       // If all endpoints fail, return empty response
@@ -766,7 +818,7 @@ class YeastarPBXAPI {
   }
 
   // Get CDR file download random token
-  async getCDRRandom(extid = 'all', starttime, endtime) {
+  async getCDRRandom(extid = 'all', starttime, endtime, allowReauthRetry = true) {
     const token = await this.getToken();
     
     try {
@@ -790,6 +842,13 @@ class YeastarPBXAPI {
         };
       } else {
         const errCode = response.errno || response.errmsg || 'Unknown error';
+        // Some PBX firmwares return token-related codes while our cached token still exists.
+        // Force a single re-auth and retry before failing.
+        if (allowReauthRetry && ['20004', '10003', '10004'].includes(String(errCode))) {
+          logger.warn(` CDR random failed with ${errCode}; forcing PBX re-auth and retrying once`);
+          this.token = null;
+          return await this.getCDRRandom(extid, starttime, endtime, false);
+        }
         logger.warn(` CDR random failed: ${errCode} (This may indicate PBX permissions issue)`);
         return { status: 'Failed', error: errCode };
       }
@@ -814,6 +873,8 @@ class YeastarPBXAPI {
       // Step 1: Get random token
       const randomResponse = await this.getCDRRandom(extid, starttime, endtime);
       if (randomResponse.status !== 'Success' || !randomResponse.random) {
+        // Known PBX behavior: errno 20004 can happen when download permission/module is restricted.
+        // Caller will trigger queryCDR fallback.
         throw new Error(`Failed to get CDR random token: ${randomResponse.error}`);
       }
       
@@ -1030,7 +1091,7 @@ async function syncCallRecords() {
       logger.warn(` CDR download failed, trying query fallback: ${cdrResult?.error || 'Unknown error'}`);
 
       try {
-        const fallbackResult = await pbxAPI.queryCDR(startDate, now, 5000);
+        const fallbackResult = await pbxAPI.queryCDR(`${startDate} 00:00:00`, `${now} 23:59:59`, 5000);
         if (fallbackResult && fallbackResult.status === 'Success' && Array.isArray(fallbackResult.data)) {
           cdrResult = fallbackResult;
           logger.info(` CDR query fallback returned ${fallbackResult.data.length} records`);
