@@ -28,6 +28,7 @@ module.exports = {
         API_HOST: '127.0.0.1',
         LOG_LEVEL: 'info',
         SMS_DB_PATH: '/opt/yeastar-sms-connect/public/local-agent/sms.db',
+        CORS_ORIGIN: 'https://calls.nosteq.co.ke',
       },
       error_file: 'logs/api-server.error.log',
       out_file: 'logs/api-server.out.log',

@@ -43,11 +43,13 @@ const SYSTEM_UPDATE_TOKEN = process.env.SYSTEM_UPDATE_TOKEN || process.env.GITHU
 
 // Middleware - Order matters: compression first for performance
 app.use(compression({ level: 6 })); // gzip compression with level 6
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 app.use(cors({
-  origin: '*',
+  origin: CORS_ORIGIN === '*' ? '*' : CORS_ORIGIN.split(',').map(s => s.trim()),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 200
 }));
+logger.info(`[CORS] Allowed origin(s): ${CORS_ORIGIN}`);
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -1908,7 +1910,8 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
     }
 
     // Format all phone numbers to international format
-    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n));
+    // Sanitize to digits-only before shell interpolation to prevent command injection
+    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n).replace(/\D/g, ''));
     const mobileParam = formattedNumbers.join(',');
     
     logger.info(`📤 Sending SMS via gateway to: ${mobileParam}`);
@@ -2005,7 +2008,8 @@ async function sendSmsReport(phoneNumbers, messageText) {
     }
 
     // Format all phone numbers to international format and join
-    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n));
+    // Sanitize to digits-only before shell interpolation to prevent command injection
+    const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n).replace(/\D/g, ''));
     const mobileParam = formattedNumbers.join(',');
     
     logger.info(`📤 SMS sending to: ${mobileParam}`);
