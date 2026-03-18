@@ -263,7 +263,33 @@ export const ratingsApi = {
   settings: () => apiFetch<any>('/api/ratings/settings'),
   saveSettings: (data: any) =>
     apiCall('/api/ratings/settings', { method: 'POST', body: JSON.stringify(data) }),
-  analytics: (days = 30) => apiFetch<any>(`/api/ratings/analytics?days=${days}`),
+  analytics: (params?: {
+    days?: number;
+    startDate?: string;
+    endDate?: string;
+    agentId?: string;
+    source?: string;
+    extension?: string;
+    minRating?: number | string;
+    maxRating?: number | string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.days != null) q.set('days', String(params.days));
+    if (params?.startDate) q.set('startDate', params.startDate);
+    if (params?.endDate) q.set('endDate', params.endDate);
+    if (params?.agentId) q.set('agentId', params.agentId);
+    if (params?.source) q.set('source', params.source);
+    if (params?.extension) q.set('extension', params.extension);
+    if (params?.minRating != null && String(params.minRating) !== '') q.set('minRating', String(params.minRating));
+    if (params?.maxRating != null && String(params.maxRating) !== '') q.set('maxRating', String(params.maxRating));
+    if (params?.search) q.set('search', params.search);
+    if (params?.page != null) q.set('page', String(params.page));
+    if (params?.pageSize != null) q.set('pageSize', String(params.pageSize));
+    return apiFetch<any>(`/api/ratings/analytics?${q.toString()}`);
+  },
   publicForm: (token: string) => apiFetch<any>(`/api/public/ratings/${encodeURIComponent(token)}`),
   submitPublic: (token: string, data: any) =>
     apiCall(`/api/public/ratings/${encodeURIComponent(token)}/submit`, {

@@ -539,7 +539,7 @@ class SMSDatabase {
         enabled BOOLEAN DEFAULT 0,
         company_name TEXT DEFAULT 'Customer Support',
         company_icon_url TEXT DEFAULT '',
-        public_base_url TEXT DEFAULT 'https://calls.nosteq.co.ke/admin/rate',
+        public_base_url TEXT DEFAULT 'app_url/support/rating',
         link_valid_hours INTEGER DEFAULT 24,
         trigger_source TEXT DEFAULT 'both' CHECK (trigger_source IN ('auto_reply', 'call_auto_sms', 'both')),
         include_recommendation BOOLEAN DEFAULT 1,
@@ -680,7 +680,7 @@ class SMSDatabase {
         0,
         'Customer Support',
         '',
-        'https://calls.nosteq.co.ke/admin/rate',
+        'app_url/support/rating',
         24,
         'both',
         1,
@@ -986,6 +986,25 @@ class SMSDatabase {
         const arInfo = this.db.prepare(`PRAGMA table_info(auto_reply_config)`).all();
         const arCols = arInfo.map(c => c.name);
         if (!arCols.includes('allowed_extensions')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN allowed_extensions TEXT DEFAULT '[]'`);
+      } catch (e) {
+        // ignore
+      }
+
+      // Migration: normalize rating public URL default to app_url/support/rating
+      try {
+        const hasRatingsSettings = this.db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='customer_rating_settings' LIMIT 1
+        `).get();
+        if (hasRatingsSettings) {
+          this.db.prepare(`
+            UPDATE customer_rating_settings
+            SET public_base_url = 'app_url/support/rating',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE public_base_url IS NULL
+               OR TRIM(public_base_url) = ''
+               OR public_base_url = 'https://calls.nosteq.co.ke/admin/rate'
+          `).run();
+        }
       } catch (e) {
         // ignore
       }
@@ -3331,7 +3350,7 @@ class SMSDatabase {
         enabled: settings.enabled !== undefined ? (settings.enabled ? 1 : 0) : (current.enabled ? 1 : 0),
         company_name: settings.company_name ?? current.company_name ?? 'Customer Support',
         company_icon_url: settings.company_icon_url ?? current.company_icon_url ?? '',
-        public_base_url: settings.public_base_url ?? current.public_base_url ?? 'https://calls.nosteq.co.ke/admin/rate',
+        public_base_url: settings.public_base_url ?? current.public_base_url ?? 'app_url/support/rating',
         link_valid_hours: Number(settings.link_valid_hours ?? current.link_valid_hours ?? 24),
         trigger_source: settings.trigger_source ?? current.trigger_source ?? 'both',
         include_recommendation: settings.include_recommendation !== undefined
@@ -3559,31 +3578,107 @@ class SMSDatabase {
     }
   }
 
-  getCustomerRatingAnalytics(days = 30) {
+  getCustomerRatingAnalytics(options = {}) {
     try {
-      const safeDays = Math.max(1, Number(days || 30));
+      const opts = typeof options === 'number' ? { days: options } : (options || {});
+      const safeDays = Math.max(1, Number(opts.days || 30));
+      const page = Math.max(1, Number(opts.page || 1));
+      const pageSize = Math.min(200, Math.max(5, Number(opts.pageSize || 20)));
+      const offset = (page - 1) * pageSize;
+
+      const where = [];
+      const params = [];
+
+      if (opts.startDate || opts.endDate) {
+        if (opts.startDate) {
+          where.push('date(s.submitted_at) >= date(?)');
+          params.push(String(opts.startDate));
+        }
+        if (opts.endDate) {
+          where.push('date(s.submitted_at) <= date(?)');
+          params.push(String(opts.endDate));
+        }
+      } else {
+        where.push("datetime(s.submitted_at) >= datetime('now', '-' || ? || ' days')");
+        params.push(safeDays);
+      }
+
+      if (opts.agentId) {
+        if (String(opts.agentId) === 'unattributed') {
+          where.push('s.agent_id IS NULL');
+        } else {
+          where.push('s.agent_id = ?');
+          params.push(String(opts.agentId));
+        }
+      }
+
+      if (opts.source) {
+        where.push('l.source = ?');
+        params.push(String(opts.source));
+      }
+
+      if (opts.extension) {
+        where.push('s.extension = ?');
+        params.push(String(opts.extension));
+      }
+
+      if (opts.minRating != null && String(opts.minRating) !== '') {
+        where.push('s.overall_rating >= ?');
+        params.push(Number(opts.minRating));
+      }
+
+      if (opts.maxRating != null && String(opts.maxRating) !== '') {
+        where.push('s.overall_rating <= ?');
+        params.push(Number(opts.maxRating));
+      }
+
+      if (opts.search) {
+        const q = `%${String(opts.search).trim().toLowerCase()}%`;
+        if (q !== '%%') {
+          where.push(`(
+            lower(s.phone_number) LIKE ?
+            OR lower(COALESCE(s.comments, '')) LIKE ?
+            OR lower(COALESCE(a.name, '-')) LIKE ?
+            OR lower(COALESCE(s.extension, '')) LIKE ?
+          )`);
+          params.push(q, q, q, q);
+        }
+      }
+
+      const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+      const fromJoin = `
+        FROM customer_rating_submissions s
+        LEFT JOIN agents a ON a.id = s.agent_id
+        LEFT JOIN customer_rating_links l ON l.id = s.link_id
+      `;
 
       const summary = this.db.prepare(`
         SELECT
           COUNT(*) AS total_submissions,
-          ROUND(AVG(overall_rating), 2) AS avg_overall_rating,
-          ROUND(AVG(recommend_rating), 2) AS avg_recommend_rating
-        FROM customer_rating_submissions
-        WHERE datetime(submitted_at) >= datetime('now', '-' || ? || ' days')
-      `).get(safeDays);
+          ROUND(AVG(s.overall_rating), 2) AS avg_overall_rating,
+          ROUND(AVG(s.recommend_rating), 2) AS avg_recommend_rating
+        ${fromJoin}
+        ${whereClause}
+      `).get(...params);
 
       const byAgent = this.db.prepare(`
         SELECT
-          COALESCE(a.name, 'Unattributed') AS agent_name,
-          s.agent_id,
+          COALESCE(a.name, '-') AS agent_name,
+          COALESCE(s.agent_id, 'unattributed') AS agent_id,
           COUNT(*) AS total,
           ROUND(AVG(s.overall_rating), 2) AS avg_rating
-        FROM customer_rating_submissions s
-        LEFT JOIN agents a ON a.id = s.agent_id
-        WHERE datetime(s.submitted_at) >= datetime('now', '-' || ? || ' days')
-        GROUP BY s.agent_id, a.name
+        ${fromJoin}
+        ${whereClause}
+        GROUP BY COALESCE(s.agent_id, 'unattributed'), COALESCE(a.name, '-')
         ORDER BY avg_rating DESC, total DESC
-      `).all(safeDays);
+      `).all(...params);
+
+      const total = this.db.prepare(`
+        SELECT COUNT(*) AS count
+        ${fromJoin}
+        ${whereClause}
+      `).get(...params).count;
 
       const rows = this.db.prepare(`
         SELECT
@@ -3595,23 +3690,78 @@ class SMSDatabase {
           s.answers_json,
           s.extension,
           s.submitted_at,
-          COALESCE(a.name, 'Unattributed') AS agent_name,
+          COALESCE(a.name, '-') AS agent_name,
+          COALESCE(s.agent_id, 'unattributed') AS agent_id,
           l.source
+        ${fromJoin}
+        ${whereClause}
+        ORDER BY s.submitted_at DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, pageSize, offset);
+
+      const trend = this.db.prepare(`
+        SELECT
+          date(s.submitted_at) AS day,
+          COALESCE(a.name, '-') AS agent_name,
+          COALESCE(s.agent_id, 'unattributed') AS agent_id,
+          ROUND(AVG(s.overall_rating), 2) AS avg_rating,
+          COUNT(*) AS total
+        ${fromJoin}
+        ${whereClause}
+        GROUP BY day, COALESCE(s.agent_id, 'unattributed'), COALESCE(a.name, '-')
+        ORDER BY day ASC, agent_name ASC
+      `).all(...params);
+
+      // Agent filter options are period-aware (date window), not search-constrained.
+      const dateWhere = [];
+      const dateParams = [];
+      if (opts.startDate || opts.endDate) {
+        if (opts.startDate) {
+          dateWhere.push('date(s.submitted_at) >= date(?)');
+          dateParams.push(String(opts.startDate));
+        }
+        if (opts.endDate) {
+          dateWhere.push('date(s.submitted_at) <= date(?)');
+          dateParams.push(String(opts.endDate));
+        }
+      } else {
+        dateWhere.push("datetime(s.submitted_at) >= datetime('now', '-' || ? || ' days')");
+        dateParams.push(safeDays);
+      }
+      const dateWhereClause = dateWhere.length ? `WHERE ${dateWhere.join(' AND ')}` : '';
+
+      const agents = this.db.prepare(`
+        SELECT DISTINCT
+          COALESCE(a.id, 'unattributed') AS id,
+          COALESCE(a.name, '-') AS name
         FROM customer_rating_submissions s
         LEFT JOIN agents a ON a.id = s.agent_id
-        LEFT JOIN customer_rating_links l ON l.id = s.link_id
-        WHERE datetime(s.submitted_at) >= datetime('now', '-' || ? || ' days')
-        ORDER BY s.submitted_at DESC
-        LIMIT 500
-      `).all(safeDays);
+        ${dateWhereClause}
+        ORDER BY name ASC
+      `).all(...dateParams);
 
-      return { summary, byAgent, rows };
+      return {
+        summary: summary || { total_submissions: 0, avg_overall_rating: 0, avg_recommend_rating: 0 },
+        byAgent,
+        rows,
+        trend,
+        agents,
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages: Math.max(1, Math.ceil((total || 0) / pageSize)),
+        },
+      };
     } catch (error) {
       console.error('Error getting customer rating analytics:', error.message);
       return {
         summary: { total_submissions: 0, avg_overall_rating: 0, avg_recommend_rating: 0 },
         byAgent: [],
         rows: [],
+        trend: [],
+        agents: [],
+        pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
       };
     }
   }

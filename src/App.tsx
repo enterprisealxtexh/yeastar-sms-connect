@@ -43,6 +43,7 @@ const AppWithInactivity = () => {
     <Routes>
       <Route path="/auth" element={<Auth />} />
       <Route path="/rate/:token" element={<RatingPublicPage />} />
+      <Route path="/support/rating/:token" element={<RatingPublicPage />} />
       <Route
         path="/"
         element={

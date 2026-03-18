@@ -1229,8 +1229,10 @@ function isClockInRequiredForExtension(settings, extension) {
 }
 
 function buildRatingUrl(baseUrl, token) {
-  const base = String(baseUrl || 'https://calls.nosteq.co.ke/admin/rate').replace(/\/+$/, '');
-  return `${base}/${token}`;
+  const appUrl = String(process.env.PUBLIC_APP_URL || 'https://calls.nosteq.co.ke/admin').replace(/\/+$/, '');
+  const rawBase = String(baseUrl || 'app_url/support/rating').trim();
+  const resolvedBase = rawBase.replace(/^app_url(?=\/|$)/, appUrl).replace(/\/+$/, '');
+  return `${resolvedBase}/${token}`;
 }
 
 function createRatingLinkForCustomer({ phoneNumber, source, extension = null, callRecord = null }) {
@@ -5085,8 +5087,22 @@ app.post('/api/ratings/settings', requireRole('super_admin'), (req, res) => {
 
 app.get('/api/ratings/analytics', requireRole('super_admin', 'admin', 'operator'), (req, res) => {
   try {
-    const days = Number(req.query.days || 30);
-    const data = db.getCustomerRatingAnalytics ? db.getCustomerRatingAnalytics(days) : { summary: {}, byAgent: [], rows: [] };
+    const options = {
+      days: req.query.days,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      agentId: req.query.agentId,
+      source: req.query.source,
+      extension: req.query.extension,
+      minRating: req.query.minRating,
+      maxRating: req.query.maxRating,
+      search: req.query.search,
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+    };
+    const data = db.getCustomerRatingAnalytics
+      ? db.getCustomerRatingAnalytics(options)
+      : { summary: {}, byAgent: [], rows: [], trend: [], agents: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 } };
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
