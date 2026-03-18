@@ -42,6 +42,7 @@ import { formatDateNairobi } from "@/lib/dateUtils";
 const Index = () => {
   const queryClient = useQueryClient();
   const { role, isAdmin } = useAuth();
+  const canAccessRatings = role === "super_admin" || role === "admin" || role === "operator";
   const { data: permissions } = useUserPermissions();
   const isViewer = role === "viewer";
   
@@ -60,11 +61,16 @@ const Index = () => {
   useEffect(() => {
     if (role === null) return; // Auth still loading, skip validation
     
-    const adminOnlyTabs: DashboardTab[] = ["notifications", "staff", "roles", "config", "ratings"];
+    const adminOnlyTabs: DashboardTab[] = ["notifications", "staff", "roles", "config"];
     if (adminOnlyTabs.includes(activeTab) && !isAdmin) {
       setActiveTab("dashboard");
+      return;
     }
-  }, [role, isAdmin]); // Depend on role which is null during loading
+
+    if (activeTab === "ratings" && !canAccessRatings) {
+      setActiveTab("dashboard");
+    }
+  }, [role, isAdmin, canAccessRatings, activeTab]); // Depend on role which is null during loading
 
   // Save activeTab to localStorage whenever it changes
   useEffect(() => {
@@ -276,7 +282,7 @@ const Index = () => {
 
           {activeTab === "analytics" && <InsightsPanel role={role} permissions={permissions} />}
 
-          {activeTab === "ratings" && isAdmin && <CustomerRatingsPanel />}
+          {activeTab === "ratings" && canAccessRatings && <CustomerRatingsPanel />}
 
           {activeTab === "roles" && (
             <RoleManagementPanel />

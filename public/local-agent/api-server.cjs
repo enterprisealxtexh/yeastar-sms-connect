@@ -5036,7 +5036,7 @@ app.post('/api/call-auto-sms-config', (req, res) => {
 // Customer Ratings API Endpoints
 // ========================================
 
-app.get('/api/ratings/settings', requireRole('super_admin', 'admin'), (req, res) => {
+app.get('/api/ratings/settings', requireRole('super_admin', 'admin', 'operator'), (req, res) => {
   try {
     const settings = db.getCustomerRatingSettings ? db.getCustomerRatingSettings() : null;
     res.json({ success: true, data: settings });
@@ -5083,7 +5083,7 @@ app.post('/api/ratings/settings', requireRole('super_admin'), (req, res) => {
   }
 });
 
-app.get('/api/ratings/analytics', requireRole('super_admin', 'admin'), (req, res) => {
+app.get('/api/ratings/analytics', requireRole('super_admin', 'admin', 'operator'), (req, res) => {
   try {
     const days = Number(req.query.days || 30);
     const data = db.getCustomerRatingAnalytics ? db.getCustomerRatingAnalytics(days) : { summary: {}, byAgent: [], rows: [] };

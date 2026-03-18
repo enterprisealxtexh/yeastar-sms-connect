@@ -51,6 +51,7 @@ export const CustomerRatingsPanel = () => {
   const queryClient = useQueryClient();
   const { role } = useAuth();
   const canEdit = role === "super_admin";
+  const [activeTab, setActiveTab] = useState<"analytics" | "configuration">("analytics");
 
   const [settings, setSettings] = useState<RatingSettings>(defaultSettings);
 
@@ -102,15 +103,33 @@ export const CustomerRatingsPanel = () => {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Customer Ratings Setup</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {settingsLoading ? (
-            <p className="text-sm text-muted-foreground">Loading rating settings...</p>
-          ) : (
-            <>
+      <div className="flex items-center gap-2">
+        <Button
+          variant={activeTab === "analytics" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setActiveTab("analytics")}
+        >
+          Analytics
+        </Button>
+        <Button
+          variant={activeTab === "configuration" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setActiveTab("configuration")}
+        >
+          Configuration
+        </Button>
+      </div>
+
+      {activeTab === "configuration" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Customer Ratings Setup</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {settingsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading rating settings...</p>
+            ) : (
+              <>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Enable Rating Links</Label>
@@ -318,27 +337,29 @@ export const CustomerRatingsPanel = () => {
                 ))}
               </div>
 
-              {canEdit && (
-                <div className="pt-2">
-                  <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-                    {saveMutation.isPending ? "Saving..." : "Save Rating Settings"}
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+                {canEdit && (
+                  <div className="pt-2">
+                    <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+                      {saveMutation.isPending ? "Saving..." : "Save Rating Settings"}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Ratings Analytics (Last 30 Days)</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {analyticsLoading ? (
-            <p className="text-sm text-muted-foreground">Loading analytics...</p>
-          ) : (
-            <>
+      {activeTab === "analytics" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Ratings Analytics (Last 30 Days)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {analyticsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading analytics...</p>
+            ) : (
+              <>
               <div className="grid gap-3 md:grid-cols-3">
                 <Card className="border-border/50">
                   <CardContent className="pt-6">
@@ -406,10 +427,11 @@ export const CustomerRatingsPanel = () => {
                   </table>
                 </div>
               </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };

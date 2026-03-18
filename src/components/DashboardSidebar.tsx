@@ -37,6 +37,7 @@ interface NavItem {
   label: string;
   icon: React.ElementType;
   adminOnly?: boolean;
+  roles?: string[];
 }
 
 const navItems: NavItem[] = [
@@ -44,7 +45,7 @@ const navItems: NavItem[] = [
   { id: "messages", label: "Messages", icon: FileText },
   { id: "calls", label: "Calls & Contacts", icon: PhoneCall },
   { id: "analytics", label: "Insights", icon: BarChart3 },
-  { id: "ratings", label: "Ratings", icon: Brain, adminOnly: true },
+  { id: "ratings", label: "Ratings", icon: Brain, roles: ["super_admin", "admin", "operator"] },
   { id: "notifications", label: "Notifications", icon: Send, adminOnly: true },
   { id: "staff", label: "Staff / Clock In", icon: Users, adminOnly: true },
   { id: "roles", label: "Roles & Permissions", icon: Crown, adminOnly: true },
@@ -63,17 +64,24 @@ const NavItems = ({
   onTabChange,
   collapsed,
   isAdmin,
+  role,
   onItemClick,
 }: {
   activeTab: DashboardTab;
   onTabChange: (tab: DashboardTab) => void;
   collapsed: boolean;
   isAdmin: boolean;
+  role: string | null;
   onItemClick?: () => void;
 }) => (
   <nav className="flex-1 flex flex-col gap-1 px-2">
     {navItems
-      .filter((item) => !item.adminOnly || isAdmin)
+      .filter((item) => {
+        if (Array.isArray(item.roles) && item.roles.length > 0) {
+          return role ? item.roles.includes(role) : false;
+        }
+        return !item.adminOnly || isAdmin;
+      })
       .map((item) => {
       const isActive = activeTab === item.id;
       const button = (
@@ -119,7 +127,7 @@ export const DashboardSidebar = ({
   onMobileMenuOpenChange 
 }: DashboardSidebarProps) => {
   const isMobile = useIsMobile();
-  const { isAdmin } = useAuth();
+  const { isAdmin, role } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
   // Close mobile drawer on resize to desktop
@@ -143,6 +151,7 @@ export const DashboardSidebar = ({
               onTabChange={onTabChange}
               collapsed={false}
               isAdmin={isAdmin}
+              role={role}
               onItemClick={() => onMobileMenuOpenChange?.(false)}
             />
           </div>
@@ -172,7 +181,7 @@ export const DashboardSidebar = ({
           </Button>
         </div>
 
-        <NavItems activeTab={activeTab} onTabChange={onTabChange} collapsed={collapsed} isAdmin={isAdmin} />
+        <NavItems activeTab={activeTab} onTabChange={onTabChange} collapsed={collapsed} isAdmin={isAdmin} role={role} />
       </aside>
     </TooltipProvider>
   );
