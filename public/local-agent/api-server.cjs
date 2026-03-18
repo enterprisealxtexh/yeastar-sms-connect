@@ -1289,8 +1289,29 @@ function isClockInRequiredForExtension(settings, extension) {
   return !!(match && match.require_clock_in);
 }
 
+function resolveSystemAppUrl() {
+  const fromPublicAppUrl = String(process.env.PUBLIC_APP_URL || '').trim();
+  if (fromPublicAppUrl) {
+    return fromPublicAppUrl.replace(/\/+$/, '');
+  }
+
+  const corsOrigin = String(process.env.CORS_ORIGIN || '').trim();
+  if (corsOrigin && corsOrigin !== '*') {
+    const firstOrigin = corsOrigin.split(',').map((v) => v.trim()).find(Boolean);
+    if (firstOrigin) {
+      try {
+        return firstOrigin.replace(/\/+$/, '');
+      } catch {
+        // Ignore malformed origin and use the default below.
+      }
+    }
+  }
+
+  return 'https://calls.nosteq.co.ke';
+}
+
 function buildRatingUrl(baseUrl, token) {
-  const appUrl = String(process.env.PUBLIC_APP_URL || 'https://calls.nosteq.co.ke/admin').replace(/\/+$/, '');
+  const appUrl = resolveSystemAppUrl();
   const rawBase = String(baseUrl || 'app_url/support/rating').trim();
   const resolvedBase = rawBase.replace(/^app_url(?=\/|$)/, appUrl).replace(/\/+$/, '');
   return `${resolvedBase}/${token}`;

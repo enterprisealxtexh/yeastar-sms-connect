@@ -148,6 +148,29 @@ export const CustomerRatingsPanel = () => {
     },
   });
 
+  const openPreview = () => {
+    try {
+      // Create preview data with sample agents that might be available
+      const previewData = {
+        settings,
+        possible_agents: [
+          { id: "1", name: "Sample Agent 1", extension: "1001" },
+          { id: "2", name: "Sample Agent 2", extension: "1002" },
+        ],
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      // Store in sessionStorage so the preview page can access it
+      sessionStorage.setItem("ratingPreviewSettings", JSON.stringify(previewData));
+
+      // Open preview in a new window
+      const previewUrl = `${window.location.origin}/preview/rating/preview`;
+      window.open(previewUrl, "preview", "width=900,height=900,resizable=yes,scrollbars=yes");
+    } catch (err) {
+      toast.error("Failed to open preview");
+    }
+  };
+
   const summary = analyticsData?.summary || { total_submissions: 0, avg_overall_rating: 0, avg_recommend_rating: 0 };
   const byAgent = Array.isArray(analyticsData?.byAgent) ? analyticsData.byAgent : [];
   const rows = Array.isArray(analyticsData?.rows) ? analyticsData.rows : [];
@@ -680,9 +703,12 @@ export const CustomerRatingsPanel = () => {
                 </div>
 
                 {canEdit && (
-                  <div className="pt-2">
+                  <div className="pt-2 flex gap-2">
                     <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
                       {saveMutation.isPending ? "Saving..." : "Save Rating Settings"}
+                    </Button>
+                    <Button variant="outline" onClick={openPreview}>
+                      Preview
                     </Button>
                   </div>
                 )}

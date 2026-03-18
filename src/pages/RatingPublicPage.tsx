@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ratingsApi } from "@/lib/api-client";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Star } from "lucide-react";
+import { Star, X } from "lucide-react";
 
 type Answers = Record<string, number>;
 
@@ -31,6 +31,21 @@ const StarPicker = ({ value, onChange }: { value: number; onChange: (v: number) 
 
 const RatingPublicPage = () => {
   const { token = "" } = useParams();
+  const [isPreview, setIsPreview] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+
+  useEffect(() => {
+    // Check if this is a preview mode (check sessionStorage for preview data)
+    try {
+      const stored = sessionStorage.getItem("ratingPreviewSettings");
+      if (stored) {
+        setIsPreview(true);
+        setPreviewData(JSON.parse(stored));
+      }
+    } catch (e) {
+      // Ignore error
+    }
+  }, []);
 
   const [overallRating, setOverallRating] = useState(0);
   const [recommendRating, setRecommendRating] = useState(0);
@@ -42,7 +57,7 @@ const RatingPublicPage = () => {
   const { data, isLoading, error } = useQuery({
     queryKey: ["public-rating-form", token],
     queryFn: () => ratingsApi.publicForm(token),
-    enabled: !!token,
+    enabled: !!token && !isPreview,
     retry: false,
   });
 
@@ -50,7 +65,7 @@ const RatingPublicPage = () => {
     mutationFn: () =>
       ratingsApi.submitPublic(token, {
         overall_rating: overallRating,
-        recommend_rating: data?.settings?.include_recommendation ? recommendRating || null : null,
+        recommend_rating: (data?.settings || previewData?.settings)?.include_recommendation ? recommendRating || null : null,
         comments,
         answers,
         agent_id: selectedAgentId || null,
@@ -62,10 +77,11 @@ const RatingPublicPage = () => {
     },
   });
 
-  const questions = useMemo(() => (Array.isArray(data?.settings?.questions) ? data.settings.questions : []), [data]);
-  const agents = useMemo(() => (Array.isArray(data?.possible_agents) ? data.possible_agents : []), [data]);
+  const effectiveData = isPreview ? previewData : data;
+  const questions = useMemo(() => (Array.isArray(effectiveData?.settings?.questions) ? effectiveData.settings.questions : []), [effectiveData]);
+  const agents = useMemo(() => (Array.isArray(effectiveData?.possible_agents) ? effectiveData.possible_agents : []), [effectiveData]);
 
-  if (isLoading) {
+  if (!isPreview && isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-xl">
@@ -75,7 +91,7 @@ const RatingPublicPage = () => {
     );
   }
 
-  if (error || !data) {
+  if (!isPreview && (error || !data)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-xl">
@@ -92,7 +108,7 @@ const RatingPublicPage = () => {
     );
   }
 
-  if (submitted) {
+  if (submitted && !isPreview) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-xl">
@@ -111,18 +127,32 @@ const RatingPublicPage = () => {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <div className="flex items-center gap-3">
-            {data.settings?.company_icon_url ? (
-              <img
-                src={data.settings.company_icon_url}
-                alt="Company icon"
-                className="h-10 w-10 rounded object-cover"
-              />
-            ) : null}
-            <div>
-              <CardTitle>{data.settings?.company_name || "Customer Support"}</CardTitle>
-              <p className="text-xs text-muted-foreground">Please rate your service experience</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {effectiveData?.settings?.company_icon_url ? (
+                <img
+                  src={effectiveData.settings.company_icon_url}
+                  alt="Company icon"
+                  className="h-10 w-10 rounded object-cover"
+                />
+              ) : null}
+              <div>
+                <CardTitle>{effectiveData?.settings?.company_name || "Customer Support"}</CardTitle>
+                <p className="text-xs text-muted-foreground">Please rate your service experience</p>
+              </div>
             </div>
+            {isPreview && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Preview Mode</span>
+                <button
+                  onClick={() => window.close()}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Close preview"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -133,6 +163,7 @@ const RatingPublicPage = () => {
                 className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 value={selectedAgentId}
                 onChange={(e) => setSelectedAgentId(e.target.value)}
+                disabled={isPreview}
               >
                 <option value="">Select agent</option>
                 {agents.map((a: any) => (
@@ -165,7 +196,7 @@ const RatingPublicPage = () => {
             </div>
           ))}
 
-          {data.settings?.include_recommendation && (
+          {effectiveData?.settings?.include_recommendation && (
             <div className="space-y-2">
               <Label>How likely are you to recommend our service?</Label>
               <StarPicker value={recommendRating} onChange={setRecommendRating} />
@@ -179,27 +210,38 @@ const RatingPublicPage = () => {
               onChange={(e) => setComments(e.target.value)}
               rows={4}
               placeholder="Share any feedback about your experience..."
+              disabled={isPreview}
             />
           </div>
 
-          <div className="text-xs text-muted-foreground">
-            Link expires: {new Date(data.expires_at).toLocaleString()}
-          </div>
+          {!isPreview && (
+            <>
+              <div className="text-xs text-muted-foreground">
+                Link expires: {new Date(effectiveData?.expires_at).toLocaleString()}
+              </div>
 
-          <Button
-            className="w-full"
-            onClick={() => submitMutation.mutate()}
-            disabled={submitMutation.isPending || overallRating < 1}
-          >
-            {submitMutation.isPending ? "Submitting..." : "Submit Feedback"}
-          </Button>
+              <Button
+                className="w-full"
+                onClick={() => submitMutation.mutate()}
+                disabled={submitMutation.isPending || overallRating < 1}
+              >
+                {submitMutation.isPending ? "Submitting..." : "Submit Feedback"}
+              </Button>
 
-          {!submitMutation.isPending && submitMutation.isError && (
-            <p className="text-sm text-destructive">Failed to submit feedback. Please refresh and try again.</p>
+              {!submitMutation.isPending && submitMutation.isError && (
+                <p className="text-sm text-destructive">Failed to submit feedback. Please refresh and try again.</p>
+              )}
+
+              {!submitMutation.isPending && submitMutation.data && !submitMutation.data.success && (
+                <p className="text-sm text-destructive">{submitMutation.data.error || "Failed to submit feedback"}</p>
+              )}
+            </>
           )}
 
-          {!submitMutation.isPending && submitMutation.data && !submitMutation.data.success && (
-            <p className="text-sm text-destructive">{submitMutation.data.error || "Failed to submit feedback"}</p>
+          {isPreview && (
+            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-700">
+              Preview mode: Submit button is disabled. Close this window to return to configuration.
+            </div>
           )}
         </CardContent>
       </Card>

@@ -22,6 +22,7 @@ sudo npm run build
 > **Routing behaviour:**
 > - `calls.nosteq.co.ke/` → redirects to `https://nosteq.co.ke` (public, no app shown)
 > - `calls.nosteq.co.ke/admin/` → loads the Yeastar SMS Connect React app (internal users only)
+> - `calls.nosteq.co.ke/support/rating/<token>` and `calls.nosteq.co.ke/rate/<token>` → public customer rating pages (no `/admin`)
 > - `calls.nosteq.co.ke/api/` → proxied to Node.js API on port 2003
 
 ```bash
@@ -32,7 +33,7 @@ Or create it manually:
 
 ```bash
 sudo tee /etc/nginx/sites-available/calls.nosteq.co.ke > /dev/null <<'NGINX'
-# HTTP → HTTPS redirect
+# Base HTTP vhost (Certbot will add HTTPS + redirect blocks automatically)
 server {
     listen 80;
     listen [::]:80;
@@ -41,21 +42,6 @@ server {
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name calls.nosteq.co.ke;
-
-    ssl_certificate     /etc/letsencrypt/live/calls.nosteq.co.ke/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/calls.nosteq.co.ke/privkey.pem;
-    include             /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
     access_log /var/log/nginx/calls.nosteq.co.ke_access.log;
     error_log  /var/log/nginx/calls.nosteq.co.ke_error.log;
@@ -99,6 +85,12 @@ server {
         rewrite ^ /index.html break;
     }
 
+    # Public ratings pages (no /admin in URL)
+    location ~ ^/(support/rating|rate)/ {
+        root /opt/yeastar-sms-connect/dist;
+        try_files /index.html =404;
+    }
+
     # /api/ → Node.js API server
     location /api/ {
         proxy_pass         http://127.0.0.1:2003;
@@ -138,7 +130,7 @@ sudo systemctl enable nginx
 sudo certbot --nginx -d calls.nosteq.co.ke
 ```
 
-Follow prompts. Auto-renewal enabled by default.
+Follow prompts. Certbot will inject the HTTPS (443) server block and HTTP->HTTPS redirect automatically. Auto-renewal is enabled by default.
 
 ## Start PM2 Services
 
@@ -161,7 +153,8 @@ pm2 status
 sudo systemctl status nginx
 ```
 
-Open: https://calls.nosteq.co.ke/admin/
+Open internal app: https://calls.nosteq.co.ke/admin/
+Open public rating page: https://calls.nosteq.co.ke/support/rating/<token>
 
 ## Update Deployment
 
@@ -170,7 +163,7 @@ cd /opt/yeastar-sms-connect
 sudo git pull origin main
 sudo npm install
 sudo npm run build
-sudo pm2 reload ecosystem.config.cjs
+sudo pm2 reload ecosystem.config.cjs --update-env
 sudo systemctl reload nginx
 ```
 

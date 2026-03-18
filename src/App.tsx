@@ -64,15 +64,41 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter
-          basename={import.meta.env.PROD ? '/admin' : '/'}
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          }}
-        >
-          <AppWithInactivity />
-        </BrowserRouter>
+        {(() => {
+          const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+          const isPublicRatingPath = /^\/(support\/rating|rate|preview\/rating)\/.+/.test(path);
+
+          if (isPublicRatingPath) {
+            return (
+              <BrowserRouter
+                basename='/'
+                future={{
+                  v7_startTransition: true,
+                  v7_relativeSplatPath: true,
+                }}
+              >
+                <Routes>
+                  <Route path="/rate/:token" element={<RatingPublicPage />} />
+                  <Route path="/support/rating/:token" element={<RatingPublicPage />} />
+                  <Route path="/preview/rating/:token" element={<RatingPublicPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </BrowserRouter>
+            );
+          }
+
+          return (
+            <BrowserRouter
+              basename={import.meta.env.PROD ? '/admin' : '/'}
+              future={{
+                v7_startTransition: true,
+                v7_relativeSplatPath: true,
+              }}
+            >
+              <AppWithInactivity />
+            </BrowserRouter>
+          );
+        })()}
       </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>
