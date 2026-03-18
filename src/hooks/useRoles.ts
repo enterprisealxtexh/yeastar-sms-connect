@@ -1,0 +1,127 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { usersApi } from "@/lib/api-client";
+
+export type AppRole = "super_admin" | "admin" | "operator" | "viewer";
+
+export interface UserWithRole {
+  user_id: string;
+  email: string;
+  role: AppRole;
+  created_at: string;
+}
+
+const ROLE_LABELS: Record<AppRole, string> = {
+  super_admin: "Super Admin",
+  admin: "Admin",
+  operator: "Operator",
+  viewer: "Viewer",
+};
+
+const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
+  super_admin: "Full system access, role management, all admin powers",
+  admin: "Manage agents, shifts, configuration, and system settings",
+  operator: "Manage calls, contacts, SIM config, and daily operations",
+  viewer: "Read-only access to dashboard, calls, and reports",
+};
+
+const ROLE_COLORS: Record<AppRole, string> = {
+  super_admin: "bg-chart-5 text-white",
+  admin: "bg-primary text-primary-foreground",
+  operator: "bg-chart-2 text-white",
+  viewer: "bg-muted text-muted-foreground",
+};
+
+export const ROLE_META = { labels: ROLE_LABELS, descriptions: ROLE_DESCRIPTIONS, colors: ROLE_COLORS };
+
+export const useUsersWithRoles = () => {
+  return useQuery({
+    queryKey: ["users-with-roles"],
+    queryFn: async (): Promise<UserWithRole[]> => {
+      const json = await usersApi.list();
+      if (!json?.success || !Array.isArray(json.users)) throw new Error("Invalid response");
+      return json.users.map((u: any) => ({
+        user_id: u.id,
+        email: u.email,
+        role: (u.role || "operator") as AppRole,
+        created_at: u.created_at,
+      }));
+    },
+  });
+};
+
+export const useCurrentUserRole = () => {
+  return useQuery({
+    queryKey: ["current-user-role"],
+    queryFn: async (): Promise<AppRole | null> => {
+      const storedUser = localStorage.getItem("user");
+      if (!storedUser) return null;
+      const localUser = JSON.parse(storedUser);
+      const json = await usersApi.list();
+      if (!json?.success || !Array.isArray(json.users)) return null;
+      const match = json.users.find((u: any) => u.email === localUser.email);
+      return (match?.role as AppRole) || null;
+    },
+  });
+};
+
+export const useUpdateUserRole = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: AppRole }) => {
+      const result = await usersApi.updateRole(userId, role);
+      if (!result.success) throw new Error(result.error || "Failed to update role");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users-with-roles"] });
+      toast.success("Role updated");
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to update role"),
+  });
+};
+
+export interface CreateUserInput {
+  email: string;
+  password: string;
+  role: AppRole;
+  full_name: string;
+  pin?: string;
+}
+
+export const useCreateUser = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateUserInput) => {
+      const result = await usersApi.create({
+        email: input.email,
+        password: input.password,
+        name: input.full_name,
+        role: input.role,
+        pin: input.pin || null,
+      });
+      if (!result.success) throw new Error(result.error || "Failed to create user");
+      return result.data || result;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["users-with-roles"] });
+      toast.success(`User ${variables.email} created successfully. Initial password shared separately.`, { duration: 10000 });
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to create user"),
+  });
+};
+
+export const useDeleteUser = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (userId: string) => {
+      const result = await usersApi.delete(userId);
+      if (!result.success) throw new Error(result.error || "Failed to delete user");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users-with-roles"] });
+      toast.success("User deleted");
+    },
+    onError: (err: Error) => toast.error(err.message || "Failed to delete user"),
+  });
+};
+

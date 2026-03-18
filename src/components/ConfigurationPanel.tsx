@@ -1,0 +1,210 @@
+import { useRef, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Settings, Save, Loader2, Zap, Database, Phone, KeyRound, RefreshCw } from "lucide-react";
+import { GatewaySettingsForm } from "./GatewaySettingsForm";
+import { PbxSettingsForm } from "./PbxSettingsForm";
+import GsmSpanSettingsForm from "./GsmSpanSettingsForm";
+import ExtensionsPanel from "./ExtensionsPanel";
+import { SetupPanel, type SetupPanelRef } from "./SetupPanel";
+import { SystemUpdatePanel } from "./SystemUpdatePanel";
+import { useAuth } from "@/hooks/useAuth";
+
+interface ConfigurationPanelProps {
+  isLoading?: boolean;
+  onConfigSaved?: () => void;
+}
+
+export const ConfigurationPanel = ({
+  isLoading = false,
+  onConfigSaved,
+}: ConfigurationPanelProps) => {
+  const [activeTab, setActiveTab] = useState("setup");
+  const [isSaving, setIsSaving] = useState(false);
+  const setupRef = useRef<SetupPanelRef>(null);
+  const { role } = useAuth();
+  const isSuperAdmin = role === "super_admin";
+
+  const handleSave = async () => {
+    if (activeTab === "setup" && setupRef.current) {
+      await setupRef.current.save();
+      onConfigSaved?.();
+      return;
+    }
+    // Other tabs (Gateway, PBX, SIM Ports, Extensions) each have their own inline save buttons.
+    // Nothing to do from the top bar for those tabs.
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="card-glow border-border/50 bg-card">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
+              <Settings className="w-5 h-5 text-primary" />
+            </div>
+            <CardTitle className="text-base font-semibold">Configuration</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="card-glow border-border/50 bg-card">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
+              <Settings className="w-5 h-5 text-primary" />
+            </div>
+            <CardTitle className="text-base font-semibold">Configuration</CardTitle>
+          </div>
+          {activeTab === "setup" && (
+            <Button size="sm" onClick={handleSave} disabled={setupRef.current?.isSaving} className="gap-2">
+              {setupRef.current?.isSaving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {setupRef.current?.isSaving ? "Saving..." : "Save Setup"}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <Tabs defaultValue="setup" className="space-y-6" onValueChange={setActiveTab}>
+          <TabsList className="bg-card border border-border/50">
+            <TabsTrigger value="setup" className="gap-2">
+              <KeyRound className="w-4 h-4" />
+              Setup
+            </TabsTrigger>
+            <TabsTrigger value="connectivity" className="gap-2">
+              <Zap className="w-4 h-4" />
+              Connectivity
+            </TabsTrigger>
+            <TabsTrigger value="sim-ports" className="gap-2">
+              <Database className="w-4 h-4" />
+              SIM Ports
+            </TabsTrigger>
+            <TabsTrigger value="extensions" className="gap-2">
+              <Phone className="w-4 h-4" />
+              Extensions
+            </TabsTrigger>
+            {isSuperAdmin && (
+              <TabsTrigger value="system" className="gap-2">
+                <RefreshCw className="w-4 h-4" />
+                System Update
+              </TabsTrigger>
+            )}
+          </TabsList>
+
+          {/* Setup Tab - Credentials & Recipients */}
+          <TabsContent value="setup" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <KeyRound className="w-4 h-4" />
+                  Channel Setup
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Configure Telegram bot credentials, email SMTP settings, and SMS recipient phone numbers
+                </p>
+              </div>
+              <SetupPanel ref={setupRef} />
+            </div>
+          </TabsContent>
+
+          {/* Connectivity Tab - Gateway + PBX */}
+          <TabsContent value="connectivity" className="space-y-6">
+            <div className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    SMS Gateway (TG400)
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Configure TG400 SMS gateway connection
+                  </p>
+                </div>
+                <GatewaySettingsForm />
+              </div>
+              <Separator />
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    PBX System (S100)
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Configure your Yeastar S100 PBX system connection
+                  </p>
+                </div>
+                <PbxSettingsForm />
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* SIM Ports Tab */}
+          <TabsContent value="sim-ports" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  Active SIM Ports
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Name your SIM ports for easier identification of which card serves which group
+                </p>
+              </div>
+              <GsmSpanSettingsForm />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="extensions" className="space-y-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  PBX Extensions
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Manage synced PBX extensions and review their recent activity
+                </p>
+              </div>
+              <ExtensionsPanel />
+            </div>
+          </TabsContent>
+
+          {isSuperAdmin && (
+            <TabsContent value="system" className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    System Update
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Pull latest backend-configured release and rebuild
+                  </p>
+                </div>
+                <SystemUpdatePanel />
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+};
+
+
+

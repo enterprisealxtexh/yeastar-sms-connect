@@ -1,0 +1,54 @@
+import { RefreshCw, BellRing } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
+import { apiFetch } from "@/lib/api-client";
+
+interface SystemFooterProps {
+  lastSync: string;
+  onRefresh: () => void;
+}
+
+export const SystemFooter = ({ lastSync, onRefresh }: SystemFooterProps) => {
+  const { role } = useAuth();
+  const isSuperAdmin = role === "super_admin";
+
+  const { data: updateCheck } = useQuery({
+    queryKey: ["system-update-check-footer"],
+    queryFn: async () => {
+      const json = await apiFetch<{ configured: boolean; updateAvailable: boolean }>('/api/system/update/check');
+      return json;
+    },
+    enabled: isSuperAdmin,
+    refetchInterval: 60000,
+    retry: 0,
+  });
+
+  return (
+    <footer className="border-t border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="container flex h-14 items-center justify-between px-6">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Last sync:</span>
+          <span className="font-mono text-foreground">{lastSync}</span>
+          {isSuperAdmin && updateCheck?.updateAvailable && (
+            <Badge variant="destructive" className="gap-1 text-[11px]">
+              <BellRing className="w-3 h-3" />
+              Update available
+            </Badge>
+          )}
+        </div>
+        
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRefresh}
+          className="gap-2 border-border/50 hover:bg-muted/50"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </Button>
+      </div>
+    </footer>
+  );
+};

@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.history
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# SQLite database files (production data - never commit these)
+*.db
+*.db-shm
+*.db-wal
+*.db-wal.empty
+*.db-shm.empty
+*.db.empty
+*.db.backup_before_migration
+
+# Process management and monitoring files (local-agent runtime)
+*.pid
+*.pid.monitor
+*.monitor
+sms-service.log*
+
+# Local deployment notes (developer-specific, never commit)
+DEPLOYMENT_LOCAL.md
+DEPLOYMENT_VPS.md

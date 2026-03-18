@@ -1,0 +1,53 @@
+module.exports = {
+  apps: [
+    {
+      name: 'api-server',
+      script: 'public/local-agent/api-server.cjs',
+      instances: 1,
+      exec_mode: 'fork',
+      node_args: '--max-old-space-size=512',
+      env: {
+        NODE_ENV: 'development',
+        API_PORT: 2003,
+        API_HOST: '127.0.0.1',
+        LOG_LEVEL: 'debug',
+        SMS_DB_PATH: './public/local-agent/sms.db',
+        CORS_ORIGIN: '*',
+      },
+      error_file: 'logs/api-server.error.log',
+      out_file: 'logs/api-server.out.log',
+      time: true,
+      autorestart: true,
+      watch: false,
+    },
+    {
+      name: 'tg400-agent',
+      script: 'public/local-agent/tg400-tcp-api.cjs',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'development',
+        LOG_LEVEL: 'debug',
+      },
+      error_file: 'logs/tg400-agent.error.log',
+      out_file: 'logs/tg400-agent.out.log',
+      time: true,
+      autorestart: true,
+      watch: false,
+    },
+    {
+      name: 'vite',
+      script: 'node_modules/.bin/vite',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'development',
+      },
+      error_file: 'logs/vite.error.log',
+      out_file: 'logs/vite.out.log',
+      time: true,
+      autorestart: false,
+      watch: false,
+    },
+  ],
+};
