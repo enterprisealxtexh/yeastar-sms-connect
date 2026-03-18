@@ -5209,6 +5209,10 @@ app.get('/api/public/ratings/:token', (req, res) => {
       return res.status(410).json({ success: false, error: 'This rating link has expired' });
     }
 
+    // Determine the served_by_agent from possible_agents
+    const possibleAgents = Array.isArray(details.link.possible_agents) ? details.link.possible_agents : [];
+    const servedByAgent = possibleAgents.length > 0 ? possibleAgents[0] : null;
+
     res.json({
       success: true,
       data: {
@@ -5216,7 +5220,7 @@ app.get('/api/public/ratings/:token', (req, res) => {
         phone_number: details.link.phone_number,
         extension: details.link.extension,
         expires_at: details.link.expires_at,
-        possible_agents: details.link.possible_agents || [],
+        served_by_agent: servedByAgent,
         settings: {
           company_name: details.settings?.company_name || 'Customer Support',
           company_icon_url: details.settings?.company_icon_url || '',

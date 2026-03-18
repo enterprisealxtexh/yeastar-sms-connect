@@ -150,13 +150,14 @@ export const CustomerRatingsPanel = () => {
 
   const openPreview = () => {
     try {
-      // Create preview data with sample agents that might be available
+      // Create preview data with sample agent
       const previewData = {
         settings,
-        possible_agents: [
-          { id: "1", name: "Sample Agent 1", extension: "1001" },
-          { id: "2", name: "Sample Agent 2", extension: "1002" },
-        ],
+        served_by_agent: {
+          id: "1",
+          name: "Sample Agent",
+          extension: "1001",
+        },
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       };
 

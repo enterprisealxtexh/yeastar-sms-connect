@@ -50,7 +50,6 @@ const RatingPublicPage = () => {
   const [overallRating, setOverallRating] = useState(0);
   const [recommendRating, setRecommendRating] = useState(0);
   const [comments, setComments] = useState("");
-  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [answers, setAnswers] = useState<Answers>({});
   const [submitted, setSubmitted] = useState(false);
 
@@ -68,7 +67,7 @@ const RatingPublicPage = () => {
         recommend_rating: (data?.settings || previewData?.settings)?.include_recommendation ? recommendRating || null : null,
         comments,
         answers,
-        agent_id: selectedAgentId || null,
+        agent_id: effectiveData?.served_by_agent?.id || null,
       }),
     onSuccess: (res) => {
       if (res.success) {
@@ -79,7 +78,6 @@ const RatingPublicPage = () => {
 
   const effectiveData = isPreview ? previewData : data;
   const questions = useMemo(() => (Array.isArray(effectiveData?.settings?.questions) ? effectiveData.settings.questions : []), [effectiveData]);
-  const agents = useMemo(() => (Array.isArray(effectiveData?.possible_agents) ? effectiveData.possible_agents : []), [effectiveData]);
 
   if (!isPreview && isLoading) {
     return (
@@ -156,28 +154,12 @@ const RatingPublicPage = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          {agents.length > 1 && (
-            <div className="space-y-2">
-              <Label>Which support agent assisted you?</Label>
-              <select
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                value={selectedAgentId}
-                onChange={(e) => setSelectedAgentId(e.target.value)}
-                disabled={isPreview}
-              >
-                <option value="">Select agent</option>
-                {agents.map((a: any) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} {a.extension ? `(Ext ${a.extension})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {agents.length === 1 && (
-            <div className="rounded-md border p-3 text-sm">
-              Served by: <strong>{agents[0].name}</strong>
+          {effectiveData?.served_by_agent && (
+            <div className="rounded-md border p-3 text-sm bg-muted/30">
+              Served by: <strong>{effectiveData.served_by_agent.name}</strong>
+              {effectiveData.served_by_agent.extension && (
+                <span className="text-xs text-muted-foreground ml-2">(Ext {effectiveData.served_by_agent.extension})</span>
+              )}
             </div>
           )}
 
