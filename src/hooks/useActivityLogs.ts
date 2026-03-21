@@ -14,7 +14,8 @@ export const useActivityLogs = (limit = 50, enabled = true) => {
     queryKey: ['activity-logs', limit],
     enabled,
     queryFn: async (): Promise<LogEntry[]> => {
-      const data = await configApi.activityLogs({ limit });
+      const response = await configApi.activityLogs({ limit });
+      const data = response?.data || [];
       return (data || []).map((log: any) => ({
         id: log.id,
         timestamp: format(new Date(log.created_at), 'HH:mm:ss'),

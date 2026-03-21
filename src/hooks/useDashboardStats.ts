@@ -14,13 +14,14 @@ export const useDashboardStats = (enabled = true) => {
     queryKey: ['dashboard-stats'],
     enabled,
     queryFn: async (): Promise<DashboardStats> => {
-      // Trigger a fresh hardware check
-      gatewayApi.checkGsmSpans().catch(() => {});
-
-      const [stats, gsmSpans] = await Promise.all([
+      const [statsResponse, gsmSpansResponse] = await Promise.all([
         callsApi.statistics(),
         gatewayApi.gsmSpans(),
       ]);
+
+      // Unwrap the data responses
+      const stats = statsResponse?.data || statsResponse;
+      const gsmSpans = gsmSpansResponse?.data || gsmSpansResponse;
 
       const totalSims = gsmSpans.length;
       const activeSims = gsmSpans.filter((s: any) => s.is_active === 1).length;

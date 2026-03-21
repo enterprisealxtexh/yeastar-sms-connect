@@ -1,5 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { gatewayApi } from "@/lib/api-client";
+import { useConfigSaveMutation } from "@/hooks/useConfigSaveMutation";
 
 export interface GatewayConfig {
   id: string;
@@ -9,27 +10,22 @@ export interface GatewayConfig {
 }
 
 export const useGatewayConfig = () => {
-  const queryClient = useQueryClient();
-
   const { data: config, isLoading, error } = useQuery({
     queryKey: ['gateway-config'],
-    queryFn: async () => (await gatewayApi.config()) as GatewayConfig,
+    queryFn: async () => {
+      const response = await gatewayApi.config();
+      return (response?.data || response) as GatewayConfig;
+    },
   });
 
-  const updateConfig = useMutation({
-    mutationFn: async (updates: Partial<Omit<GatewayConfig, 'id'>>) => {
-      const result = await gatewayApi.saveConfig({
+  const updateConfig = useConfigSaveMutation<Partial<Omit<GatewayConfig, 'id'>>, any>({
+    queryKeysToInvalidate: ['gateway-config', 'sim-ports'],
+    saveFn: (updates) =>
+      gatewayApi.saveConfig({
         gateway_ip: updates.gateway_ip,
         api_username: updates.api_username,
         api_password: updates.api_password,
-      });
-      if (!result.success) throw new Error(result.error || 'Failed to save gateway config');
-      return result.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['gateway-config'] });
-      queryClient.invalidateQueries({ queryKey: ['sim-ports'] });
-    },
+      }),
   });
 
   return { config, isLoading, error, updateConfig };

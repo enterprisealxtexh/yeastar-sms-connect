@@ -26,11 +26,17 @@ export interface CallRecord {
   created_at: string;
 }
 
-export const useCallRecords = (page = 1, pageSize = 100, extension?: string, direction?: string, status?: string, enabled = true) => {
+export const useCallRecords = (page = 1, pageSize = 100, extension?: string, direction?: string, status?: string, search?: string, enabled = true) => {
   return useQuery({
-    queryKey: ['call-records', page, pageSize, extension, direction, status],
+    queryKey: ['call-records', page, pageSize, extension, direction, status, search],
     enabled,
-    queryFn: () => callsApi.records({ page, pageSize, extension, direction, status }),
+    queryFn: () => {
+      const params: any = { page, pageSize, extension, direction, status };
+      if (search && search.trim()) {
+        params.search = search.trim();
+      }
+      return callsApi.records(params);
+    },
     refetchInterval: 5000,
     staleTime: 1000,
     refetchOnMount: true,
@@ -43,7 +49,8 @@ export const useCallStats = (extension?: string, enabled = true) => {
     queryKey: ['call-stats', extension ?? null],
     enabled,
     queryFn: async () => {
-      const data = await callsApi.stats(extension);
+      const response = await callsApi.stats(extension);
+      const data = response?.data || response;
       return data || { totalCalls: 0, answered: 0, missed: 0, totalTalkDuration: 0, totalRingDuration: 0 };
     },
     refetchInterval: 30000,
@@ -57,7 +64,8 @@ export const useAllTimeCallStats = (extension?: string, enabled = true) => {
     queryKey: ['call-stats-all-time', extension ?? null],
     enabled,
     queryFn: async () => {
-      const data = await callsApi.allTimeStats(extension);
+      const response = await callsApi.allTimeStats(extension);
+      const data = response?.data || response;
       return data || { totalCalls: 0, answered: 0, missed: 0, totalTalkDuration: 0, totalRingDuration: 0 };
     },
     refetchInterval: 60000,

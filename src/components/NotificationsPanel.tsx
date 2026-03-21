@@ -36,7 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TemplateModal } from "./TemplateModal";
 import { useAuth } from "@/hooks/useAuth";
-import { apiFetch, apiCall } from "@/lib/api-client";
+import { apiFetch, apiCall, configApi } from "@/lib/api-client";
 
 interface AlertConfig {
   enabled: boolean;
@@ -67,7 +67,7 @@ export const NotificationsPanel = () => {
   );
   const [delayEnabled, setDelayEnabled] = useState(true);
   const [delayMinutes, setDelayMinutes] = useState(5);
-  const [duplicateWindow, setDuplicateWindow] = useState(10);
+  const [duplicateWindow, setDuplicateWindow] = useState(360);
   const [allowedExtensions, setAllowedExtensions] = useState<string[]>([]);
   const [callDirection, setCallDirection] = useState<'both' | 'inbound' | 'outbound'>('both');
 
@@ -97,7 +97,8 @@ export const NotificationsPanel = () => {
       setMissedMessage(config.missed_message);
       setDelayEnabled(config.delay_enabled !== false);
       setDelayMinutes(config.delay_minutes || 5);
-      setDuplicateWindow(config.duplicate_window || 10);
+      // Ensure duplicate window is at least 6 hours (360 mins) if set, or default to 360
+      setDuplicateWindow(Math.max(360, config.duplicate_window || 360));
       setAllowedExtensions(config.allowed_extensions || []);
       setCallDirection((config.call_direction as 'both' | 'inbound' | 'outbound') || 'both');
     }
@@ -107,18 +108,17 @@ export const NotificationsPanel = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [setupData, channelData, tplData] = await Promise.all([
-          apiFetch<any>('/api/notifications-setup'),
-          apiFetch<any>('/api/channel-setup'),
+        const [notificationsData, tplData] = await Promise.all([
+          configApi.notificationsConfig(),
           apiFetch<any>('/api/notification-templates'),
         ]);
-        if (setupData) {
-          const data = setupData.data || setupData;
+        if (notificationsData) {
+          const data = notificationsData.data || notificationsData;
           if (data) {
             setAlertConfig({
-              enabled:              !!data.telegram_enabled,
+              enabled:              !!(data.telegram_enabled ?? data.enabled),
               email_enabled:        !!data.email_enabled,
-              sms_enabled:          data.sms_reports_enabled === undefined ? true : !!data.sms_reports_enabled,
+              sms_enabled:          (data.sms_reports_enabled ?? data.sms_enabled) === undefined ? true : !!(data.sms_reports_enabled ?? data.sms_enabled),
               notify_missed_calls:  data.notify_missed_calls  === undefined ? true : !!data.notify_missed_calls,
               notify_new_sms:       !!data.notify_new_sms,
               notify_system_errors: data.notify_system_errors === undefined ? true : !!data.notify_system_errors,
@@ -126,11 +126,9 @@ export const NotificationsPanel = () => {
               daily_report_enabled: !!data.daily_report_enabled,
               daily_report_time:    data.daily_report_time || "18:00",
             });
+
+            setSmtpConfigured(!!(data?.email_smtp_host && data?.email_smtp_user && data?.email_smtp_pass));
           }
-        }
-        if (channelData) {
-          const cd = channelData.data || channelData;
-          setSmtpConfigured(!!(cd?.email_smtp_host && cd?.email_smtp_user && cd?.email_smtp_pass));
         }
         if (tplData) {
           const tpls = tplData.data || tplData;
@@ -186,17 +184,14 @@ export const NotificationsPanel = () => {
         daily_report_enabled: merged.daily_report_enabled,
         daily_report_time:    merged.daily_report_time,
       };
-      const result = await apiCall('/api/notifications-setup', {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const result = await configApi.saveNotificationsConfig(payload);
       if (result.success) {
         const saved = result?.data;
         if (saved) {
           setAlertConfig({
-            enabled:              !!saved.telegram_enabled,
+            enabled:              !!(saved.telegram_enabled ?? saved.enabled),
             email_enabled:        !!saved.email_enabled,
-            sms_enabled:          saved.sms_reports_enabled === undefined ? true : !!saved.sms_reports_enabled,
+            sms_enabled:          (saved.sms_reports_enabled ?? saved.sms_enabled) === undefined ? true : !!(saved.sms_reports_enabled ?? saved.sms_enabled),
             notify_missed_calls:  saved.notify_missed_calls  === undefined ? true : !!saved.notify_missed_calls,
             notify_new_sms:       !!saved.notify_new_sms,
             notify_system_errors: saved.notify_system_errors === undefined ? true : !!saved.notify_system_errors,
@@ -527,9 +522,12 @@ export const NotificationsPanel = () => {
                       { var: "{caller_name}", desc: "Caller name" },
                       { var: "{caller_number}", desc: "Phone number" },
                       { var: "{extension}", desc: "Extension" },
+                      { var: "{agent_name}", desc: "Agent name" },
                       { var: "{time}", desc: "Call time" },
                       { var: "{date}", desc: "Call date" },
                       { var: "{duration}", desc: "Duration" },
+                      { var: "{rating_url}", desc: "Rating link" },
+                      { var: "{call_id}", desc: "Call ID" },
                     ].map((v) => (
                       <div key={v.var} className="text-xs">
                         <code className="bg-background/50 px-1.5 py-0.5 rounded font-mono text-accent-foreground font-semibold">{v.var}</code>
@@ -570,12 +568,20 @@ export const NotificationsPanel = () => {
                         </p>
                       </div>
                       <div className="space-y-2 pt-2">
-                        <Label className="text-sm font-medium">
-                          Duplicate Window: <span className="font-bold">{duplicateWindow}</span> minute{duplicateWindow !== 1 ? "s" : ""}
-                        </Label>
-                        <Slider value={[duplicateWindow]} onValueChange={(v) => setDuplicateWindow(v[0])} min={1} max={120} step={1} className="w-full" />
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-medium">Duplicate Prevention (Hours) - {(duplicateWindow / 60).toFixed(1)}h</Label>
+                        </div>
+                        <Slider
+                          value={[duplicateWindow]}
+                          // Ensure minimum 6 hours (360 mins) and max 24 hours (1440 mins)
+                          onValueChange={(value) => setDuplicateWindow(Math.max(360, Math.min(1440, value[0])))}
+                          min={360}
+                          max={1440}
+                          step={60} // 1 hour steps
+                          className="w-full"
+                        />
                         <p className="text-xs text-muted-foreground">
-                          Skip SMS if same number received one within {duplicateWindow} minute{duplicateWindow !== 1 ? "s" : ""}
+                          Prevent multiple SMS to the same caller within {(duplicateWindow / 60).toFixed(1)} hours (Minimum 6h)
                         </p>
                       </div>
                     </>

@@ -67,8 +67,9 @@ export const login = async (credentials: LoginCredentials) => {
     }
 
     // Store user and token in localStorage
-    const userData = typeof result.data === 'object' && 'user' in result.data ? result.data.user : result.data;
-    const token = typeof result.data === 'object' && 'token' in result.data ? result.data.token : null;
+    // Backend returns { success: true, token: "...", user: {...} } directly
+    const userData = result.user;
+    const token = result.token;
     
     if (userData && token) {
       localStorage.setItem('user', JSON.stringify(userData));

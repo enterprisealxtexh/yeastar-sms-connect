@@ -105,6 +105,41 @@ process.on('unhandledRejection', (reason) => {
 const dbPath = process.env.SMS_DB_PATH || path.join(__dirname, 'sms.db');
 const db = require('./shared-db.cjs');
 
+// Track deprecated route usage so we can remove old endpoints safely after rollout.
+const deprecatedRouteUsage = new Map();
+
+function trackDeprecatedRoute(route) {
+  const current = deprecatedRouteUsage.get(route) || { hits: 0, lastHitAt: null };
+  current.hits += 1;
+  current.lastHitAt = new Date().toISOString();
+  deprecatedRouteUsage.set(route, current);
+}
+
+function registerConfigAlias(aliasPath, targetPath) {
+  app.all(aliasPath, (req, res) => {
+    trackDeprecatedRoute(aliasPath);
+    logger.warn(`[DEPRECATED-ALIAS] ${req.method} ${aliasPath} -> ${targetPath}`);
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+    return res.redirect(307, `${targetPath}${query}`);
+  });
+}
+
+// Canonical config aliases (new namespace)
+registerConfigAlias('/api/config/gateway', '/api/gateway-config');
+registerConfigAlias('/api/config/pbx', '/api/pbx-config');
+registerConfigAlias('/api/config/call-auto-sms', '/api/call-auto-sms-config');
+registerConfigAlias('/api/config/notifications', '/api/notifications-config');
+
+app.get('/api/deprecations/usage', (req, res) => {
+  const data = Array.from(deprecatedRouteUsage.entries()).map(([route, info]) => ({
+    route,
+    hits: info.hits,
+    lastHitAt: info.lastHitAt,
+  }));
+  res.json({ success: true, data });
+});
+
 if (!db || !db.db) {
   console.error('Failed to initialize database. Exiting.');
   process.exit(1);
@@ -844,7 +879,8 @@ class YeastarPBXAPI {
         const errCode = response.errno || response.errmsg || 'Unknown error';
         // Some PBX firmwares return token-related codes while our cached token still exists.
         // Force a single re-auth and retry before failing.
-        if (allowReauthRetry && ['20004', '10003', '10004'].includes(String(errCode))) {
+        // 20021 can indicate a parameter error or sometimes token validity issues with download endpoint
+        if (allowReauthRetry && ['20004', '10003', '10004', '20021', '20019'].includes(String(errCode))) {
           logger.warn(` CDR random failed with ${errCode}; forcing PBX re-auth and retrying once`);
           this.token = null;
           return await this.getCDRRandom(extid, starttime, endtime, false);
@@ -1143,6 +1179,7 @@ async function syncCallRecords() {
           }
         }
         
+        const kenyaTime = convertUtcToKenyaTime(call.timestart);
         const callRecord = {
           external_id: call.cdrid || `${call.callfrom}_${call.callto}_${call.timestart}`,
           caller_number: call.callfrom,
@@ -1152,9 +1189,9 @@ async function syncCallRecords() {
           direction: call.type === 'Inbound' ? 'inbound' : call.type === 'Outbound' ? 'outbound' : 'internal',
           status: mapCallStatus(call.status),
           extension: extension,
-          start_time: call.timestart,
-          answer_time: call.talkduraction > 0 ? call.timestart : null,
-          end_time: call.timestart,
+          start_time: kenyaTime,
+          answer_time: call.talkduraction > 0 ? kenyaTime : null,
+          end_time: kenyaTime,
           ring_duration: Math.max(0, call.callduraction - call.talkduraction),
           talk_duration: call.talkduraction,
           total_duration: call.callduraction,
@@ -1209,40 +1246,12 @@ const missedCallAlertQueue = [];
 let isSendingMissedCallAlert = false;
 const MISSED_CALL_DELAY_MS = 300; // 300ms delay between missed call sends (prevents rate limiting)
 
-// DB-backed SMS pending queue - survives server restarts
-async function processPendingSmsQueue() {
-  try {
-    if (!db) return;
-    const dueItems = db.getDueSmsItems ? db.getDueSmsItems() : [];
-    if (dueItems.length === 0) return;
+// NOTE: SMS queue processing moved to dedicated sms-worker service
+// processPendingSmsQueue function removed - worker handles all SMS sending
 
-    for (const item of dueItems) {
-      try {
-        const success = await sendSmsViaGateway(item.caller_number, item.message);
-        if (success) {
-          logger.info(`✅ Queued SMS sent to ${item.caller_number}`);
-          db.logActivity('call_auto_sms_sent', `Call auto-SMS sent to ${item.caller_number}`, 'success');
-          db.insertSMS({ sender_number: item.caller_number, message_content: item.message, received_at: new Date().toISOString(), status: 'processed', direction: 'sent', category: 'auto' });
-        } else {
-          logger.error(`❌ Queued SMS failed for ${item.caller_number}`);
-          db.logActivity('call_auto_sms_failed', `Call auto-SMS failed for ${item.caller_number}`, 'error');
-        }
-        if (db.markPendingSmsProcessed) db.markPendingSmsProcessed(item.id, success);
-      } catch (err) {
-        logger.error(`Queue SMS error for ${item.caller_number}: ${err.message}`);
-        if (db.markPendingSmsProcessed) db.markPendingSmsProcessed(item.id, false);
-      }
-    }
-
-    // Housekeeping: remove old processed records
-    if (db.cleanOldPendingQueue) db.cleanOldPendingQueue(7);
-  } catch (error) {
-    logger.error(`processPendingSmsQueue error: ${error.message}`);
-  }
-}
-
-// Poll the DB queue every 60 seconds
-setInterval(processPendingSmsQueue, 60000);
+// Old interval-based processor (replaced by enhancedProcessPendingSmsQueue above)
+// Commenting out to prevent duplicate processing
+// setInterval(processPendingSmsQueue, 60000);
 
 async function processMissedCallQueue() {
   if (isSendingMissedCallAlert || missedCallAlertQueue.length === 0) {
@@ -1274,7 +1283,7 @@ async function processMissedCallQueue() {
 
 // ========================================
 // ========================================
-// Auto-Reply SMS
+// Helper Functions
 // ========================================
 
 function shouldGenerateRatingForSource(settings, source) {
@@ -1365,74 +1374,93 @@ function createRatingLinkForCustomer({ phoneNumber, source, extension = null, ca
   }
 }
 
-async function sendAutoReplySms(senderNumber) {
+// ========================================
+// ===== TIMEZONE UTILITIES =====
+// ========================================
+
+// Convert UTC timestamp string to Africa/Nairobi timezone
+function convertUtcToNairobi(utcIsoString) {
+  if (!utcIsoString) return null;
   try {
-    const autoReplyConfig = db.getAutoReplyConfig ? db.getAutoReplyConfig() : null;
+    const date = new Date(utcIsoString);
+    const nairobi = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Nairobi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(date);
+    return nairobi.replace(/\//g, '-');
+  } catch (e) {
+    return null;
+  }
+}
+
+// Get current timestamp in both UTC and Africa/Nairobi
+function getCurrentTimestamps() {
+  const now = new Date();
+  const utcTime = now.toISOString().replace('T', ' ').substring(0, 19);
+  const nairobi = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(now);
+  const nairobiTime = nairobi.replace(/\//g, '-');
+  return { utcTime, nairobiTime };
+}
+
+// ✅ Convert UTC timestamp to Kenya time (YYYY-MM-DD HH:MM:SS format)
+// PBX sends UTC, we store everything in Kenya time for uniformity
+function convertUtcToKenyaTime(utcTimestamp) {
+  if (!utcTimestamp) return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  
+  try {
+    // Parse the timestamp - handle both formats: "YYYY-MM-DD HH:MM:SS" and ISO
+    let date;
+    const str = String(utcTimestamp).trim();
     
-    // Check if auto-reply is enabled
-    if (!autoReplyConfig?.enabled) {
-      logger.debug(' Auto-reply disabled - skipping');
-      return false;
-    }
-
-    // Enforce extension filter — at least one must be selected
-    let arAllowedExtensions = [];
-    try { arAllowedExtensions = JSON.parse(autoReplyConfig.allowed_extensions || '[]'); } catch {}
-    if (arAllowedExtensions.length === 0) {
-      logger.debug(' Auto-reply: No extensions selected — skipping (select at least one extension to enable auto-reply)');
-      return false;
-    }
-
-    if (!senderNumber || !autoReplyConfig.message) {
-      logger.warn('Auto-reply: Missing phone number or message');
-      return false;
-    }
-
-    // Prevent repeated auto-replies to the same number.
-    // Use the admin-configured duplicate window from call_auto_sms_config (default 10 min).
-    const callAutoSmsCfg = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : {};
-    const autoReplyDupWindow = callAutoSmsCfg?.duplicate_window || 10;
-    if (db.checkRecentSms && db.checkRecentSms(senderNumber, autoReplyDupWindow)) {
-      logger.info(` Auto-reply duplicate prevention: skipping ${senderNumber} (within ${autoReplyDupWindow} min window)`);
-      db.logActivity('auto_reply_sms_duplicate_prevented', `Auto-reply duplicate prevented for ${senderNumber}`, 'info');
-      return false;
-    }
-
-    let finalMessage = autoReplyConfig.message;
-    const rating = createRatingLinkForCustomer({
-      phoneNumber: senderNumber,
-      source: 'auto_reply',
-      extension: null,
-      callRecord: null,
-    });
-    if (rating?.url) {
-      finalMessage = `${finalMessage}\n\nRate our service: ${rating.url}`;
-    }
-
-    logger.info(`📧 Sending auto-reply to: ${senderNumber}`);
-    logger.info(`   Message: ${finalMessage.substring(0, 80)}...`);
-
-    const success = await sendSmsViaGateway(senderNumber, finalMessage);
-    
-    if (success) {
-      logger.info(`✅ Auto-reply SMS sent to ${senderNumber}`);
-      db.logActivity('auto_reply_sms_sent', `Auto-reply sent to ${senderNumber}`, 'success');
-      db.insertSMS({
-        sender_number: senderNumber,
-        message_content: finalMessage,
-        received_at: new Date().toISOString(),
-        status: 'processed',
-        direction: 'sent',
-        category: 'auto_reply'
-      });
+    if (str.includes('T') || str.includes('Z')) {
+      // ISO format - parse directly
+      date = new Date(str);
+    } else if (str.includes(' ')) {
+      // "YYYY-MM-DD HH:MM:SS" format from PBX - assume UTC
+      date = new Date(`${str}Z`);
     } else {
-      logger.error(`❌ Auto-reply SMS failed for ${senderNumber}`);
-      db.logActivity('auto_reply_sms_failed', `Auto-reply failed for ${senderNumber}`, 'error');
+      // Try parsing as-is
+      date = new Date(str);
     }
     
-    return success;
+    if (isNaN(date.getTime())) {
+      logger.warn(`⚠️ Could not parse timestamp: ${utcTimestamp}, using current time`);
+      return new Date().toISOString().replace('T', ' ').substring(0, 19);
+    }
+    
+    // Add 3 hours for Kenya time (UTC+3)
+    const kenyaMs = date.getTime() + (3 * 60 * 60 * 1000);
+    const kenyaDate = new Date(kenyaMs);
+    
+    // Format as YYYY-MM-DD HH:MM:SS
+    return kenyaDate.toISOString().replace('T', ' ').substring(0, 19);
   } catch (error) {
-    logger.error(`Auto-reply exception: ${error.message}`);
+    logger.warn(`⚠️ Timezone conversion error for '${utcTimestamp}': ${error.message}`);
+    return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  }
+}
+
+// Compare two timestamps - returns true if first is before second
+function isDateBefore(utcTimestamp1, utcTimestamp2) {
+  if (!utcTimestamp1 || !utcTimestamp2) return false;
+  try {
+    const date1 = new Date(utcTimestamp1);
+    const date2 = new Date(utcTimestamp2);
+    return date1 < date2;
+  } catch (e) {
     return false;
   }
 }
@@ -1444,10 +1472,19 @@ async function sendAutoReplySms(senderNumber) {
 async function sendCallAutoSms(callRecord) {
   try {
     const callAutoSmsConfig = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+    const notificationsSetup = db.getNotificationsSetup ? db.getNotificationsSetup() : null;
     
     // Check if call auto-SMS is enabled
     if (!callAutoSmsConfig?.enabled) {
       logger.debug(' Call auto-SMS disabled - skipping');
+      return false;
+    }
+
+    // Check if SMS reports are globally enabled in notification preferences
+    // Default to true (allow SMS) unless explicitly disabled (0 or false)
+    const isSmsReportsDisabled = notificationsSetup && (notificationsSetup.sms_reports_enabled === 0 || notificationsSetup.sms_reports_enabled === false || notificationsSetup.sms_reports_enabled === '0');
+    if (isSmsReportsDisabled) {
+      logger.debug(' SMS reports globally disabled in notification preferences - call auto-SMS skipped');
       return false;
     }
 
@@ -1476,9 +1513,17 @@ async function sendCallAutoSms(callRecord) {
       return false;
     }
 
+    // Enforce SIM port filter if configured (only send for calls on monitored ports)
+    let allowedPorts = [];
+    try { allowedPorts = Array.isArray(callAutoSmsConfig.allowed_ports) ? callAutoSmsConfig.allowed_ports : JSON.parse(callAutoSmsConfig.allowed_ports || '[]'); } catch {}
+    if (allowedPorts.length > 0 && callRecord.sim_port && !allowedPorts.includes(Number(callRecord.sim_port))) {
+      logger.debug(` Call auto-SMS: SIM port '${callRecord.sim_port}' not in allowed list [${allowedPorts.join(', ')}]`);
+      return false;
+    }
+
     // ✅ Recency guard — only send SMS for calls that started AFTER this service instance was launched.
     // CDR start_time is stored in UTC. We append 'Z' if no timezone designator is present so
-    // JavaScript always parses it as UTC (not server local time), matching the EAT display in the frontend.
+    // JavaScript always parses it as UTC (not server local time), matching the display in the frontend.
     // Historical CDR backfill records (any call before service start) are always rejected.
     if (callRecord.start_time) {
       const raw = String(callRecord.start_time).trim().replace(' ', 'T');
@@ -1537,6 +1582,18 @@ async function sendCallAutoSms(callRecord) {
       return false;
     }
 
+    // Generate rating URL if template contains {rating_url}
+    let ratingUrl = '';
+    if (messageTemplate.includes('{rating_url}')) {
+      const rating = createRatingLinkForCustomer({
+        phoneNumber: callerNumber,
+        source: 'call_auto_sms',
+        extension: callRecord.extension || null,
+        callRecord,
+      });
+      ratingUrl = rating?.url || '';
+    }
+
     // Replace template variables
     let message = messageTemplate
       .replace(/\{caller_name\}/g, callRecord.caller_name || callRecord.caller_number)
@@ -1544,17 +1601,8 @@ async function sendCallAutoSms(callRecord) {
       .replace(/\{extension\}/g, callRecord.extension || 'N/A')
       .replace(/\{time\}/g, new Date(callRecord.start_time).toLocaleTimeString('en-KE'))
       .replace(/\{date\}/g, new Date(callRecord.start_time).toLocaleDateString('en-KE'))
-      .replace(/\{duration\}/g, `${callRecord.talk_duration || 0}s`);
-
-    const rating = createRatingLinkForCustomer({
-      phoneNumber: callerNumber,
-      source: 'call_auto_sms',
-      extension: callRecord.extension || null,
-      callRecord,
-    });
-    if (rating?.url) {
-      message = `${message}\n\nRate our service: ${rating.url}`;
-    }
+      .replace(/\{duration\}/g, `${callRecord.talk_duration || 0}s`)
+      .replace(/\{rating_url\}/g, ratingUrl);
 
     logger.info(`   Message: ${message.substring(0, 80)}...`);
     
@@ -1563,8 +1611,9 @@ async function sendCallAutoSms(callRecord) {
     const delayMs = delayMinutes * 60 * 1000;
     const scheduledTime = Date.now() + delayMs;
     
-    // Use admin-configured duplicate window (default 10 minutes)
-    const duplicateWindowMinutes = callAutoSmsConfig.duplicate_window || 10;
+    // Use admin-configured duplicate window (default 360 minutes / 6 hours)
+    // Enforce 6h floor for consistency if config is missing or too low
+    const duplicateWindowMinutes = Math.max(360, callAutoSmsConfig.duplicate_window || 360);
 
     // Check for recent duplicates before queueing
     if (db.checkRecentSms && db.checkRecentSms(callerNumber, duplicateWindowMinutes)) {
@@ -1993,31 +2042,23 @@ async function sendEmail(subject, bodyText, { bypassEnabledCheck = false } = {})
 // SMS Gateway Service (Hardcoded Credentials)
 // ========================================
 
-const SMS_GATEWAY_CONFIG = {
-  url: 'https://sms.techrasystems.com/SMSApi/send',
-  userid: 'nosteqltd',
-  senderid: 'NOSTEQLTD',
-  apikey: 'd5333c2f579ef1115d5984475e6fbecfffa2cdff'
-};
+// SMS_GATEWAY_CONFIG removed - SMS worker handles gateway configuration
 
 // Generic SMS sending function using hardcoded gateway
 // Format phone number to international format
 // Converts 0XXXXXXXXX to 254XXXXXXXXX (Kenya country code)
 function formatPhoneNumber(number) {
   if (!number) return number;
-  const cleaned = String(number).trim();
+  const cleaned = String(number).replace(/\D/g, ''); // Strip non-digits
   
-  // If starts with 0, replace with 254
   if (cleaned.startsWith('0')) {
     return '254' + cleaned.substring(1);
   }
   
-  // If already starts with 254, return as is
   if (cleaned.startsWith('254')) {
     return cleaned;
   }
   
-  // Otherwise, prepend 254
   return '254' + cleaned;
 }
 
@@ -2080,62 +2121,31 @@ async function sendSmsViaGateway(phoneNumberOrNumbers, messageText) {
     }
 
     // Format all phone numbers to international format
-    // Sanitize to digits-only before shell interpolation to prevent command injection
     const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n).replace(/\D/g, ''));
     const mobileParam = formattedNumbers.join(',');
     
-    logger.info(`📤 Sending SMS via gateway to: ${mobileParam}`);
+    logger.info(`📤 Queueing SMS via gateway to: ${mobileParam}`);
     logger.info(`   Message: ${messageText.substring(0, 80)}...`);
 
     try {
-      const { execSync } = require('child_process');
-      // Properly escape for shell: escape backslashes, double quotes, backticks, and dollar signs
-      const escapedMsg = messageText
-        .replace(/\\/g, '\\\\')    // Escape backslashes first
-        .replace(/"/g, '\\"')      // Escape double quotes
-        .replace(/`/g, '\\`')      // Escape backticks
-        .replace(/\$/g, '\\$');    // Escape dollar signs
-      
-      const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
--H 'Accept: application/json' \
--H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
--H 'Content-Type: application/x-www-form-urlencoded' \
--H 'Cookie: SERVERID=webC1' \
--d "userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}"`;
-
-      const response = execSync(curlCommand, { 
-        encoding: 'utf-8',
-        timeout: 30000,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/bash' 
-      });
-
-      if (response && response.trim()) {
-        logger.info(`✅ SMS sent successfully to ${filteredNumbers.length} recipient(s)`);
-        
-        // Store sent SMS in database for each recipient
-        try {
-          filteredNumbers.forEach(recipient => {
-            db.insertSMS({
-              sender_number: recipient,
-              message_content: messageText,
-              received_at: new Date().toISOString(),
-              status: 'processed',
-              direction: 'sent',
-              category: 'system'
-            });
-          });
-        } catch (dbError) {
-          logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
+      // Queue SMS for sms-worker to process
+      let queuedCount = 0;
+      filteredNumbers.forEach(recipient => {
+        if (db.enqueuePendingSms) {
+          db.enqueuePendingSms(recipient, messageText, new Date().toISOString(), 'gateway_sms');
+          queuedCount++;
         }
-        
+      });
+      
+      if (queuedCount > 0) {
+        logger.info(`✅ SMS queued for ${queuedCount} recipient(s)`);
         return true;
       } else {
-        logger.warn(`SMS gateway empty response`);
+        logger.warn(`SMS queue unavailable`);
         return false;
       }
-    } catch (execError) {
-      logger.error(`SMS sending failed: ${execError.message}`);
+    } catch (queueError) {
+      logger.error(`SMS queue failed: ${queueError.message}`);
       return false;
     }
   } catch (error) {
@@ -2177,78 +2187,34 @@ async function sendSmsReport(phoneNumbers, messageText) {
       return true;
     }
 
-    // Format all phone numbers to international format and join
-    // Sanitize to digits-only before shell interpolation to prevent command injection
+    // Format all phone numbers to international format
     const formattedNumbers = filteredNumbers.map(n => formatPhoneNumber(n).replace(/\D/g, ''));
     const mobileParam = formattedNumbers.join(',');
     
-    logger.info(`📤 SMS sending to: ${mobileParam}`);
+    logger.info(`📤 Queueing SMS report to: ${mobileParam}`);
     logger.info(`   Message length: ${messageText.length} characters`);
 
     try {
-      // Build and execute curl command directly using shell escaping
-      const { execSync } = require('child_process');
-      
-      // Properly escape for shell: escape backslashes, double quotes, backticks, and dollar signs
-      const escapedMsg = messageText
-        .replace(/\\/g, '\\\\')    // Escape backslashes first
-        .replace(/"/g, '\\"')      // Escape double quotes
-        .replace(/`/g, '\\`')      // Escape backticks
-        .replace(/\$/g, '\\$');    // Escape dollar signs
-      
-      const curlCommand = `curl -X POST '${SMS_GATEWAY_CONFIG.url}' \
--H 'Accept: application/json' \
--H 'apikey: ${SMS_GATEWAY_CONFIG.apikey}' \
--H 'Content-Type: application/x-www-form-urlencoded' \
--H 'Cookie: SERVERID=webC1' \
--d "userid=${SMS_GATEWAY_CONFIG.userid}&senderid=${SMS_GATEWAY_CONFIG.senderid}&msgType=text&duplicatecheck=true&sendMethod=quick&msg=${escapedMsg}&mobile=${mobileParam}"`;
-
-      logger.info(`Executing SMS curl...`);
-      
-      const response = execSync(curlCommand, { 
-        encoding: 'utf-8',
-        timeout: 30000,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/bash' 
+      // Queue SMS for sms-worker to process
+      let queuedCount = 0;
+      filteredNumbers.forEach(recipient => {
+        if (db.enqueuePendingSms) {
+          db.enqueuePendingSms(recipient, messageText, new Date().toISOString(), 'sms_report');
+          queuedCount++;
+        }
       });
 
-      logger.info(`SMS Gateway Response: ${response}`);
-      
-      // Any response from gateway is typically success - they respond with JSON
-      if (response && response.trim()) {
-        logger.info(`✅ SMS sent successfully to ${filteredNumbers.length} recipient(s): ${mobileParam}`);
-        db.logActivity('sms_report_sent', `SMS sent to ${mobileParam}`, 'success');
-        
-        // Store sent SMS in database for each recipient
-        try {
-          filteredNumbers.forEach(recipient => {
-            db.insertSMS({
-              sender_number: recipient,
-              message_content: messageText,
-              received_at: new Date().toISOString(),
-              status: 'processed',
-              direction: 'sent',
-              category: 'report'
-            });
-          });
-        } catch (dbError) {
-          logger.warn(`Failed to log sent SMS to database: ${dbError.message}`);
-        }
-        
+      if (queuedCount > 0) {
+        logger.info(`✅ SMS report queued for ${queuedCount} recipient(s)`);
+        db.logActivity('sms_report_queued', `SMS report queued to ${mobileParam}`, 'success');
         return true;
       } else {
-        logger.warn(`SMS Gateway empty response for: ${mobileParam}`);
+        logger.warn(`SMS report queue unavailable`);
         return false;
       }
     } catch (execError) {
-      logger.error(`Curl execution failed: ${execError.message}`);
-      if (execError.stderr) {
-        logger.error(`Stderr: ${execError.stderr}`);
-      }
-      if (execError.stdout) {
-        logger.error(`Stdout: ${execError.stdout}`);
-      }
-      db.logActivity('sms_report_error', `SMS error to ${mobileParam}: ${execError.message}`, 'error');
+      logger.error(`SMS queue failed: ${execError.message}`);
+      db.logActivity('sms_report_error', `SMS queue error: ${execError.message}`, 'error');
       return false;
     }
   } catch (error) {
@@ -2608,8 +2574,7 @@ async function startSmsListener(retryCount = 0) {
           logger.info(`✅ SMS SAVED: From ${sms.sender} on GsmSpan ${gsmSpan}`);
           db.logActivity('sms_received', `New SMS from ${sms.sender} on GsmSpan ${gsmSpan}: ${messageContent.substring(0, 50)}...`, 'success', gsmSpan);
           
-          // EVENT-DRIVEN: Send auto-reply SMS if enabled
-          await sendAutoReplySms(sms.sender);
+          // NOTE: Auto-Reply SMS feature removed - only Call Auto-SMS supported
 
           // EVENT-DRIVEN: Send new SMS notification alert if enabled
           const portLabel = (() => {
@@ -4089,7 +4054,7 @@ app.post('/api/call-logs/sync', async (req, res) => {
         direction: call.direction || (call.type === 'in' ? 'inbound' : 'outbound'),
         status: call.status || 'completed',
         extension: call.extension || call.ext,
-        start_time: call.starttime || call.start_time,
+        start_time: convertUtcToKenyaTime(call.starttime || call.start_time),
         answer_time: call.answer_time,
         end_time: call.endtime || call.end_time,
         ring_duration: call.ring_duration || 0,
@@ -4279,7 +4244,7 @@ app.post('/api/extensions/:extnumber/sync-call-logs', async (req, res) => {
         extension: extnumber,
         direction: call.disposition === 'ANSWERED' ? 'inbound' : 'outbound',
         status: call.disposition,
-        start_time: call.calldate,
+        start_time: convertUtcToKenyaTime(call.calldate),
         answer_time: call.answertime,
         end_time: call.endtime,
         total_duration: call.billsec,
@@ -4376,7 +4341,7 @@ app.post('/api/pbx-sync-calls', async (req, res) => {
           direction: determineCallDirection(call),
           status: mapCallStatus(call.status),
           extension: call.extension || null,
-          start_time: call.starttime || new Date().toISOString(),
+          start_time: convertUtcToKenyaTime(call.starttime || new Date().toISOString()),
           answer_time: call.answertime || null,
           end_time: call.endtime || null,
           ring_duration: call.ringduration || 0,
@@ -4450,9 +4415,93 @@ function mapCallStatus(status) {
 // Channel Setup Endpoints (Telegram credentials + Email SMTP)
 // ========================================
 
+function getMergedNotificationsConfig() {
+  const merged = db.getNotificationConfig ? db.getNotificationConfig() : null;
+  if (!merged) return null;
+  return {
+    ...merged,
+    telegram_enabled: merged.enabled ?? 0,
+    sms_reports_enabled: merged.sms_enabled ?? 1,
+  };
+}
+
+function saveMergedNotificationsConfig(body = {}) {
+  const hasChannelFields = [
+    'bot_token',
+    'chat_id',
+    'email_smtp_host',
+    'email_smtp_port',
+    'email_smtp_user',
+    'email_smtp_pass',
+    'email_from',
+    'email_recipients',
+    'email_smtp_encryption',
+  ].some((k) => Object.prototype.hasOwnProperty.call(body, k));
+
+  const hasPreferenceFields = [
+    'telegram_enabled',
+    'email_enabled',
+    'sms_reports_enabled',
+    'notify_missed_calls',
+    'notify_new_sms',
+    'notify_system_errors',
+    'notify_shift_changes',
+    'daily_report_enabled',
+    'daily_report_time',
+  ].some((k) => Object.prototype.hasOwnProperty.call(body, k));
+
+  let channelOk = true;
+  let setupOk = true;
+
+  if (hasChannelFields && db.saveChannelConfig) {
+    channelOk = db.saveChannelConfig({
+      bot_token: body.bot_token,
+      chat_id: body.chat_id,
+      email_smtp_host: body.email_smtp_host,
+      email_smtp_port: body.email_smtp_port,
+      email_smtp_user: body.email_smtp_user,
+      email_smtp_pass: body.email_smtp_pass,
+      email_from: body.email_from,
+      email_recipients: body.email_recipients,
+      email_smtp_encryption: body.email_smtp_encryption,
+    });
+  }
+
+  if (hasPreferenceFields && db.saveNotificationsSetup) {
+    setupOk = db.saveNotificationsSetup({
+      telegram_enabled: body.telegram_enabled,
+      email_enabled: body.email_enabled,
+      sms_reports_enabled: body.sms_reports_enabled,
+      notify_missed_calls: body.notify_missed_calls,
+      notify_new_sms: body.notify_new_sms,
+      notify_system_errors: body.notify_system_errors,
+      notify_shift_changes: body.notify_shift_changes,
+      daily_report_enabled: body.daily_report_enabled,
+      daily_report_time: body.daily_report_time,
+    });
+  }
+
+  return channelOk && setupOk;
+}
+
 app.get('/api/channel-setup', (req, res) => {
   try {
-    const config = db.getChannelConfig();
+    trackDeprecatedRoute('/api/channel-setup');
+    logger.warn('[DEPRECATED] GET /api/channel-setup called. Use /api/notifications-config instead.');
+    const merged = getMergedNotificationsConfig();
+    const config = merged
+      ? {
+          bot_token: merged.bot_token,
+          chat_id: merged.chat_id,
+          email_smtp_host: merged.email_smtp_host,
+          email_smtp_port: merged.email_smtp_port,
+          email_smtp_user: merged.email_smtp_user,
+          email_smtp_pass: merged.email_smtp_pass,
+          email_from: merged.email_from,
+          email_recipients: merged.email_recipients,
+          email_smtp_encryption: merged.email_smtp_encryption,
+        }
+      : null;
     res.json({ success: true, data: config });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4461,32 +4510,13 @@ app.get('/api/channel-setup', (req, res) => {
 
 app.post('/api/channel-setup', (req, res) => {
   try {
-    const {
-      bot_token,
-      chat_id,
-      email_smtp_host,
-      email_smtp_port,
-      email_smtp_user,
-      email_smtp_pass,
-      email_from,
-      email_recipients,
-      email_smtp_encryption,
-    } = req.body;
-
-    const success = db.saveChannelConfig({
-      bot_token,
-      chat_id,
-      email_smtp_host,
-      email_smtp_port,
-      email_smtp_user,
-      email_smtp_pass,
-      email_from,
-      email_recipients,
-      email_smtp_encryption,
-    });
+    trackDeprecatedRoute('/api/channel-setup');
+    logger.warn('[DEPRECATED] POST /api/channel-setup called. Use /api/notifications-config instead.');
+    const success = saveMergedNotificationsConfig(req.body || {});
 
     if (success) {
-      res.json({ success: true, message: 'Channel credentials saved', data: db.getChannelConfig() });
+      const merged = getMergedNotificationsConfig();
+      res.json({ success: true, message: 'Channel credentials saved', data: merged });
     } else {
       throw new Error('Failed to save channel credentials');
     }
@@ -4501,7 +4531,22 @@ app.post('/api/channel-setup', (req, res) => {
 
 app.get('/api/notifications-setup', (req, res) => {
   try {
-    const setup = db.getNotificationsSetup();
+    trackDeprecatedRoute('/api/notifications-setup');
+    logger.warn('[DEPRECATED] GET /api/notifications-setup called. Use /api/notifications-config instead.');
+    const merged = getMergedNotificationsConfig();
+    const setup = merged
+      ? {
+          telegram_enabled: merged.telegram_enabled,
+          email_enabled: merged.email_enabled,
+          sms_reports_enabled: merged.sms_reports_enabled,
+          notify_missed_calls: merged.notify_missed_calls,
+          notify_new_sms: merged.notify_new_sms,
+          notify_system_errors: merged.notify_system_errors,
+          notify_shift_changes: merged.notify_shift_changes,
+          daily_report_enabled: merged.daily_report_enabled,
+          daily_report_time: merged.daily_report_time,
+        }
+      : null;
     res.json({ success: true, data: setup });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -4510,32 +4555,13 @@ app.get('/api/notifications-setup', (req, res) => {
 
 app.post('/api/notifications-setup', (req, res) => {
   try {
-    const {
-      telegram_enabled,
-      email_enabled,
-      sms_reports_enabled,
-      notify_missed_calls,
-      notify_new_sms,
-      notify_system_errors,
-      notify_shift_changes,
-      daily_report_enabled,
-      daily_report_time,
-    } = req.body;
-
-    const success = db.saveNotificationsSetup({
-      telegram_enabled,
-      email_enabled,
-      sms_reports_enabled,
-      notify_missed_calls,
-      notify_new_sms,
-      notify_system_errors,
-      notify_shift_changes,
-      daily_report_enabled,
-      daily_report_time,
-    });
+    trackDeprecatedRoute('/api/notifications-setup');
+    logger.warn('[DEPRECATED] POST /api/notifications-setup called. Use /api/notifications-config instead.');
+    const success = saveMergedNotificationsConfig(req.body || {});
 
     if (success) {
-      res.json({ success: true, message: 'Notification preferences saved', data: db.getNotificationsSetup() });
+      const merged = getMergedNotificationsConfig();
+      res.json({ success: true, message: 'Notification preferences saved', data: merged });
     } else {
       throw new Error('Failed to save notification preferences');
     }
@@ -4544,6 +4570,92 @@ app.post('/api/notifications-setup', (req, res) => {
   }
 });
 
+// ========================================
+// Unified Notifications Config Endpoint (credentials + preferences)
+// Backward-compatible simplification so frontend can use one source of truth.
+// ========================================
+
+app.get('/api/notifications-config', (req, res) => {
+  try {
+    const merged = getMergedNotificationsConfig();
+    if (!merged) {
+      return res.json({ success: true, data: null });
+    }
+
+    res.json({ success: true, data: merged });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/notifications-config', (req, res) => {
+  try {
+    const ok = saveMergedNotificationsConfig(req.body || {});
+    if (!ok) {
+      return res.status(500).json({ success: false, error: 'Failed to save notifications config' });
+    }
+
+    const merged = getMergedNotificationsConfig();
+    res.json({
+      success: true,
+      message: 'Notifications config saved',
+      data: merged,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// Admin: Reset Call Auto-SMS to Default State
+// ========================================
+app.post('/api/admin/reset-call-auto-sms', (req, res) => {
+  try {
+    logger.warn('[ADMIN] Reset Call Auto-SMS to default state requested');
+    
+    const success = db.saveCallAutoSmsConfig
+      ? db.saveCallAutoSmsConfig({
+          enabled: false,
+          answered_message: 'Thank you for calling us! We appreciate your business and are here to help anytime.',
+          missed_message: "We missed your call! Sorry we couldn't answer. We'll get back to you shortly. Your call is important to us.",
+          delay_enabled: true,
+          delay_minutes: 5,
+          duplicate_window: 360,
+          allowed_ports: [],
+          allowed_extensions: [],
+          call_direction: 'both'
+        })
+      : false;
+
+    if (!success) {
+      logger.error('[ADMIN] Reset failed - db.saveCallAutoSmsConfig returned false');
+      return res.status(500).json({ success: false, error: 'Failed to reset call auto-SMS config' });
+    }
+
+    // Verify the change persisted
+    const verifiedConfig = db.getCallAutoSmsConfig();
+    if (!verifiedConfig || verifiedConfig.enabled !== 0) {
+      logger.error('[ADMIN] Reset verification failed - config did not reset to disabled');
+      return res.status(500).json({ success: false, error: 'Reset verification failed' });
+    }
+
+    logger.warn(`[ADMIN] Reset verified: Call Auto-SMS is now DISABLED with default messages`);
+    
+    // Normalize boolean fields from database integers to true/false for frontend
+    res.json({
+      success: true,
+      message: 'Call Auto-SMS reset to default disabled state',
+      data: {
+        ...verifiedConfig,
+        enabled: !!verifiedConfig.enabled,
+        delay_enabled: !!verifiedConfig.delay_enabled
+      }
+    });
+  } catch (error) {
+    logger.error(`[ADMIN] Reset error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Test SMS endpoint
 app.post('/api/test-sms', async (req, res) => {
@@ -5057,35 +5169,24 @@ app.delete('/api/sms-templates/:id', requireRole('super_admin', 'admin'), (req, 
 });
 
 // ========================================
-// Auto-Reply Config API Endpoints
+// SMS Queue & Config Utilities
 // ========================================
 
-app.get('/api/auto-reply-config', (req, res) => {
-  try {
-    const config = db.getAutoReplyConfig ? db.getAutoReplyConfig() : null;
-    res.json({ success: true, data: config });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post('/api/auto-reply-config', (req, res) => {
-  try {
-    const { enabled, message, notification_email, allowed_extensions } = req.body;
-    if (message === undefined) {
-      return res.status(400).json({ success: false, error: 'message is required' });
-    }
-    const success = db.saveAutoReplyConfig
-      ? db.saveAutoReplyConfig({ enabled: !!enabled, message, notification_email, allowed_extensions: allowed_extensions || [] })
-      : false;
-    if (!success) {
-      return res.status(500).json({ success: false, error: 'Failed to save auto-reply config' });
-    }
-    res.json({ success: true, message: 'Auto-reply config saved' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+function triggerQueueAfterConfigSave(sourceTag) {
+  // Fire-and-forget: enqueue immediate processing without blocking the save response.
+  Promise.resolve()
+    .then(() => enhancedProcessPendingSmsQueue())
+    .then((result) => {
+      if (result?.success) {
+        logger.info(`[${sourceTag}] Queue trigger complete: processed=${result.processed || 0}, failed=${result.failed || 0}`);
+      } else {
+        logger.debug(`[${sourceTag}] Queue trigger skipped: ${result?.reason || result?.error || 'unknown'}`);
+      }
+    })
+    .catch((err) => {
+      logger.warn(`[${sourceTag}] Queue trigger error: ${err.message}`);
+    });
+}
 
 // ========================================
 // Call Auto-SMS Config API Endpoints
@@ -5094,7 +5195,13 @@ app.post('/api/auto-reply-config', (req, res) => {
 app.get('/api/call-auto-sms-config', (req, res) => {
   try {
     const config = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
-    res.json({ success: true, data: config });
+    // Normalize boolean fields from database integers to true/false for frontend
+    const normalized = config ? {
+      ...config,
+      enabled: !!config.enabled,
+      delay_enabled: !!config.delay_enabled
+    } : null;
+    res.json({ success: true, data: normalized });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -5113,20 +5220,304 @@ app.post('/api/call-auto-sms-config', (req, res) => {
           missed_message,
           delay_enabled: delay_enabled !== false,
           delay_minutes: delay_minutes != null ? delay_minutes : 5,
-          duplicate_window: duplicate_window != null ? duplicate_window : 10,
+          // Enforce minimum 6 hours (360 mins) for duplicate window
+          duplicate_window: duplicate_window != null ? Math.max(360, duplicate_window) : 360,
           allowed_ports: allowed_ports || [],
           allowed_extensions: allowed_extensions || [],
           call_direction: call_direction || 'both'
         })
       : false;
     if (!success) {
+      logger.error('[CALL-AUTO-SMS] Save failed - db.saveCallAutoSmsConfig returned false');
       return res.status(500).json({ success: false, error: 'Failed to save call auto-SMS config' });
     }
-    res.json({ success: true, message: 'Call auto-SMS config saved' });
+
+    const verifiedConfig = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+    if (!verifiedConfig) {
+      logger.error('[CALL-AUTO-SMS] Verification failed - no config found after save');
+      return res.status(500).json({ success: false, error: 'Call auto-SMS config verification failed' });
+    }
+
+    const enabledMatches = (!!verifiedConfig.enabled) === (!!enabled);
+    if (!enabledMatches) {
+      logger.error(`[CALL-AUTO-SMS] Data mismatch! Requested enabled=${enabled}, but DB has enabled=${verifiedConfig.enabled}`);
+      return res.status(500).json({ success: false, error: 'Call auto-SMS config verification failed - data mismatch' });
+    }
+
+    logger.info(`[CALL-AUTO-SMS] Save verified: enabled=${verifiedConfig.enabled}`);
+
+    if (verifiedConfig.enabled) {
+      triggerQueueAfterConfigSave('CALL-AUTO-SMS');
+    }
+
+    // Normalize boolean fields from database integers to true/false for frontend
+    res.json({ 
+      success: true, 
+      message: 'Call auto-SMS config saved and verified', 
+      data: {
+        ...verifiedConfig,
+        enabled: !!verifiedConfig.enabled,
+        delay_enabled: !!verifiedConfig.delay_enabled
+      }
+    });
+  } catch (error) {
+    logger.error(`[CALL-AUTO-SMS] Save error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// SMS Queue Management (Production-Ready)
+// ========================================
+
+// Track queue processing state for monitoring
+const queueProcessingState = {
+  isProcessing: false,
+  lastProcessedAt: null,
+  totalProcessed: 0,
+  totalFailed: 0,
+  lastError: null,
+};
+
+/**
+ * Enhanced SMS queue processor respecting extension/port filters
+ * Non-blocking async pattern designed for production
+ */
+async function enhancedProcessPendingSmsQueue() {
+  // Prevent concurrent processing
+  if (queueProcessingState.isProcessing) {
+    logger.debug('⏳ SMS queue processing already in progress - skipping');
+    return { success: false, reason: 'already_processing', queued: 0 };
+  }
+
+  queueProcessingState.isProcessing = true;
+  let processedCount = 0;
+  let failedCount = 0;
+
+  try {
+    if (!db) {
+      throw new Error('Database not initialized');
+    }
+
+    // Get due items from queue
+    const dueItems = db.getDueSmsItems ? db.getDueSmsItems() : [];
+    if (dueItems.length === 0) {
+      logger.debug('📭 SMS queue empty - no items to process');
+      return { success: true, queued: 0, processed: 0, failed: 0 };
+    }
+
+    logger.info(`📬 Processing ${dueItems.length} due SMS items from queue`);
+
+    // Get current configs to validate recipients against settings (Call Auto-SMS only, Auto-Reply removed)
+    const callAutoSmsConfig = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+
+    // Parse allowed extensions/ports for filtering
+    let callAutoSmsExtensions = [];
+    let callAutoSmsPorts = [];
+    
+    if (callAutoSmsConfig && callAutoSmsConfig.allowed_extensions) {
+      try {
+        callAutoSmsExtensions = JSON.parse(callAutoSmsConfig.allowed_extensions || '[]');
+      } catch (e) { }
+    }
+    
+    if (callAutoSmsConfig && callAutoSmsConfig.allowed_ports) {
+      try {
+        callAutoSmsPorts = JSON.parse(callAutoSmsConfig.allowed_ports || '[]');
+      } catch (e) { }
+    }
+
+    for (const item of dueItems) {
+      try {
+        // All remaining queue items are treated as call-auto-sms (Auto-Reply removed)
+        const source = 'call_auto_sms';
+
+        logger.info(`  📤 Processing ${source} to ${item.caller_number} (scheduled: ${item.scheduled_at})`);
+
+        // Send via gateway
+        const success = await sendSmsViaGateway(item.caller_number, item.message);
+        
+        if (success) {
+          logger.info(`    ✅ SMS sent successfully to ${item.caller_number}`);
+          db.logActivity(`${source}_sent`, `SMS sent to ${item.caller_number}`, 'success', null, JSON.stringify({ queue_id: item.id }));
+          
+          // Insert into sms_messages for records
+          try {
+            db.insertSMS({
+              sender_number: item.caller_number,
+              message_content: item.message,
+              received_at: new Date().toISOString(),
+              status: 'processed',
+              direction: 'sent',
+              category: source
+            });
+          } catch (insertErr) {
+            logger.warn(`    ⚠️  Could not record SMS in history: ${insertErr.message}`);
+          }
+          
+          processedCount++;
+        } else {
+          logger.error(`    ❌ SMS send failed to ${item.caller_number}`);
+          db.logActivity(`${source}_failed`, `SMS send failed for ${item.caller_number}`, 'error', null, JSON.stringify({ queue_id: item.id, reason: 'send_failed' }));
+          failedCount++;
+        }
+
+        // Mark as processed (success or failure)
+        try {
+          if (db.markPendingSmsProcessed) {
+            db.markPendingSmsProcessed(item.id, success);
+            logger.debug(`    📝 Queue item ${item.id} marked as ${success ? 'sent' : 'failed'}`);
+          }
+        } catch (markErr) {
+          logger.error(`    ⚠️  Could not mark item as processed: ${markErr.message}`);
+        }
+
+      } catch (itemErr) {
+        logger.error(`  ❌ Error processing item ${item.id}: ${itemErr.message}`);
+        failedCount++;
+        
+        try {
+          if (db.markPendingSmsProcessed) {
+            db.markPendingSmsProcessed(item.id, false);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Cleanup old records (older than 7 days)
+    try {
+      if (db.cleanOldPendingQueue) {
+        db.cleanOldPendingQueue(7);
+        logger.debug('🧹 Cleaned old queue records (>7 days)');
+      }
+    } catch (cleanErr) {
+      logger.warn(`Cleanup failed: ${cleanErr.message}`);
+    }
+
+    queueProcessingState.lastProcessedAt = new Date().toISOString();
+    queueProcessingState.totalProcessed += processedCount;
+    queueProcessingState.totalFailed += failedCount;
+    queueProcessingState.lastError = null;
+
+    logger.info(`✅ Queue processing complete: ${processedCount} sent, ${failedCount} failed`);
+    
+    return {
+      success: true,
+      queued: dueItems.length,
+      processed: processedCount,
+      failed: failedCount,
+      timestamp: queueProcessingState.lastProcessedAt
+    };
+
+  } catch (error) {
+    logger.error(`❌ SMS queue processing failed: ${error.message}`);
+    queueProcessingState.lastError = error.message;
+    db && db.logActivity && db.logActivity('sms_queue_error', `Queue processing error: ${error.message}`, 'error');
+    
+    return {
+      success: false,
+      error: error.message,
+      queued: 0
+    };
+  } finally {
+    queueProcessingState.isProcessing = false;
+  }
+}
+
+/**
+ * API Endpoint: Manually trigger SMS queue processing
+ * POST /api/sms-queue/process
+ * Used by frontend after admin enables call-auto-sms
+ */
+app.post('/api/sms-queue/process', requireRole('super_admin', 'admin'), async (req, res) => {
+  try {
+    logger.info('🚀 Manual SMS queue processing triggered by admin');
+    
+    const result = await enhancedProcessPendingSmsQueue();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Processed ${result.processed} SMS, ${result.failed} failed`,
+        details: result
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Unknown error',
+        reason: result.reason
+      });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+/**
+ * API Endpoint: Get SMS queue status and health
+ * GET /api/sms-queue/status
+ * Returns stats, processing state, and last error
+ */
+app.get('/api/sms-queue/status', (req, res) => {
+  try {
+    const dueItems = db.getDueSmsItems ? db.getDueSmsItems() : [];
+    const callAutoSmsConfig = db.getCallAutoSmsConfig ? db.getCallAutoSmsConfig() : null;
+
+    const pendingCount = dueItems.length;
+    const allPending = db.db ? db.db.prepare('SELECT COUNT(*) as cnt FROM sms_pending_queue WHERE status = ?').get('pending').cnt : 0;
+
+    res.json({
+      success: true,
+      data: {
+        queue: {
+          pendingDue: pendingCount,
+          pendingTotal: allPending,
+          isProcessing: queueProcessingState.isProcessing,
+          lastProcessedAt: queueProcessingState.lastProcessedAt,
+          totalProcessed: queueProcessingState.totalProcessed,
+          totalFailed: queueProcessingState.totalFailed,
+          lastError: queueProcessingState.lastError
+        },
+        config: {
+          callAutoSmsEnabled: callAutoSmsConfig?.enabled || false,
+          callAutoSmsExtensions: callAutoSmsConfig?.allowed_extensions ? JSON.parse(callAutoSmsConfig.allowed_extensions || '[]') : [],
+          callAutoSmsPorts: callAutoSmsConfig?.allowed_ports ? JSON.parse(callAutoSmsConfig.allowed_ports || '[]') : []
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * API Endpoint: List pending SMS queue items
+ * GET /api/sms-queue/pending
+ * Returns details of queued items (for debugging)
+ */
+app.get('/api/sms-queue/pending', requireRole('super_admin', 'admin'), (req, res) => {
+  try {
+    const allPending = db.db ? db.db.prepare(`
+      SELECT id, caller_number, message, scheduled_at, status, attempts, created_at
+      FROM sms_pending_queue
+      WHERE status = 'pending'
+      ORDER BY scheduled_at ASC
+      LIMIT 100
+    `).all() : [];
+
+    res.json({
+      success: true,
+      count: allPending.length,
+      data: allPending
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// NOTE: Queue processing moved to dedicated sms-worker service (managed by PM2)
+// The enhancedProcessPendingSmsQueue function below is kept for reference/manual testing only
+// setInterval(enhancedProcessPendingSmsQueue, 60000);
 
 // ========================================
 // Customer Ratings API Endpoints
@@ -5687,40 +6078,48 @@ app.get('/api/call-records', (req, res) => {
     const status = req.query.status;
     const start_time_from = req.query.start_time_from;
     const start_time_to = req.query.start_time_to;
+    const search = req.query.search; // Global search parameter
     
     let countQuery, dataQuery, params = [];
     let whereConditions = [];
     
     // Build where conditions based on filters
-    if (extension) {
+    if (extension && extension !== 'all') {
       whereConditions.push('(cr.extension = ? OR cr.caller_number = ? OR cr.callee_number = ?)');
       params.push(extension, extension, extension);
     }
     
-    if (direction) {
+    if (direction && direction !== 'all') {
       whereConditions.push('cr.direction = ?');
       params.push(direction);
     }
     
-    if (status) {
+    if (status && status !== 'all') {
       whereConditions.push('cr.status = ?');
       params.push(status);
     }
 
     if (start_time_from) {
-      whereConditions.push('cr.start_time >= ?');
+      whereConditions.push('unixepoch(cr.start_time) >= unixepoch(?)');
       params.push(start_time_from);
     }
 
     if (start_time_to) {
-      whereConditions.push('cr.start_time <= ?');
+      whereConditions.push('unixepoch(cr.start_time) <= unixepoch(?)');
       params.push(start_time_to);
+    }
+
+    // Global search across phone numbers, extensions, and names
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      whereConditions.push('(cr.caller_number LIKE ? OR cr.callee_number LIKE ? OR cr.extension LIKE ? OR ce_caller.username LIKE ? OR ce_callee.username LIKE ?)');
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
     }
     
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
     
     // Count query
-    countQuery = `SELECT COUNT(*) as total FROM call_records cr ${whereClause}`;
+    countQuery = `SELECT COUNT(*) as total FROM call_records cr LEFT JOIN pbx_extensions ce_caller ON cr.caller_number = ce_caller.extnumber LEFT JOIN pbx_extensions ce_callee ON cr.callee_number = ce_callee.extnumber ${whereClause}`;
     
     // Data query
     dataQuery = `
@@ -5732,14 +6131,15 @@ app.get('/api/call-records', (req, res) => {
       LEFT JOIN pbx_extensions ce_caller ON cr.caller_number = ce_caller.extnumber
       LEFT JOIN pbx_extensions ce_callee ON cr.callee_number = ce_callee.extnumber
       ${whereClause}
-      ORDER BY cr.start_time DESC
+      ORDER BY unixepoch(cr.start_time) DESC, cr.id DESC
       LIMIT ? OFFSET ?
     `;
     
     // Add pagination params
+    const countParams = params.slice();
     params.push(pageSize, offset);
     
-    const { total } = db.db.prepare(countQuery).get(...params.slice(0, params.length - 2));
+    const { total } = db.db.prepare(countQuery).get(...countParams);
     const records = db.db.prepare(dataQuery).all(...params);
     
     res.json({ 
@@ -7521,7 +7921,8 @@ app.get('/api/clock/today', (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     const rows = db.db.prepare(`
-      SELECT ash.*, a.name, a.extension, a.role
+      SELECT ash.id, ash.agent_id, ash.clock_in, ash.clock_out, ash.status, ash.created_at,
+             a.name, a.extension
       FROM agent_shifts ash
       JOIN agents a ON ash.agent_id = a.id
       WHERE date(ash.clock_in) = ?
@@ -7597,7 +7998,7 @@ app.post('/api/shift-schedule/:id/reassign', (req, res) => {
 app.get('/api/agent-daily-stats', (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().split('T')[0];
-    const agents = db.db.prepare('SELECT id, name, extension, role FROM agents WHERE is_active = 1').all();
+    const agents = db.db.prepare('SELECT id, name, extension FROM agents WHERE is_active = 1').all();
     const stats = agents.map((agent) => {
       const shifts = db.db.prepare(
         'SELECT * FROM agent_shifts WHERE agent_id = ? AND date(clock_in) = ?'
@@ -7626,7 +8027,6 @@ app.get('/api/agent-daily-stats', (req, res) => {
         agent_id: agent.id,
         name: agent.name,
         extension: agent.extension,
-        role: agent.role,
         shifts_count: shifts.length,
         scheduled_count: scheduled.length,
         total_minutes: totalMinutes,
@@ -7998,7 +8398,7 @@ async function checkActiveGsmSpans() {
   }
 }
 
-// Start 12-hour GSM span check when app starts
+// Start GSM span check when app starts
 function startGsmSpanCheckInterval() {
   // Run check after 5 seconds to allow TG400 connection to establish
   logger.info(`[GSM CHECK] Scheduling first GSM span check in 5 seconds...`);
@@ -8006,13 +8406,13 @@ function startGsmSpanCheckInterval() {
     await checkActiveGsmSpans();
   }, 5000);
   
-  // Then run every 12 hours (43,200,000 ms)
-  const twelveHoursMs = 12 * 60 * 60 * 1000;
+  // Then run every 5 minutes (300,000 ms)
+  const fiveMinutesMs = 5 * 60 * 1000;
   setTimeout(() => {
     setInterval(async () => {
       await checkActiveGsmSpans();
-    }, twelveHoursMs);
-    logger.info(`[GSM CHECK] GSM span auto-check scheduled every 12 hours`);
+    }, fiveMinutesMs);
+    logger.info(`[GSM CHECK] GSM span auto-check scheduled every 5 minutes`);
   }, 5000);
 }
 

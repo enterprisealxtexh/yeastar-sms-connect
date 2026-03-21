@@ -26,8 +26,8 @@ export const usePbxStatus = (enabled = true) => {
         };
       }
     },
-    refetchInterval: 30000,
-    staleTime: 15000,
+    refetchInterval: 10000,  // Check every 10 seconds for real-time status
+    staleTime: 5000,           // Consider data stale after 5 seconds
     retry: 1,
   });
 };

@@ -1,9 +1,8 @@
 /**
- * Format date/time in Africa/Nairobi timezone
- * This is the standard timezone for this application
- * 
- * Database timestamps are stored in UTC format (YYYY-MM-DD HH:MM:SS)
- * This function correctly parses them as UTC and displays in Africa/Nairobi timezone
+ * Format date/time in Africa/Nairobi timezone.
+ *
+ * Current canonical storage is Kenya local format: YYYY-MM-DD HH:MM:SS.
+ * Legacy rows may still exist as ISO UTC strings (with Z).
  */
 export const formatDateNairobi = (date?: Date | string | null): string => {
   if (!date) {
@@ -11,14 +10,16 @@ export const formatDateNairobi = (date?: Date | string | null): string => {
   }
 
   if (typeof date === 'string') {
-    // If string looks like "2026-02-15 07:23:43" (UTC from database)
-    // Parse it as UTC by replacing space with 'T' and appending 'Z'
-    if (date.includes(' ') && !date.includes('Z') && !date.includes('+') && !date.includes('-', 10)) {
-      const utcString = date.replace(' ', 'T') + 'Z';
-      date = new Date(utcString);
-    } else {
-      date = new Date(date);
+    // Kenya-local canonical storage format: "YYYY-MM-DD HH:MM:SS".
+    // Do not add timezone conversion here to avoid double +3h shifts.
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date)) {
+      const [d, t] = date.split(' ');
+      const [y, m, day] = d.split('-');
+      const [hh, mm, ss] = t.split(':');
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${parseInt(day, 10)} ${monthNames[parseInt(m, 10) - 1]} ${hh}:${mm}:${ss}`;
     }
+    date = new Date(date);
   }
 
   if (!(date instanceof Date) || isNaN(date.getTime())) {
@@ -36,8 +37,7 @@ export const formatDateNairobi = (date?: Date | string | null): string => {
 };
 
 /**
- * Format date only (without time) in Africa/Nairobi timezone - shows as "15 Feb"
- * Correctly handles UTC timestamps from database
+ * Format date only (without time) in Africa/Nairobi timezone - shows as "15 Feb".
  */
 export const formatDateOnlyNairobi = (date?: Date | string | null): string => {
   if (!date) {
@@ -45,13 +45,13 @@ export const formatDateOnlyNairobi = (date?: Date | string | null): string => {
   }
 
   if (typeof date === 'string') {
-    // If string looks like "2026-02-15 07:23:43" (UTC from database)
-    if (date.includes(' ') && !date.includes('Z') && !date.includes('+') && !date.includes('-', 10)) {
-      const utcString = date.replace(' ', 'T') + 'Z';
-      date = new Date(utcString);
-    } else {
-      date = new Date(date);
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date)) {
+      const [d] = date.split(' ');
+      const [, m, day] = d.split('-');
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${parseInt(day, 10)} ${monthNames[parseInt(m, 10) - 1]}`;
     }
+    date = new Date(date);
   }
 
   if (!(date instanceof Date) || isNaN(date.getTime())) {
@@ -66,8 +66,7 @@ export const formatDateOnlyNairobi = (date?: Date | string | null): string => {
 };
 
 /**
- * Format time only in Africa/Nairobi timezone
- * Correctly handles UTC timestamps from database
+ * Format time only in Africa/Nairobi timezone.
  */
 export const formatTimeOnlyNairobi = (date?: Date | string | null): string => {
   if (!date) {
@@ -75,13 +74,12 @@ export const formatTimeOnlyNairobi = (date?: Date | string | null): string => {
   }
 
   if (typeof date === 'string') {
-    // If string looks like "2026-02-15 07:23:43" (UTC from database)
-    if (date.includes(' ') && !date.includes('Z') && !date.includes('+') && !date.includes('-', 10)) {
-      const utcString = date.replace(' ', 'T') + 'Z';
-      date = new Date(utcString);
-    } else {
-      date = new Date(date);
+    // Kenya-local canonical storage format.
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date)) {
+      const [, t] = date.split(' ');
+      return t || 'Invalid time';
     }
+    date = new Date(date);
   }
 
   if (!(date instanceof Date) || isNaN(date.getTime())) {

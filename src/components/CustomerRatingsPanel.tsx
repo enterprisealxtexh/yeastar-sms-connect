@@ -39,7 +39,7 @@ type RatingSettings = {
   company_icon_url: string;
   public_base_url: string;
   link_valid_hours: number;
-  trigger_source: "auto_reply" | "call_auto_sms" | "both";
+  trigger_source: "call_auto_sms" | "both";
   include_recommendation: boolean;
   questions: RatingQuestion[];
   extension_policies: ExtensionPolicy[];
@@ -303,7 +303,6 @@ export const CustomerRatingsPanel = () => {
                       onChange={(e) => setSource(e.target.value)}
                     >
                       <option value="">All sources</option>
-                      <option value="auto_reply">Auto Reply</option>
                       <option value="call_auto_sms">Call Auto-SMS</option>
                     </select>
                   </div>
@@ -571,9 +570,8 @@ export const CustomerRatingsPanel = () => {
                       onChange={(e) => setSettings((s) => ({ ...s, trigger_source: e.target.value as RatingSettings["trigger_source"] }))}
                       disabled={!canEdit}
                     >
-                      <option value="both">Both Auto-Reply and Call Auto-SMS</option>
-                      <option value="auto_reply">Auto-Reply only</option>
-                      <option value="call_auto_sms">Call Auto-SMS only</option>
+                      <option value="call_auto_sms">Call Auto-SMS</option>
+                      <option value="both">Always (triggers on any SMS)</option>
                     </select>
                   </div>
 

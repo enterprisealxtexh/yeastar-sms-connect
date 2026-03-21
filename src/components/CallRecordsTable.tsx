@@ -25,6 +25,8 @@ interface CallRecordsTableProps {
   onDirectionFilterChange?: (direction: string) => void;
   statusFilter?: string;
   onStatusFilterChange?: (status: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (search: string) => void;
   isViewer?: boolean;
 }
 
@@ -48,31 +50,11 @@ export const CallRecordsTable = ({
   onDirectionFilterChange,
   statusFilter = "all",
   onStatusFilterChange,
+  searchQuery = "",
+  onSearchChange,
   isViewer = false,
 }: CallRecordsTableProps) => {
-  const [search, setSearch] = useState("");
   const { extensions } = useExtensions();
-
-  const filteredCalls = calls.filter((call) => {
-    const callerDisplay = call.caller_extension_username 
-      ? `${call.caller_number} ${call.caller_extension_username}`
-      : call.caller_number;
-    const calleeDisplay = call.callee_extension_username
-      ? `${call.callee_number} ${call.callee_extension_username}`
-      : call.callee_number;
-    
-    const matchesSearch =
-      call.caller_number.toLowerCase().includes(search.toLowerCase()) ||
-      call.callee_number.toLowerCase().includes(search.toLowerCase()) ||
-      call.caller_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
-      call.callee_extension_username?.toLowerCase().includes(search.toLowerCase()) ||
-      calleeDisplay.toLowerCase().includes(search.toLowerCase()) ||
-      callerDisplay.toLowerCase().includes(search.toLowerCase());
-
-    // All filtering is now done server-side via the API (extension, direction, status)
-    // Client-side search is the only local filtering
-    return matchesSearch;
-  });
 
   return (
     <Card className="card-glow border-border/50 bg-card">
@@ -88,9 +70,9 @@ export const CallRecordsTable = ({
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search calls or extensions..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search calls or extensions (searches entire database)..."
+                value={searchQuery}
+                onChange={(e) => onSearchChange?.(e.target.value)}
                 className="pl-8 w-48"
               />
             </div>
@@ -170,14 +152,14 @@ export const CallRecordsTable = ({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredCalls.length === 0 ? (
+                {calls.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                       No call records found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredCalls.map((call) => {
+                  calls.map((call) => {
                     // Determine which number to call back based on direction
                     const callBackNumber = call.direction === "inbound" ? call.caller_number : call.callee_number;
                     

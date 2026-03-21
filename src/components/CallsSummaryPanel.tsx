@@ -21,31 +21,7 @@ const formatDuration = (seconds: number): string => {
 
 const formatTime = (dateString: string): string => {
   if (!dateString) return '-';
-  try {
-    if (typeof dateString === 'string') {
-      if (dateString.includes(' ') && !dateString.includes('Z') && !dateString.includes('+') && !dateString.includes('-', 10)) {
-        const utcString = dateString.replace(' ', 'T') + 'Z';
-        const date = new Date(utcString);
-        return date.toLocaleString('en-US', {
-          timeZone: 'Africa/Nairobi',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        });
-      }
-    }
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      timeZone: 'Africa/Nairobi',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-  } catch {
-    return formatTimeOnlyNairobi(dateString);
-  }
+  return formatTimeOnlyNairobi(dateString);
 };
 
 const getStatusIcon = (status: string) => {

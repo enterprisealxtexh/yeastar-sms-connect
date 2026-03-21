@@ -11,7 +11,8 @@ export const usePortLabels = () => {
   return useQuery({
     queryKey: ['port-labels'],
     queryFn: async (): Promise<Record<number, PortLabel>> => {
-      const gsmSpans = await gatewayApi.gsmSpans();
+      const response = await gatewayApi.gsmSpans();
+      const gsmSpans = response?.data || response;
       const portMap: Record<number, PortLabel> = {};
       gsmSpans.forEach((span: any) => {
         const portNumber = span.gsm_span - 1;

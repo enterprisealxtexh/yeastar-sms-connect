@@ -24,8 +24,10 @@ export const useSwapRequests = () =>
   useQuery({
     queryKey: ["swap-requests"],
     queryFn: async () => {
-      const data = await clockApi.swapRequests();
-      return (data as any) as ShiftSwapRequest[];
+      const response = await clockApi.swapRequests();
+      // Handle both direct array response and wrapped { data: [...] } response
+      const data = Array.isArray(response) ? response : (response as any)?.data || [];
+      return data as ShiftSwapRequest[];
     },
     refetchInterval: 30000,
   });
@@ -34,8 +36,10 @@ export const usePendingSwapCount = () =>
   useQuery({
     queryKey: ["swap-requests-pending-count"],
     queryFn: async () => {
-      const rows = await clockApi.swapRequests('pending') as ShiftSwapRequest[];
-      return rows.length;
+      const response = await clockApi.swapRequests('pending');
+      // Handle both direct array response and wrapped { data: [...] } response
+      const rows = Array.isArray(response) ? response : (response as any)?.data || [];
+      return (rows as ShiftSwapRequest[]).length;
     },
     refetchInterval: 30000,
   });

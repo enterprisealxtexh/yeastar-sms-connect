@@ -16,7 +16,10 @@ import { apiFetch } from "@/lib/api-client";
 const useSimPorts = () =>
   useQuery({
     queryKey: ["sim-port-config"],
-    queryFn: () => apiFetch<any[]>('/api/sim-ports'),
+    queryFn: async () => {
+      const response = await apiFetch<{ success: boolean; data: any[] }>('/api/sim-ports');
+      return response?.data || [];
+    },
   });
 
 const useAgentExtensionStats = (extension: string | null) =>

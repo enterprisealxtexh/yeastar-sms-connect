@@ -18,7 +18,6 @@ export interface AgentConfig {
 const DEFAULT_CONFIGS: AgentConfig[] = [
   { id: "1", config_key: "poll_interval_seconds", config_value: { value: 30, min: 10, max: 300 }, ai_tuned: false, last_tuned_at: null, updated_at: new Date().toISOString() },
   { id: "2", config_key: "missed_call_threshold_minutes", config_value: { value: 5, min: 1, max: 60 }, ai_tuned: false, last_tuned_at: null, updated_at: new Date().toISOString() },
-  { id: "3", config_key: "auto_reply_enabled", config_value: { enabled: false }, ai_tuned: false, last_tuned_at: null, updated_at: new Date().toISOString() },
 ];
 
 // Stub hook — agent config is not persisted to server in local mode

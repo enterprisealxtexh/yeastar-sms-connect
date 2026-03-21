@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Send, Loader2, AlertCircle, CheckCircle, Trash2, Phone, Plus, Mail, AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
-import { apiFetch, apiCall } from "@/lib/api-client";
+import { apiFetch, apiCall, configApi } from "@/lib/api-client";
 
 export interface SetupPanelRef {
   save: () => Promise<void>;
@@ -59,7 +59,7 @@ export const SetupPanel = forwardRef<SetupPanelRef>(function SetupPanel(_, ref) 
     const load = async () => {
       try {
         const [tgData, smsData] = await Promise.all([
-          apiFetch<any>('/api/channel-setup'),
+          configApi.notificationsConfig(),
           apiFetch<any>('/api/sms-report-recipients'),
         ]);
 
@@ -109,10 +109,7 @@ export const SetupPanel = forwardRef<SetupPanelRef>(function SetupPanel(_, ref) 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const result = await apiCall('/api/channel-setup', {
-        method: "POST",
-        body: JSON.stringify(config),
-      });
+      const result = await configApi.saveNotificationsConfig(config);
       if (!result.success) throw new Error(result.error || "Save failed");
       setHasUnsavedChanges(false);
       toast.success("Setup saved successfully");

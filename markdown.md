@@ -4,7 +4,7 @@
 
 ```bash
 sudo apt update && sudo apt install -y nodejs npm nginx certbot python3-certbot-nginx git
-sudo npm install -g pm2 serve
+sudo npm install -g pm2
 ```
 
 ## Fresh Setup (Delete and Reinstall)
@@ -101,7 +101,6 @@ NGINX
 sudo ln -sf /etc/nginx/sites-available/calls.nosteq.co.ke /etc/nginx/sites-enabled/calls.nosteq.co.ke
 sudo nginx -t
 sudo systemctl reload nginx
-
 ```
 
 ## SSL Certificate via Certbot
@@ -115,12 +114,12 @@ Follow prompts. Certbot will inject the HTTPS (443) server block and HTTP->HTTPS
 ## Start PM2 Services
 
 > **Note:** Nginx serves the React `dist/` folder directly — no `serve`/frontend PM2 process needed.
-> Only the `api-server` and `tg400-agent` processes run under PM2.
+> The `api-server`, `tg400-agent`, and `sms-worker` processes run under PM2.
 
 ```bash
 cd /opt/yeastar-sms-connect
 sudo pm2 delete all || true
-sudo pm2 start ecosystem.config.cjs --env production
+sudo pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
 sudo pm2 save
 sudo pm2 startup systemd -u root --hp /root
 # Run the command it prints to enable auto-start on reboot
@@ -133,7 +132,11 @@ curl http://127.0.0.1:2003/api/health
 pm2 status
 sudo systemctl status nginx
 ```
-
+rm /home/alxtexh/yeastar-sms-connect/logs/yeastar_sms.db
+rm /home/alxtexh/yeastar-sms-connect/logs/db.sqlite3
+rm /home/alxtexh/yeastar-sms-connect/public/local-agent/database.db
+rm /home/alxtexh/yeastar-sms-connect/public/local-agent/sms-gateway.db
+# dist/ files will be regenerated on next build
 Open internal app: https://calls.nosteq.co.ke/
 Open public rating page: https://calls.nosteq.co.ke/support/rating/<token>
 
@@ -149,7 +152,7 @@ sudo git clone https://github.com/enterprisealxtexh/yeastar-sms-connect.git yeas
 cd /opt/yeastar-sms-connect
 sudo npm install
 sudo npm run build
-sudo pm2 start ecosystem.config.cjs --env production
+sudo pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
 sudo pm2 save
 sudo systemctl reload nginx
 ```
@@ -160,4 +163,15 @@ sudo systemctl reload nginx
 pm2 logs
 pm2 logs api-server
 sudo tail -f /var/log/nginx/calls.nosteq.co.ke_error.log
+```
+
+
+
+# Local setup
+```bash
+pm2 delete all
+pm2 start ecosystem.dev.config.cjs --env development
+```
+```bash
+
 ```

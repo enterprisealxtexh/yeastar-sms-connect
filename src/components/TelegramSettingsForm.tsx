@@ -9,7 +9,7 @@ import { Send, Loader2, Phone, FileText, Mail, AlertCircle } from "lucide-react"
 import { toast } from "sonner";
 import { TemplateModal } from "./TemplateModal";
 import { useSmsSettings } from "@/hooks/useSmsSettings";
-import { apiFetch, apiCall } from "@/lib/api-client";
+import { apiFetch, apiCall, configApi } from "@/lib/api-client";
 
 interface TelegramConfig {
   enabled: boolean;
@@ -43,7 +43,7 @@ export const TelegramSettingsForm = () => {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const tgRes = await apiFetch<any>('/api/notifications-setup');
+        const tgRes = await configApi.notificationsConfig();
 
         if (tgRes) {
           const data = tgRes.data || tgRes;
@@ -71,19 +71,16 @@ export const TelegramSettingsForm = () => {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const result = await apiCall('/api/notifications-setup', {
-        method: "POST",
-        body: JSON.stringify({
-          telegram_enabled:    config.enabled,
-          email_enabled:       config.email_enabled,
-          sms_reports_enabled: config.sms_enabled,
-          notify_missed_calls: config.notify_missed_calls,
-          notify_new_sms:      config.notify_new_sms,
-          notify_system_errors: config.notify_system_errors,
-          notify_shift_changes: config.notify_shift_changes,
-          daily_report_enabled: config.daily_report_enabled,
-          daily_report_time:   config.daily_report_time,
-        }),
+      const result = await configApi.saveNotificationsConfig({
+        telegram_enabled:    config.enabled,
+        email_enabled:       config.email_enabled,
+        sms_reports_enabled: config.sms_enabled,
+        notify_missed_calls: config.notify_missed_calls,
+        notify_new_sms:      config.notify_new_sms,
+        notify_system_errors: config.notify_system_errors,
+        notify_shift_changes: config.notify_shift_changes,
+        daily_report_enabled: config.daily_report_enabled,
+        daily_report_time:   config.daily_report_time,
       });
       if (result.success) {
         toast.success("Notification settings saved");

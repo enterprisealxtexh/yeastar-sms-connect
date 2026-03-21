@@ -85,6 +85,7 @@ const Index = () => {
   const [callRecordsExtensionFilter, setCallRecordsExtensionFilter] = useState<string>("all");
   const [callRecordsDirectionFilter, setCallRecordsDirectionFilter] = useState<string>("all");
   const [callRecordsStatusFilter, setCallRecordsStatusFilter] = useState<string>("all");
+  const [callRecordsSearch, setCallRecordsSearch] = useState<string>("");
 
   // ⚡ OPTIMIZATION: Only fetch data for active tab
   // Dashboard tab data
@@ -99,6 +100,7 @@ const Index = () => {
     callRecordsExtensionFilter, 
     callRecordsDirectionFilter, 
     callRecordsStatusFilter,
+    callRecordsSearch,
     activeTab === "calls" || activeTab === "dashboard" // Only fetch for these tabs
   );
   const calls = callsResponse?.data || [];
@@ -273,6 +275,8 @@ const Index = () => {
               onDirectionFilterChange={setCallRecordsDirectionFilter}
               statusFilter={callRecordsStatusFilter}
               onStatusFilterChange={setCallRecordsStatusFilter}
+              searchQuery={callRecordsSearch}
+              onSearchChange={setCallRecordsSearch}
               allTimeStats={allTimeCallStats}
               todayStats={callStats}
               statsLoading={allTimeCallStatsLoading || callStatsLoading}

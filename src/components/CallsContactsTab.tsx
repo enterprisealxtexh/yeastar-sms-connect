@@ -18,6 +18,8 @@ interface CallsContactsTabProps {
   onDirectionFilterChange: (filter: string) => void;
   statusFilter: string;
   onStatusFilterChange: (filter: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (search: string) => void;
   allTimeStats?: any;
   todayStats?: any;
   statsLoading?: boolean;
@@ -37,6 +39,8 @@ export const CallsContactsTab = ({
   onDirectionFilterChange,
   statusFilter,
   onStatusFilterChange,
+  searchQuery = "",
+  onSearchChange,
   allTimeStats,
   todayStats,
   statsLoading = false,
@@ -77,6 +81,8 @@ export const CallsContactsTab = ({
             onDirectionFilterChange={onDirectionFilterChange}
             statusFilter={statusFilter}
             onStatusFilterChange={onStatusFilterChange}
+            searchQuery={searchQuery}
+            onSearchChange={onSearchChange}
             isViewer={isViewer}
           />
         </TabsContent>

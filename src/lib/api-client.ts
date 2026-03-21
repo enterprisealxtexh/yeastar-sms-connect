@@ -1,121 +1,38 @@
-/**
- * Centralized API Client
- *
- * ALL API calls must go through this module — no direct fetch() calls in hooks/components.
- *
- * VITE_API_URL = domain only, no /api suffix:
- *   - Dev:  http://localhost:2003
- *   - Prod: https://calls.nosteq.co.ke  (Nginx proxies /api → localhost:2003)
- */
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:2003').replace(/\/+$/, '');
 
-const BASE_URLS = (() => {
-  const configured = String(import.meta.env.VITE_API_URL || '').trim();
-  if (configured) return [configured.replace(/\/+$/, '')];
-
-  // In production, try same-origin first (nginx /api proxy), then host:2003 fallback.
-  if (import.meta.env.PROD && typeof window !== 'undefined') {
-    const originBase = String(window.location.origin || '').replace(/\/+$/, '');
-    const hostFallback = `http://${window.location.hostname}:2003`.replace(/\/+$/, '');
-    return originBase === hostFallback ? [originBase] : [originBase, hostFallback];
-  }
-
-  // Local development fallback when VITE_API_URL is not set.
-  return ['http://localhost:2003'];
-})();
-
-async function fetchJsonWithFallback(path: string, options: RequestInit): Promise<{ response: Response; result: any }> {
-  let lastError: Error | null = null;
-
-  for (const base of BASE_URLS) {
-    try {
-      const response = await fetch(`${base}${path}`, options);
-      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-      if (!contentType.includes('application/json')) {
-        throw new Error(`Non-JSON response from ${base}${path}`);
-      }
-
-      const result = await response.json();
-      return { response, result };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      continue;
-    }
-  }
-
-  throw lastError || new Error('Failed to fetch');
-}
-
-/**
- * Core fetch wrapper.
- * - Prepends /api if missing
- * - Attaches Bearer token from localStorage
- * - Returns { success, data?, error? }
- */
-export async function apiCall<T = any>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<{ success: boolean; data?: T; error?: string }> {
-  try {
-    const path = endpoint.startsWith('/api/') ? endpoint : `/api/${endpoint.replace(/^\//, '')}`;
-    const token = localStorage.getItem('authToken');
-
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-
-    const { response, result } = await fetchJsonWithFallback(path, { ...options, headers });
-
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-
-    return { success: true, data: result.data ?? result };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : 'Unknown error';
-    return { success: false, error };
-  }
-}
-
-/**
- * Throws on error – use inside React Query queryFn.
- * Returns result.data only — use apiFetchFull when you need pagination or other top-level fields.
- */
-export async function apiFetch<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const result = await apiCall<T>(endpoint, options);
-  if (!result.success) throw new Error(result.error || 'API error');
-  return result.data as T;
-}
-
-/**
- * Like apiFetch but returns the full API response body (including pagination, etc).
- * Use for paginated endpoints that return { success, data, pagination }.
- */
-export async function apiFetchFull<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const path = endpoint.startsWith('/api/') ? endpoint : `/api/${endpoint.replace(/^\//, '')}`;
+async function apiFetch<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const token = localStorage.getItem('authToken');
+
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    ...options.headers,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
-  const { response, result } = await fetchJsonWithFallback(path, { ...options, headers });
-  if (!response.ok || !result.success) throw new Error(result.error || `HTTP ${response.status}`);
-  return result as T;
+
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `HTTP ${response.status}`);
+  }
+
+  return response.json();
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 export const authApi = {
   login: (email: string, password: string) =>
-    apiCall('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+    apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
   register: (email: string, password: string, name?: string) =>
-    apiCall('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
+    apiFetch('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
 
   logout: () =>
-    apiCall('/api/auth/logout', { method: 'POST' }),
+    apiFetch('/api/auth/logout', { method: 'POST' }),
 
   logActivity: (activity: any) =>
-    apiCall('/api/activity-logs', { method: 'POST', body: JSON.stringify(activity) }),
+    apiFetch('/api/activity-logs', { method: 'POST', body: JSON.stringify(activity) }),
 };
 
 // ─── SMS ──────────────────────────────────────────────────────────────────────
@@ -129,19 +46,19 @@ export const smsApi = {
     return apiFetch<any[]>(`/api/sms-messages?${q}`);
   },
   updateStatus: (id: string, status: string) =>
-    apiCall(`/api/sms-messages/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+    apiFetch(`/api/sms-messages/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
   markAllRead: () =>
-    apiCall('/api/sms-messages/mark-all-read', { method: 'PUT' }),
+    apiFetch('/api/sms-messages/mark-all-read', { method: 'PUT' }),
   send: (phoneNumber: string, message: string) =>
-    apiCall('/api/sms-send', { method: 'POST', body: JSON.stringify({ phoneNumber, message }) }),
+    apiFetch('/api/sms-send', { method: 'POST', body: JSON.stringify({ phoneNumber, message }) }),
   getReportRecipients: () => apiFetch('/api/sms-report-recipients'),
   templates: () => apiFetch<any[]>('/api/sms-templates'),
   createTemplate: (data: { name: string; message: string }) =>
-    apiCall('/api/sms-templates', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/sms-templates', { method: 'POST', body: JSON.stringify(data) }),
   updateTemplate: (id: string, data: { name: string; message: string; active: boolean }) =>
-    apiCall(`/api/sms-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    apiFetch(`/api/sms-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTemplate: (id: string) =>
-    apiCall(`/api/sms-templates/${id}`, { method: 'DELETE' }),
+    apiFetch(`/api/sms-templates/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Calls ────────────────────────────────────────────────────────────────────
@@ -154,7 +71,7 @@ export const callsApi = {
     if (params?.extension && params.extension !== 'all') q.set('extension', params.extension);
     if (params?.direction && params.direction !== 'all') q.set('direction', params.direction);
     if (params?.status && params.status !== 'all') q.set('status', params.status);
-    return apiFetchFull<{ success: boolean; data: any[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>(`/api/call-records?${q}`);
+    return apiFetch<{ success: boolean; data: any[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>(`/api/call-records?${q}`);
   },
   stats: (extension?: string) => {
     const q = extension && extension !== 'all' ? `?extension=${encodeURIComponent(extension)}` : '';
@@ -166,31 +83,31 @@ export const callsApi = {
   },
   statistics: () => apiFetch<any>('/api/statistics'),
   markCallback: (id: string, notes?: string) =>
-    apiCall(`/api/call-records/${id}/callback`, {
+    apiFetch(`/api/call-records/${id}/callback`, {
       method: 'PUT',
       body: JSON.stringify({ callback_attempted: true, callback_notes: notes || null }),
     }),
   sendMissedCallNotify: (callerNumber: string) =>
-    apiCall('/api/missed-call-notify', { method: 'POST', body: JSON.stringify({ caller_number: callerNumber }) }),
+    apiFetch('/api/missed-call-notify', { method: 'POST', body: JSON.stringify({ caller_number: callerNumber }) }),
   pbxLogs: () =>
-    apiCall('/api/pbx-call/logs', { method: 'POST', body: JSON.stringify({}) }),
+    apiFetch('/api/pbx-call/logs', { method: 'POST', body: JSON.stringify({}) }),
 };
 
 // ─── Gateway / PBX ───────────────────────────────────────────────────────────
 export const gatewayApi = {
   config: () => apiFetch<any>('/api/gateway-config'),
   saveConfig: (data: { gateway_ip?: string; api_username?: string; api_password?: string }) =>
-    apiCall('/api/gateway-config', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/gateway-config', { method: 'POST', body: JSON.stringify(data) }),
   status: () => apiFetch<any>('/api/gateway-status'),
   pbxConfig: () => apiFetch<any>('/api/pbx-config'),
   savePbxConfig: (data: any) =>
-    apiCall('/api/pbx-config', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/pbx-config', { method: 'POST', body: JSON.stringify(data) }),
   pbxStatus: () => apiFetch<any>('/api/pbx-status'),
   health: () => apiFetch('/api/health'),
   gsmSpans: () => apiFetch<any[]>('/api/gsm-spans'),
   updateGsmSpan: (gsmSpan: number, data: { name?: string | null; phone_number?: string | null }) =>
-    apiCall(`/api/gsm-spans/${gsmSpan}`, { method: 'PUT', body: JSON.stringify(data) }),
-  checkGsmSpans: () => apiCall('/api/check-gsm-spans', { method: 'POST' }),
+    apiFetch(`/api/gsm-spans/${gsmSpan}`, { method: 'PUT', body: JSON.stringify(data) }),
+  checkGsmSpans: () => apiFetch('/api/check-gsm-spans', { method: 'POST' }),
   extensions: () => apiFetch<any>('/api/extensions'),
 };
 
@@ -200,9 +117,9 @@ export const agentsApi = {
   listAll: () => apiFetch<any[]>('/api/agents?all=1'),
   get: (id: string) => apiFetch<any>(`/api/agents/${id}`),
   create: (agent: any) =>
-    apiCall('/api/agents', { method: 'POST', body: JSON.stringify(agent) }),
+    apiFetch('/api/agents', { method: 'POST', body: JSON.stringify(agent) }),
   update: (id: string, updates: any) =>
-    apiCall(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+    apiFetch(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
 };
 
 // ─── Clock / Shifts ───────────────────────────────────────────────────────────
@@ -210,79 +127,80 @@ export const clockApi = {
   active: () => apiFetch<any[]>('/api/clock/active'),
   today: () => apiFetch<any[]>('/api/clock/today'),
   clockIn: (pin: string) =>
-    apiCall('/api/clock', { method: 'POST', body: JSON.stringify({ pin }) }),
+    apiFetch('/api/clock', { method: 'POST', body: JSON.stringify({ pin }) }),
   schedule: (date: string) => apiFetch<any[]>(`/api/shift-schedule?date=${date}`),
   weekSchedule: (startDate: string, endDate: string) =>
     apiFetch<any[]>(`/api/shift-schedule?startDate=${startDate}&endDate=${endDate}`),
   saveSchedule: (data: any) =>
-    apiCall('/api/shift-schedule', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/shift-schedule', { method: 'POST', body: JSON.stringify(data) }),
   deleteSchedule: (id: string) =>
-    apiCall(`/api/shift-schedule/${id}`, { method: 'DELETE' }),
+    apiFetch(`/api/shift-schedule/${id}`, { method: 'DELETE' }),
   swapRequests: (status?: string) => {
     const q = status ? `?status=${status}` : '';
     return apiFetch<any[]>(`/api/shift-swap-requests${q}`);
   },
   createSwapRequest: (data: any) =>
-    apiCall('/api/shift-swap-requests', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/shift-swap-requests', { method: 'POST', body: JSON.stringify(data) }),
   approveSwapRequest: (id: string, data: { reviewedBy?: string; reviewNote?: string }) =>
-    apiCall(`/api/shift-swap-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch(`/api/shift-swap-requests/${id}/approve`, { method: 'POST', body: JSON.stringify(data) }),
   rejectSwapRequest: (id: string, data: { reviewedBy?: string; reason?: string }) =>
-    apiCall(`/api/shift-swap-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch(`/api/shift-swap-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data) }),
   notifyShiftChange: (data: any) =>
-    apiCall('/api/notify/shift-change', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/notify/shift-change', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // ─── Users / Roles ────────────────────────────────────────────────────────────
 export const usersApi = {
   list: () => apiFetch<any>('/api/users'),
   create: (data: any) =>
-    apiCall('/api/users', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) }),
   delete: (id: string) =>
-    apiCall(`/api/users/${id}`, { method: 'DELETE' }),
+    apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
   updateRole: (id: string, role: string) =>
-    apiCall(`/api/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+    apiFetch(`/api/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   profile: () => apiFetch<any>('/api/users/profile/me'),
   updateProfile: (data: any) =>
-    apiCall('/api/users/profile/me', { method: 'PUT', body: JSON.stringify(data) }),
+    apiFetch('/api/users/profile/me', { method: 'PUT', body: JSON.stringify(data) }),
   portPermissions: (id: string) => apiFetch<any>(`/api/users/${id}/port-permissions`),
   extensionPermissions: (id: string) => apiFetch<any>(`/api/users/${id}/extension-permissions`),
   setPortPermissions: (id: string, ports: number[]) =>
-    apiCall(`/api/users/${id}/port-permissions`, { method: 'POST', body: JSON.stringify({ ports }) }),
+    apiFetch(`/api/users/${id}/port-permissions`, { method: 'POST', body: JSON.stringify({ ports }) }),
   setExtensionPermissions: (id: string, extensions: string[]) =>
-    apiCall(`/api/users/${id}/extension-permissions`, { method: 'POST', body: JSON.stringify({ extensions }) }),
+    apiFetch(`/api/users/${id}/extension-permissions`, { method: 'POST', body: JSON.stringify({ extensions }) }),
 };
 
 // ─── Contacts ─────────────────────────────────────────────────────────────────
 export const contactsApi = {
   list: () => apiFetch<any[]>('/api/contacts'),
   update: (id: string, data: { name?: string; notes?: string }) =>
-    apiCall(`/api/contacts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    apiFetch(`/api/contacts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   import: (contacts: { phone_number: string; name: string }[]) =>
-    apiCall('/api/contacts/import', { method: 'POST', body: JSON.stringify({ contacts }) }),
+    apiFetch('/api/contacts/import', { method: 'POST', body: JSON.stringify({ contacts }) }),
   importFromGoogle: (googleToken: string) =>
-    apiCall('/api/contacts/import-from-google', { method: 'POST', body: JSON.stringify({ googleToken }) }),
+    apiFetch('/api/contacts/import-from-google', { method: 'POST', body: JSON.stringify({ googleToken }) }),
   pushToGoogle: (googleToken: string) =>
-    apiCall('/api/contacts/push-to-google', { method: 'POST', body: JSON.stringify({ googleToken }) }),
+    apiFetch('/api/contacts/push-to-google', { method: 'POST', body: JSON.stringify({ googleToken }) }),
   merge: () =>
-    apiCall('/api/contacts/merge', { method: 'POST', body: JSON.stringify({}) }),
+    apiFetch('/api/contacts/merge', { method: 'POST', body: JSON.stringify({}) }),
 };
 
 // ─── Config / System ──────────────────────────────────────────────────────────
 export const configApi = {
-  autoReply: () => apiFetch<any>('/api/auto-reply-config'),
-  saveAutoReply: (data: any) =>
-    apiCall('/api/auto-reply-config', { method: 'POST', body: JSON.stringify(data) }),
   callAutoSms: () => apiFetch<any>('/api/call-auto-sms-config'),
   saveCallAutoSms: (data: any) =>
-    apiCall('/api/call-auto-sms-config', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/call-auto-sms-config', { method: 'POST', body: JSON.stringify(data) }),
+  notificationsConfig: () => apiFetch<any>('/api/notifications-config'),
+  saveNotificationsConfig: (data: any) =>
+    apiFetch('/api/notifications-config', { method: 'POST', body: JSON.stringify(data) }),
+  triggerSmsQueueProcessing: () =>
+    apiFetch('/api/sms-queue/process', { method: 'POST', body: JSON.stringify({}) }),
+  getSmsQueueStatus: () => apiFetch<any>('/api/sms-queue/status'),
+  getSmsQueuePending: () => apiFetch<any>('/api/sms-queue/pending'),
   smsEnabled: () => apiFetch<any>('/api/system-settings/sms-enabled'),
   setSmsEnabled: (enabled: boolean) =>
-    apiCall('/api/system-settings/sms-enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),
-  telegramConfig: () => apiFetch<any>('/api/telegram-config'),
-  saveTelegramConfig: (data: any) =>
-    apiCall('/api/telegram-config', { method: 'POST', body: JSON.stringify(data) }),
+    apiFetch('/api/system-settings/sms-enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),
   sendTelegram: (action: string) =>
-    apiCall('/api/telegram-send', { method: 'POST', body: JSON.stringify({ action }) }),
+    apiFetch('/api/telegram-send', { method: 'POST', body: JSON.stringify({ action }) }),
   activityLogs: (params?: { limit?: number; severity?: string }) => {
     const q = new URLSearchParams();
     if (params?.limit) q.set('limit', String(params.limit));
@@ -293,10 +211,13 @@ export const configApi = {
 
 // ─── Customer Ratings ────────────────────────────────────────────────────────
 export const ratingsApi = {
-  settings: () => apiFetch<any>('/api/ratings/settings'),
+  settings: async () => {
+    const response = await apiFetch<{ success: boolean; data: any }>('/api/ratings/settings');
+    return response.data || null;
+  },
   saveSettings: (data: any) =>
-    apiCall('/api/ratings/settings', { method: 'POST', body: JSON.stringify(data) }),
-  analytics: (params?: {
+    apiFetch('/api/ratings/settings', { method: 'POST', body: JSON.stringify(data) }),
+  analytics: async (params?: {
     days?: number;
     startDate?: string;
     endDate?: string;
@@ -321,15 +242,31 @@ export const ratingsApi = {
     if (params?.search) q.set('search', params.search);
     if (params?.page != null) q.set('page', String(params.page));
     if (params?.pageSize != null) q.set('pageSize', String(params.pageSize));
-    return apiFetch<any>(`/api/ratings/analytics?${q.toString()}`);
+    const response = await apiFetch<{ success: boolean; data: any }>(`/api/ratings/analytics?${q.toString()}`);
+    return response.data || {};
   },
-  publicForm: (token: string) => apiFetch<any>(`/api/public/ratings/${encodeURIComponent(token)}`),
+  publicForm: async (token: string) => {
+    const response = await apiFetch<{ success: boolean; data: any }>(`/api/public/ratings/${encodeURIComponent(token)}`);
+    return response.data || null;
+  },
   submitPublic: (token: string, data: any) =>
-    apiCall(`/api/public/ratings/${encodeURIComponent(token)}/submit`, {
+    apiFetch(`/api/public/ratings/${encodeURIComponent(token)}/submit`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 };
+export { apiFetch };
+
+// Compatibility wrapper used by older code: returns { success, data?, error? }
+export async function apiCall<T = any>(endpoint: string, options: RequestInit = {}): Promise<{ success: boolean; data?: T; error?: string }> {
+  try {
+    const data = await apiFetch<T>(endpoint, options);
+    return { success: true, data };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { success: false, error };
+  }
+}
 
 export default {
   auth: authApi,
@@ -342,6 +279,4 @@ export default {
   contacts: contactsApi,
   config: configApi,
   ratings: ratingsApi,
-  call: apiCall,
-  fetch: apiFetch,
 };

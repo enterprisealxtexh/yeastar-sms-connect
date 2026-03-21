@@ -30,7 +30,8 @@ export const useSmsMessages = (limit = 50, direction?: string, enabled = true) =
     queryKey: ['sms-messages', limit, direction],
     enabled,
     queryFn: async (): Promise<SmsMessage[]> => {
-      const data = await smsApi.messages({ limit, ...(direction ? { direction } : {}) });
+      const response = await smsApi.messages({ limit, ...(direction ? { direction } : {}) });
+      const data = response?.data || [];
       return (data || []).map((msg: any) => {
         const msgDate = new Date(msg.received_at);
         return {

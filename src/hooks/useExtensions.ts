@@ -26,7 +26,7 @@ export const useExtensions = () => {
     queryKey: ['extensions'],
     queryFn: async () => {
       const resp = await gatewayApi.extensions();
-      return (resp?.extensions || []) as Extension[];
+      return (resp?.data?.extensions || []) as Extension[];
     },
     refetchInterval: 30000,
     staleTime: 15000,

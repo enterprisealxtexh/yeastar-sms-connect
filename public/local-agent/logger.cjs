@@ -3,7 +3,7 @@ const fs = require('fs');
 
 // Simple logger with level control. Default level: 'error'
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
-const envLevel = (process.env.LOCAL_AGENT_LOG_LEVEL || 'error').toLowerCase();
+const envLevel = (process.env.LOCAL_AGENT_LOG_LEVEL || process.env.LOG_LEVEL || 'error').toLowerCase();
 const CURRENT_LEVEL = LEVELS[envLevel] !== undefined ? LEVELS[envLevel] : LEVELS.error;
 
 const ERROR_LOG = process.env.ERROR_LOG_PATH || '/tmp/local-api-errors.log';

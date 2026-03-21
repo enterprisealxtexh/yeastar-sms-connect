@@ -1,6 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { gatewayApi } from "@/lib/api-client";
+import { useConfigSaveMutation } from "@/hooks/useConfigSaveMutation";
 
 export interface PbxConfig {
   id: string;
@@ -12,28 +13,25 @@ export interface PbxConfig {
 }
 
 export const usePbxConfig = (enabled = true) => {
-  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const { data: config, isLoading, error } = useQuery({
     queryKey: ['pbx-config'],
     enabled,
-    queryFn: async () => (await gatewayApi.pbxConfig()) as PbxConfig | null,
+    queryFn: async () => {
+      const response = await gatewayApi.pbxConfig();
+      return (response?.data || response) as PbxConfig | null;
+    },
     staleTime: 5 * 60 * 1000,
   });
 
-  const updateConfig = useMutation({
-    mutationFn: async (updates: Partial<Omit<PbxConfig, 'id'>>) => {
-      const result = await gatewayApi.savePbxConfig(updates);
-      if (!result.success) throw new Error(result.error || 'Failed to save PBX config');
-      return result.data;
-    },
+  const updateConfig = useConfigSaveMutation<Partial<Omit<PbxConfig, 'id'>>, any>({
+    queryKeysToInvalidate: ['pbx-config', 'pbx-status'],
+    saveFn: (updates) => gatewayApi.savePbxConfig(updates),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pbx-config'] });
-      queryClient.invalidateQueries({ queryKey: ['pbx-status'] });
       toast({ title: 'Configuration Saved', description: 'PBX configuration has been updated.' });
     },
-    onError: (error: Error) => {
+    onError: (error) => {
       toast({ title: 'Save Failed', description: error.message, variant: 'destructive' });
     },
   });

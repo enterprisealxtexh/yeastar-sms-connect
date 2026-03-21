@@ -26,6 +26,7 @@ export const CallAutoSmsPanel = () => {
   );
   const [delayEnabled, setDelayEnabled] = useState(true);
   const [delayMinutes, setDelayMinutes] = useState(5);
+  const [duplicateWindow, setDuplicateWindow] = useState(360); // Default 6 hours
   const [allowedPorts, setAllowedPorts] = useState<number[]>([]);
   const [allowedExtensions, setAllowedExtensions] = useState<string[]>([]);
   const [callDirection, setCallDirection] = useState<'both' | 'inbound' | 'outbound'>('both');
@@ -37,6 +38,8 @@ export const CallAutoSmsPanel = () => {
       setMissedMessage(config.missed_message);
       setDelayEnabled(config.delay_enabled !== false);
       setDelayMinutes(config.delay_minutes || 5);
+      // Ensure duplicate window is at least 6 hours (360 mins) if set, or default to 360
+      setDuplicateWindow(Math.max(360, config.duplicate_window || 360));
       setAllowedPorts(config.allowed_ports || []);
       setAllowedExtensions(config.allowed_extensions || []);
       setCallDirection((config.call_direction as 'both' | 'inbound' | 'outbound') || 'both');
@@ -51,6 +54,7 @@ export const CallAutoSmsPanel = () => {
         missed_message: missedMessage,
         delay_enabled: delayEnabled,
         delay_minutes: delayMinutes,
+        duplicate_window: duplicateWindow,
         allowed_ports: allowedPorts,
         allowed_extensions: allowedExtensions,
         call_direction: callDirection
@@ -128,6 +132,7 @@ export const CallAutoSmsPanel = () => {
             { var: "{date}", desc: "Call date" },
             { var: "{duration}", desc: "Call duration" },
             { var: "{extension}", desc: "PBX extension" },
+            { var: "{rating_url}", desc: "Customer rating link (if enabled)" },
           ].map((v) => (
             <code
               key={v.var}
@@ -182,17 +187,17 @@ export const CallAutoSmsPanel = () => {
       <div className="p-4 rounded-lg bg-muted/30 border border-border/30 space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <Clock className="w-4 h-4 text-blue-500" />
-          <Label className="text-sm font-medium">Delayed SMS (Anti-Duplicate)</Label>
+          <Label className="text-sm font-medium">Delivery Settings</Label>
         </div>
         
         <p className="text-xs text-muted-foreground">
-          Send SMS after a delay to prevent duplicates if the caller calls back. For example, if a caller calls and disconnects, we help prevent sending both "missed" and "answered" messages to the same number within a short time span.
+          Control timing and prevent duplicate messages.
         </p>
 
         <div className="space-y-3 p-3 bg-background/50 rounded border border-border/20">
           <div className="flex items-center justify-between">
             <Label htmlFor="delay-enabled" className="text-sm cursor-pointer">
-              Enable Delay
+              Enable Delivery Delay
             </Label>
             <Switch
               id="delay-enabled"
@@ -200,6 +205,9 @@ export const CallAutoSmsPanel = () => {
               onCheckedChange={setDelayEnabled}
             />
           </div>
+          <p className="text-xs text-muted-foreground mb-4">
+            Delay SMS to prevent duplicates if caller calls back immediately
+          </p>
 
           {delayEnabled && (
             <div className="space-y-2 pt-2 border-t border-border/20">
@@ -216,11 +224,29 @@ export const CallAutoSmsPanel = () => {
               />
               <p className="text-xs text-muted-foreground">
                 {delayMinutes === 0 
-                  ? "Send immediately (no duplicate protection)" 
-                  : `SMS will be sent ${delayMinutes} minute${delayMinutes !== 1 ? 's' : ''} after the call`}
+                  ? "Send immediately" 
+                  : `SMS sent ${delayMinutes} minute${delayMinutes !== 1 ? 's' : ''} after call ends`}
               </p>
             </div>
           )}
+
+          <div className="space-y-2 pt-4 border-t border-border/20">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">Duplicate Prevention (Hours) - {(duplicateWindow / 60).toFixed(1)}h</Label>
+            </div>
+            <Slider
+              value={[duplicateWindow]}
+              // Ensure minimum 6 hours (360 mins) and max 24 hours (1440 mins)
+              onValueChange={(value) => setDuplicateWindow(Math.max(360, Math.min(1440, value[0])))}
+              min={360}
+              max={1440}
+              step={60} // 1 hour steps
+              className="w-full"
+            />
+            <p className="text-xs text-muted-foreground">
+              Prevent multiple SMS to the same caller within {(duplicateWindow / 60).toFixed(1)} hours (Minimum 6h)
+            </p>
+          </div>
         </div>
       </div>
 

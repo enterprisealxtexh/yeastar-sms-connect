@@ -16,7 +16,10 @@ export function useGsmSpanConfig() {
 
   const { data: gsmSpans = [], isLoading: loading, error: rawError } = useQuery({
     queryKey: ['gsm-spans'],
-    queryFn: () => gatewayApi.gsmSpans() as Promise<GsmSpan[]>,
+    queryFn: async () => {
+      const response = await gatewayApi.gsmSpans();
+      return (response?.data || response) as Promise<GsmSpan[]>;
+    },
     staleTime: 30000,
     refetchInterval: 60000,
   });

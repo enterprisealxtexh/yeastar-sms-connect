@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useMissedCallReport, useMarkCallbackAttempted, useSendMissedCallSms, type MissedCallRecord } from "@/hooks/useMissedCallReport";
-import { useAutoReplyConfig } from "../hooks/useAutoReplyConfig";
 import { usePortLabels, getPortLabel } from "@/hooks/usePortLabels";
 import { useExtensions } from "@/hooks/useExtensions";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +24,7 @@ import { toast } from "sonner";
 import { SendReportDialog } from "./SendReportDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface MissedCallsReportPanelProps {
   dateFrom?: Date;
@@ -35,12 +35,12 @@ interface MissedCallsReportPanelProps {
 export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: initialDateTo, onDateChange }: MissedCallsReportPanelProps) => {
   const [dateFrom, setDateFrom] = useState<Date | undefined>(initialDateFrom);
   const [dateTo, setDateTo] = useState<Date | undefined>(initialDateTo);
+  const [extensionFilter, setExtensionFilter] = useState<string>("all");
   const { data: calls = [], isLoading } = useMissedCallReport();
-  const { data: autoConfig } = useAutoReplyConfig();
   const { mutate: markCallback, isPending: isMarking } = useMarkCallbackAttempted();
   const { mutate: sendSms, isPending: isSendingSms } = useSendMissedCallSms();
   const { data: portLabels } = usePortLabels();
-  const { getUsername } = useExtensions();
+  const { getUsername, extensions } = useExtensions();
   const { role } = useAuth();
   const { data: permissions } = useUserPermissions();
   const isViewer = role === "viewer";
@@ -77,9 +77,10 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
     onDateChange?.(start, end);
   };
 
-  // Filter calls by date range
+  // Filter calls by date range and extension
   const filteredCalls = calls.filter((call) => {
     if (isViewer && viewerExtensions.length > 0 && !viewerExtensions.includes(call.extension ?? "")) return false;
+    if (extensionFilter !== "all" && call.extension !== extensionFilter) return false;
     if (!dateFrom && !dateTo) return true;
     const callDate = new Date(call.start_time);
     if (dateFrom && callDate < dateFrom) return false;
@@ -160,6 +161,31 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
               </Button>
             )}
           </div>
+          
+          {/* Extension Filter */}
+          <div className="flex flex-wrap gap-3 items-center pt-3 border-t border-border/30">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground">Extension:</label>
+              <Select value={extensionFilter} onValueChange={setExtensionFilter}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Extensions</SelectItem>
+                  {extensions.map((ext) => (
+                    <SelectItem key={ext.extnumber} value={ext.extnumber}>
+                      {ext.extnumber} - {ext.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {extensionFilter !== "all" && (
+              <Button size="sm" variant="ghost" onClick={() => setExtensionFilter("all")} className="gap-1 ml-auto">
+                <X className="w-3 h-3" /> Clear
+              </Button>
+            )}
+          </div>
         </CardHeader>
       </Card>
 
@@ -204,21 +230,6 @@ export const MissedCallsReportPanel = ({ dateFrom: initialDateFrom, dateTo: init
               <div>
                 <p className="text-2xl font-bold">{completed.length}</p>
                 <p className="text-xs text-muted-foreground">Callbacks Done</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50 bg-card">
-          <CardContent className="pt-5 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-                <Mail className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-sm font-medium truncate">
-                  {autoConfig?.notification_email || "Not configured"}
-                </p>
-                <p className="text-xs text-muted-foreground">Notification email</p>
               </div>
             </div>
           </CardContent>

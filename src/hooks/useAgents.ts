@@ -13,6 +13,8 @@ export interface Agent {
   notification_channel: "telegram" | "email" | "both";
   is_active: boolean;
   created_at: string;
+  role?: string; // 'viewer', 'operator', etc. for user-based agents
+  user_id?: string | null; // Links agent to user account (for viewer-users)
 }
 
 export interface AgentShift {
@@ -40,26 +42,38 @@ const generatePin = () => String(Math.floor(1000 + Math.random() * 9000));
 export const useAgents = () =>
   useQuery({
     queryKey: ["agents"],
-    queryFn: () => agentsApi.list() as Promise<Agent[]>,
+    queryFn: async () => {
+      const response = await agentsApi.list();
+      return response?.data || [];
+    },
   });
 
 export const useAllAgents = () =>
   useQuery({
     queryKey: ["agents-all"],
-    queryFn: () => agentsApi.listAll() as Promise<Agent[]>,
+    queryFn: async () => {
+      const response = await agentsApi.listAll();
+      return response?.data || [];
+    },
   });
 
 export const useActiveShifts = () =>
   useQuery({
     queryKey: ["active-shifts"],
-    queryFn: () => clockApi.active() as Promise<AgentShift[]>,
+    queryFn: async () => {
+      const response = await clockApi.active();
+      return response?.data || [];
+    },
     refetchInterval: 30000,
   });
 
 export const useTodayShifts = () =>
   useQuery({
     queryKey: ["today-shifts"],
-    queryFn: () => clockApi.today() as Promise<AgentShift[]>,
+    queryFn: async () => {
+      const response = await clockApi.today();
+      return response?.data || [];
+    },
     refetchInterval: 30000,
   });
 
@@ -67,14 +81,20 @@ export const useShiftSchedule = (date?: string) => {
   const targetDate = date || new Date().toISOString().split("T")[0];
   return useQuery({
     queryKey: ["shift-schedule", targetDate],
-    queryFn: () => clockApi.schedule(targetDate) as Promise<ShiftScheduleEntry[]>,
+    queryFn: async () => {
+      const response = await clockApi.schedule(targetDate);
+      return response?.data || [];
+    },
   });
 };
 
 export const useWeekSchedule = (weekStart: string, weekEnd: string) =>
   useQuery({
     queryKey: ["week-schedule", weekStart, weekEnd],
-    queryFn: () => clockApi.weekSchedule(weekStart, weekEnd) as Promise<ShiftScheduleEntry[]>,
+    queryFn: async () => {
+      const response = await clockApi.weekSchedule(weekStart, weekEnd);
+      return response?.data || [];
+    },
   });
 
 export const useClockIn = () => {
@@ -219,7 +239,9 @@ export const useAgentDailyStats = () => {
     queryFn: async () => {
       const result = await apiCall(`/api/agent-daily-stats?date=${today}`);
       if (!result.success) throw new Error(result.error || "Failed to fetch stats");
-      return result.data;
+      // Handle nested response structure: result.data might contain { success, data, date }
+      const stats = Array.isArray(result.data) ? result.data : (result.data?.data || []);
+      return stats;
     },
     refetchInterval: 30000,
   });

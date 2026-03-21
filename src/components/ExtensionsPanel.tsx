@@ -87,9 +87,8 @@ const ExtensionsPanel: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // apiFetch already extracts .data from the API response
-      const data = await apiFetch<ExtensionsData>('/api/extensions');
-      setExtensionsData(data);
+      const response = await apiFetch<{ success: boolean; data: ExtensionsData }>('/api/extensions');
+      setExtensionsData(response.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch extensions');
       console.error('Extensions fetch error:', err);
@@ -121,9 +120,8 @@ const ExtensionsPanel: React.FC = () => {
   const fetchExtensionCallLogs = async (extnumber: string) => {
     setLoadingCallLogs(true);
     try {
-      // apiFetch already extracts .data
-      const logs = await apiFetch<any[]>(`/api/extensions/${extnumber}/call-logs?page=1&pageSize=100`);
-      setExtensionCallLogs(Array.isArray(logs) ? logs : []);
+      const response = await apiFetch<{ success: boolean; data: any[]; pagination: any }>(`/api/extensions/${extnumber}/call-logs?page=1&pageSize=100`);
+      setExtensionCallLogs(Array.isArray(response.data) ? response.data : []);
     } catch (err) {
       console.error('Error fetching call logs:', err);
       setExtensionCallLogs([]);
@@ -147,9 +145,8 @@ const ExtensionsPanel: React.FC = () => {
   const fetchApiEndpoints = async () => {
     setLoadingEndpoints(true);
     try {
-      // apiFetch already extracts .data
-      const endpoints = await apiFetch<any[]>('/api/pbx-endpoints');
-      setApiEndpoints(Array.isArray(endpoints) ? endpoints : []);
+      const response = await apiFetch<{ success: boolean; data: any[] }>('/api/pbx-endpoints');
+      setApiEndpoints(Array.isArray(response.data) ? response.data : []);
     } catch (err) {
       console.error('Error fetching API endpoints:', err);
     } finally {

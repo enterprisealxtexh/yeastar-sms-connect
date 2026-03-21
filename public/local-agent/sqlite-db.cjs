@@ -973,7 +973,7 @@ class SMSDatabase {
         const colNames = callSmsInfo.map(c => c.name);
         if (!colNames.includes('delay_enabled'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN delay_enabled BOOLEAN DEFAULT 1`);
         if (!colNames.includes('delay_minutes'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN delay_minutes INTEGER DEFAULT 5`);
-        if (!colNames.includes('duplicate_window'))     this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN duplicate_window INTEGER DEFAULT 10`);
+        if (!colNames.includes('duplicate_window'))     this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN duplicate_window INTEGER DEFAULT 360`);
         if (!colNames.includes('allowed_ports'))        this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN allowed_ports TEXT DEFAULT '[]'`);
         if (!colNames.includes('allowed_extensions'))   this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN allowed_extensions TEXT DEFAULT '[]'`);
         if (!colNames.includes('call_direction'))       this.db.exec(`ALTER TABLE call_auto_sms_config ADD COLUMN call_direction TEXT DEFAULT 'both'`);
@@ -986,6 +986,11 @@ class SMSDatabase {
         const arInfo = this.db.prepare(`PRAGMA table_info(auto_reply_config)`).all();
         const arCols = arInfo.map(c => c.name);
         if (!arCols.includes('allowed_extensions')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN allowed_extensions TEXT DEFAULT '[]'`);
+        if (!arCols.includes('duplicate_window_minutes')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN duplicate_window_minutes INTEGER DEFAULT 360`);
+        if (!arCols.includes('delay_enabled')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN delay_enabled INTEGER DEFAULT 0`);
+        if (!arCols.includes('delay_minutes')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN delay_minutes INTEGER DEFAULT 0`);
+        if (!arCols.includes('enabled_at_utc')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN enabled_at_utc TEXT DEFAULT NULL`);
+        if (!arCols.includes('enabled_at_nairobi')) this.db.exec(`ALTER TABLE auto_reply_config ADD COLUMN enabled_at_nairobi TEXT DEFAULT NULL`);
       } catch (e) {
         // ignore
       }
@@ -1036,7 +1041,7 @@ class SMSDatabase {
                 updated_at = CURRENT_TIMESTAMP
             WHERE public_base_url IS NULL
                OR TRIM(public_base_url) = ''
-               OR public_base_url = 'https://calls.nosteq.co.ke/admin/rate'
+               OR public_base_url = 'https://calls.nosteq.co.ke/rate'
                OR public_base_url = 'app_url/support'
                OR public_base_url = 'app_url/support/rating'
           `).run();
@@ -1107,6 +1112,43 @@ class SMSDatabase {
         `);
       } catch (e) {
         // ignore
+      }
+
+      // Migration: Add user_id column to agents table for linking agents to viewer-role users
+      try {
+        const agentsInfo = this.db.prepare(`PRAGMA table_info(agents)`).all();
+        const hasUserIdColumn = agentsInfo.some(col => col.name === 'user_id');
+        
+        if (!hasUserIdColumn) {
+          const logger = require('./logger.cjs');
+          logger.info('🔄 Migrating: Adding user_id column to agents table...');
+          try {
+            this.db.exec(`
+              ALTER TABLE agents ADD COLUMN user_id TEXT UNIQUE;
+              CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
+            `);
+            logger.info('✅ Migration complete: user_id column added to agents');
+          } catch (e) {
+            if (!e.message.includes('duplicate column name')) {
+              logger.warn(`⚠️  Could not add agents.user_id: ${e.message}`);
+            }
+          }
+        }
+      } catch (e) {
+        // ignore if table structure check fails
+      }
+
+      // Migration: Clean up permanently failed SMS queue records (more than 2 attempts)
+      try {
+        const logger = require('./logger.cjs');
+        const result = this.db.prepare(`
+          DELETE FROM sms_pending_queue WHERE status = 'failed' AND attempts >= 2
+        `).run();
+        if (result.changes > 0) {
+          logger.info(`✅ Cleanup: Removed ${result.changes} permanently failed SMS from queue`);
+        }
+      } catch (e) {
+        // ignore if cleanup fails
       }
 
     } catch (error) {
@@ -2879,36 +2921,6 @@ class SMSDatabase {
     }
   }
 
-  // Auto-Reply Config methods
-  getAutoReplyConfig() {
-    try {
-      return this.db.prepare('SELECT * FROM auto_reply_config LIMIT 1').get() || null;
-    } catch (error) {
-      console.error('Error getting auto-reply config:', error.message);
-      return null;
-    }
-  }
-
-  saveAutoReplyConfig({ enabled, message, notification_email, allowed_extensions }) {
-    try {
-      const extensionsJson = Array.isArray(allowed_extensions) ? JSON.stringify(allowed_extensions) : (allowed_extensions || '[]');
-      const existing = this.db.prepare('SELECT id FROM auto_reply_config LIMIT 1').get();
-      if (existing) {
-        this.db.prepare(`
-          UPDATE auto_reply_config SET enabled = ?, message = ?, notification_email = ?, allowed_extensions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-        `).run(enabled ? 1 : 0, message, notification_email || null, extensionsJson, existing.id);
-      } else {
-        this.db.prepare(`
-          INSERT INTO auto_reply_config (enabled, message, notification_email, allowed_extensions) VALUES (?, ?, ?, ?)
-        `).run(enabled ? 1 : 0, message, notification_email || null, extensionsJson);
-      }
-      return true;
-    } catch (error) {
-      console.error('Error saving auto-reply config:', error.message);
-      return false;
-    }
-  }
-
   // Call Auto-SMS Config methods
   getCallAutoSmsConfig() {
     try {
@@ -2928,11 +2940,11 @@ class SMSDatabase {
       if (existing) {
         this.db.prepare(`
           UPDATE call_auto_sms_config SET enabled = ?, answered_message = ?, missed_message = ?, delay_enabled = ?, delay_minutes = ?, duplicate_window = ?, allowed_ports = ?, allowed_extensions = ?, call_direction = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes != null ? delay_minutes : 5, duplicate_window != null ? duplicate_window : 10, portsJson, extensionsJson, direction, existing.id);
+        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes != null ? delay_minutes : 5, duplicate_window != null ? duplicate_window : 360, portsJson, extensionsJson, direction, existing.id);
       } else {
         this.db.prepare(`
           INSERT INTO call_auto_sms_config (enabled, answered_message, missed_message, delay_enabled, delay_minutes, duplicate_window, allowed_ports, allowed_extensions, call_direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes != null ? delay_minutes : 5, duplicate_window != null ? duplicate_window : 10, portsJson, extensionsJson, direction);
+        `).run(enabled ? 1 : 0, answered_message, missed_message, delay_enabled ? 1 : 0, delay_minutes != null ? delay_minutes : 5, duplicate_window != null ? duplicate_window : 360, portsJson, extensionsJson, direction);
       }
       return true;
     } catch (error) {
@@ -2958,9 +2970,14 @@ class SMSDatabase {
 
   getDueSmsItems() {
     try {
+      // Use epoch comparison to handle ISO8601 datetimes (with timezone)
+      // Get both pending items AND failed items that are due for retry (max 2 attempts)
       return this.db.prepare(`
         SELECT * FROM sms_pending_queue
-        WHERE status = 'pending' AND scheduled_at <= datetime('now')
+        WHERE (
+          (status = 'pending' OR (status = 'failed' AND attempts < 2))
+          AND strftime('%s', scheduled_at) <= strftime('%s', 'now')
+        )
         ORDER BY scheduled_at ASC
       `).all();
     } catch (error) {
@@ -2978,6 +2995,22 @@ class SMSDatabase {
     } catch (error) {
       console.error('Error marking pending SMS:', error.message);
       return false;
+    }
+  }
+
+  cleanFailedQueue() {
+    try {
+      // Delete SMS that have failed more than 2 times (not worth retrying)
+      const result = this.db.prepare(`
+        DELETE FROM sms_pending_queue WHERE status = 'failed' AND attempts >= 2
+      `).run();
+      if (result.changes > 0) {
+        require('./logger.cjs').info(`✅ Cleaned up ${result.changes} permanently failed SMS from queue`);
+      }
+      return result.changes || 0;
+    } catch (error) {
+      console.error('Error cleaning failed queue:', error.message);
+      return 0;
     }
   }
 
@@ -3060,12 +3093,67 @@ class SMSDatabase {
     }
   }
 
-  getAgents() {
+  getAgents(includeViewerUsers = true) {
     try {
-      return this.db.prepare('SELECT * FROM agents WHERE is_active = 1 ORDER BY name ASC').all();
+      // Get regular agents
+      const agents = this.db.prepare('SELECT * FROM agents WHERE is_active = 1 ORDER BY name ASC').all();
+      
+      // If includeViewerUsers is true, also get users with 'viewer' role who don't have an agent yet
+      if (includeViewerUsers) {
+        try {
+          const viewerUsers = this.db.prepare(`
+            SELECT 
+              u.id, 
+              u.name, 
+              u.email,
+              u.pin,
+              u.telegram_chat_id,
+              u.notification_channel,
+              CAST(1 AS INTEGER) as is_active,
+              u.created_at,
+              u.updated_at,
+              'viewer' as role,
+              NULL as user_id
+            FROM users u
+            LEFT JOIN user_roles ur ON u.id = ur.user_id
+            WHERE (ur.role = 'viewer' OR u.role = 'viewer')
+              AND u.is_active = 1
+              AND u.id NOT IN (SELECT user_id FROM agents WHERE user_id IS NOT NULL)
+            ORDER BY u.name ASC
+          `).all();
+          
+          return [...agents, ...viewerUsers];
+        } catch (e) {
+          // If viewer-user query fails (e.g., user_roles table structure), just return agents
+          return agents;
+        }
+      }
+      
+      return agents;
     } catch (error) {
       console.error('Error getting agents:', error.message);
       return [];
+    }
+  }
+
+  getAgentByUserId(userId) {
+    try {
+      return this.db.prepare('SELECT * FROM agents WHERE user_id = ?').get(userId);
+    } catch (error) {
+      console.error('Error getting agent by user:', error.message);
+      return null;
+    }
+  }
+
+  linkAgentToUser(agentId, userId) {
+    try {
+      const result = this.db.prepare(
+        'UPDATE agents SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run(userId, agentId);
+      return result.changes > 0;
+    } catch (error) {
+      console.error('Error linking agent to user:', error.message);
+      return false;
     }
   }
 

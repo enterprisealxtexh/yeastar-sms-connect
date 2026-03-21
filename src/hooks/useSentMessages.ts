@@ -24,8 +24,9 @@ export const useSentMessages = (limit = 50) => {
   return useQuery({
     queryKey: ['sent-messages', limit],
     queryFn: async (): Promise<SentMessage[]> => {
-      const data = await smsApi.messages({ direction: 'sent', limit });
-      return (data || []).map((msg: any) => {
+      const response = await smsApi.messages({ direction: 'sent', limit });
+      const data = response?.data || [];
+      return data.map((msg: any) => {
         const receivedDate = new Date(msg.received_at);
         return {
           id: msg.id,

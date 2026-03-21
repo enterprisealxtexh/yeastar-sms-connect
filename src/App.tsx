@@ -89,7 +89,7 @@ const App = () => (
 
           return (
             <BrowserRouter
-              basename={import.meta.env.PROD ? '/admin' : '/'}
+              basename='/'
               future={{
                 v7_startTransition: true,
                 v7_relativeSplatPath: true,
