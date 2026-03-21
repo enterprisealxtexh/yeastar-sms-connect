@@ -3,21 +3,21 @@
 ## Install Dependencies
 
 ```bash
-sudo apt update && sudo apt install -y nodejs npm nginx certbot python3-certbot-nginx git
-sudo npm install -g pm2
+apt update && apt install -y nodejs npm nginx certbot python3-certbot-nginx git
+npm install -g pm2
 ```
 
 ## Fresh Setup (Delete and Reinstall)
 
 ```bash
-sudo pm2 delete all || true
-sudo pm2 save || true
+pm2 delete all || true
+pm2 save || true
 cd /opt
-sudo rm -rf /opt/yeastar-sms-connect
-sudo git clone https://github.com/enterprisealxtexh/yeastar-sms-connect.git yeastar-sms-connect
+rm -rf /opt/yeastar-sms-connect
+git clone https://github.com/enterprisealxtexh/yeastar-sms-connect.git yeastar-sms-connect
 cd yeastar-sms-connect
-sudo npm install
-sudo npm run build
+npm install
+npm run build
 ```
 
 ## Create Nginx Config
@@ -28,13 +28,13 @@ sudo npm run build
 > - `calls.nosteq.co.ke/api/` → proxied to Node.js API on port 2003
 
 ```bash
-sudo cp /opt/yeastar-sms-connect/nginx.conf /etc/nginx/sites-available/calls.nosteq.co.ke
+cp /opt/yeastar-sms-connect/nginx.conf /etc/nginx/sites-available/calls.nosteq.co.ke
 ```
 
 Or create it manually:
 
 ```bash
-sudo tee /etc/nginx/sites-available/calls.nosteq.co.ke > /dev/null <<'NGINX'
+tee /etc/nginx/sites-available/calls.nosteq.co.ke > /dev/null <<'NGINX'
 server {
     listen 80;
     listen [::]:80;
@@ -98,15 +98,15 @@ NGINX
 ## Enable Nginx
 
 ```bash
-sudo ln -sf /etc/nginx/sites-available/calls.nosteq.co.ke /etc/nginx/sites-enabled/calls.nosteq.co.ke
-sudo nginx -t
-sudo systemctl reload nginx
+ln -sf /etc/nginx/sites-available/calls.nosteq.co.ke /etc/nginx/sites-enabled/calls.nosteq.co.ke
+nginx -t
+systemctl reload nginx
 ```
 
 ## SSL Certificate via Certbot
 
 ```bash
-sudo certbot --nginx -d calls.nosteq.co.ke
+certbot --nginx -d calls.nosteq.co.ke
 ```
 
 Follow prompts. Certbot will inject the HTTPS (443) server block and HTTP->HTTPS redirect automatically. Auto-renewal is enabled by default.
@@ -118,10 +118,10 @@ Follow prompts. Certbot will inject the HTTPS (443) server block and HTTP->HTTPS
 
 ```bash
 cd /opt/yeastar-sms-connect
-sudo pm2 delete all || true
-sudo pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
-sudo pm2 save
-sudo pm2 startup systemd -u root --hp /root
+pm2 delete all || true
+pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
+pm2 save
+pm2 startup
 # Run the command it prints to enable auto-start on reboot
 ```
 
@@ -130,12 +130,9 @@ sudo pm2 startup systemd -u root --hp /root
 ```bash
 curl http://127.0.0.1:2003/api/health
 pm2 status
-sudo systemctl status nginx
+systemctl status nginx
 ```
-rm /home/alxtexh/yeastar-sms-connect/logs/yeastar_sms.db
-rm /home/alxtexh/yeastar-sms-connect/logs/db.sqlite3
-rm /home/alxtexh/yeastar-sms-connect/public/local-agent/database.db
-rm /home/alxtexh/yeastar-sms-connect/public/local-agent/sms-gateway.db
+rm -f logs/*.db public/local-agent/*.db
 # dist/ files will be regenerated on next build
 Open internal app: https://calls.nosteq.co.ke/
 Open public rating page: https://calls.nosteq.co.ke/support/rating/<token>
@@ -143,18 +140,17 @@ Open public rating page: https://calls.nosteq.co.ke/support/rating/<token>
 ## Reinstall Fresh (Any Time)
 
 ```bash
-sudo pm2 delete all || true
-sudo pm2 save || true
-cd /opt/yeastar-sms-connect
+pm2 delete all || true
+pm2 save || true
 cd /opt
-sudo rm -rf /opt/yeastar-sms-connect
-sudo git clone https://github.com/enterprisealxtexh/yeastar-sms-connect.git yeastar-sms-connect
+rm -rf /opt/yeastar-sms-connect
+git clone https://github.com/enterprisealxtexh/yeastar-sms-connect.git yeastar-sms-connect
 cd /opt/yeastar-sms-connect
-sudo npm install
-sudo npm run build
-sudo pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
-sudo pm2 save
-sudo systemctl reload nginx
+npm install
+npm run build
+pm2 start ecosystem.config.cjs --only api-server,tg400-agent,sms-worker --env production
+pm2 save
+systemctl reload nginx
 ```
 
 ## Logs
@@ -162,7 +158,7 @@ sudo systemctl reload nginx
 ```bash
 pm2 logs
 pm2 logs api-server
-sudo tail -f /var/log/nginx/calls.nosteq.co.ke_error.log
+tail -f /var/log/nginx/calls.nosteq.co.ke_error.log
 ```
 
 
